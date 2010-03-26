@@ -24,6 +24,7 @@
          keydir_put/6,
          keydir_get/2,
          keydir_remove/2,
+         keydir_copy/1,
          keydir_itr/1,
          keydir_itr_next/1,
          keydir_fold/3]).
@@ -55,6 +56,9 @@ keydir_get(_Ref, _Key) ->
     "NIF library not loaded".
 
 keydir_remove(_Ref, _Key) ->
+    "NIF library not loaded".
+
+keydir_copy(_Ref) ->
     "NIF library not loaded".
 
 keydir_itr(_Ref) ->
@@ -110,5 +114,15 @@ keydir_itr_test() ->
     true = lists:keymember(<<"abc">>, #bitcask_entry.key, List),
     true = lists:keymember(<<"def">>, #bitcask_entry.key, List),
     true = lists:keymember(<<"hij">>, #bitcask_entry.key, List).
+
+keydir_copy_test() ->
+    {ok, Ref1} = keydir_new(),
+    ok = keydir_put(Ref1, <<"abc">>, 0, 1234, 0, 1),
+    ok = keydir_put(Ref1, <<"def">>, 0, 4567, 1234, 2),
+    ok = keydir_put(Ref1, <<"hij">>, 1, 7890, 0, 3),
+
+    {ok, Ref2} = keydir_copy(Ref1),
+    ?assertNot(keydir_itr(Ref1) == keydir_itr(Ref2)).
+
 
 -endif.

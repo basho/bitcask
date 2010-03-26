@@ -51,6 +51,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_new(ErlNifEnv* env, int argc, const ERL_NIF_TER
 ERL_NIF_TERM bitcask_nifs_keydir_get(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_put(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_keydir_copy(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_itr(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
@@ -60,6 +61,7 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_put", 6, bitcask_nifs_keydir_put},
     {"keydir_get", 2, bitcask_nifs_keydir_get},
     {"keydir_remove", 2, bitcask_nifs_keydir_remove},
+    {"keydir_copy", 1, bitcask_nifs_keydir_copy},
     {"keydir_itr", 1, bitcask_nifs_keydir_itr},
     {"keydir_itr_next", 1, bitcask_nifs_keydir_itr_next}
 };
@@ -174,6 +176,41 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
         }
 
         return enif_make_atom(env, "ok");
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
+ERL_NIF_TERM bitcask_nifs_keydir_copy(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_keydir_handle* handle;
+
+    if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle))
+    {
+        bitcask_keydir_handle* new_handle = enif_alloc_resource(env,
+                                                                bitcask_keydir_RESOURCE,
+                                                                sizeof(bitcask_keydir_handle));
+        new_handle->keydir = 0;
+
+        // Deep copy each item from the existing handle
+        bitcask_keydir_entry* curr;
+        bitcask_keydir_entry* new;
+        for(curr = handle->keydir; curr != NULL; curr = curr->hh.next)
+        {
+            // Allocate our entry to be inserted into the new table and copy the record
+            // over. Note that we skip the hh portion of the struct.
+            new = enif_alloc(env, sizeof(bitcask_keydir_entry) + curr->key_sz);
+            memcpy(new + sizeof(UT_hash_handle),
+                   curr + sizeof(UT_hash_handle),
+                   sizeof(bitcask_keydir_entry) + curr->key_sz);
+            KEYDIR_HASH_ADD(new_handle->keydir, new);
+        }
+
+        ERL_NIF_TERM result = enif_make_resource(env, new_handle);
+        enif_release_resource(env, new_handle);
+        return enif_make_tuple2(env, enif_make_atom(env, "ok"), result);
     }
     else
     {
