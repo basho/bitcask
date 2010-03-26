@@ -51,8 +51,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_new(ErlNifEnv* env, int argc, const ERL_NIF_TER
 ERL_NIF_TERM bitcask_nifs_keydir_get(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_put(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
-ERL_NIF_TERM bitcask_nifs_keydir_first(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
-ERL_NIF_TERM bitcask_nifs_keydir_next(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_keydir_itr(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
 static ErlNifFunc nif_funcs[] =
 {
@@ -60,8 +60,8 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_put", 6, bitcask_nifs_keydir_put},
     {"keydir_get", 2, bitcask_nifs_keydir_get},
     {"keydir_remove", 2, bitcask_nifs_keydir_remove},
-    {"keydir_itr", 1, bitcask_nifs_keydir_first},
-    {"keydir_itr_next", 1, bitcask_nifs_keydir_next}
+    {"keydir_itr", 1, bitcask_nifs_keydir_itr},
+    {"keydir_itr_next", 1, bitcask_nifs_keydir_itr_next}
 };
 
 ERL_NIF_TERM bitcask_nifs_keydir_new(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -181,7 +181,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
     }
 }
 
-ERL_NIF_TERM bitcask_nifs_keydir_first(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+ERL_NIF_TERM bitcask_nifs_keydir_itr(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     bitcask_keydir_handle* handle;
 
@@ -189,6 +189,9 @@ ERL_NIF_TERM bitcask_nifs_keydir_first(ErlNifEnv* env, int argc, const ERL_NIF_T
     {
         if (handle->keydir)
         {
+            // Iteration of the keydir is uni-directional and immutable. As such, we are going
+            // to avoid allocating another resource and just hand back a cast'd pointer as our
+            // iterator. This means that iteration is very fast, but also somewhat fragile.
             return enif_make_ulong(env, (unsigned long)handle->keydir);
         }
         else
@@ -202,10 +205,11 @@ ERL_NIF_TERM bitcask_nifs_keydir_first(ErlNifEnv* env, int argc, const ERL_NIF_T
     }
 }
 
-ERL_NIF_TERM bitcask_nifs_keydir_next(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     bitcask_keydir_entry* entry = 0;
 
+    // Remember, for iteration we just cast the entry pointer and deref it.
     if (enif_get_ulong(env, argv[0], (unsigned long*)(&entry)))
     {
         if (entry)
@@ -229,6 +233,9 @@ ERL_NIF_TERM bitcask_nifs_keydir_next(ErlNifEnv* env, int argc, const ERL_NIF_TE
                                                  enif_make_uint(env, entry->value_sz),
                                                  enif_make_ulong(env, entry->value_pos),
                                                  enif_make_uint(env, entry->tstamp));
+
+            // Look at the next entry in the hashtable. If the next one is empty, we'll return
+            // a zero and the next call to itr_next will then just return the not_found atom.
             ERL_NIF_TERM next = enif_make_ulong(env, (unsigned long)entry->hh.next);
             return enif_make_tuple2(env, curr, next);
         }
