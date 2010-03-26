@@ -21,11 +21,13 @@
 -module(bitcask_nifs).
 
 -export([keydir_new/0,
-         keydir_get/1,
-         keydir_put/1,
-         keydir_remove/1]).
+         keydir_put/6,
+         keydir_get/2,
+         keydir_remove/2]).
 
 -on_load(init/0).
+
+-include("bitcask.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -43,13 +45,13 @@ init() ->
 keydir_new() ->
     "NIF library not loaded".
 
-keydir_put(_Ref) ->
+keydir_put(_Ref, _Key, _FileId, _ValueSz, _ValuePos, _Tstamp) ->
     "NIF library not loaded".
 
-keydir_get(_Ref) ->
+keydir_get(_Ref, _Key) ->
     "NIF library not loaded".
 
-keydir_remove(_Ref) ->
+keydir_remove(_Ref, _Key) ->
     "NIF library not loaded".
 
 %% ===================================================================
@@ -59,6 +61,18 @@ keydir_remove(_Ref) ->
 
 keydir_test() ->
     {ok, Ref} = keydir_new(),
-    ok = keydir_get(Ref).
+    ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
+
+    E = keydir_get(Ref, <<"abc">>),
+    0 = E#bitcask_entry.file_id,
+    1234 = E#bitcask_entry.value_sz,
+    0 = E#bitcask_entry.value_pos,
+    1 = E#bitcask_entry.tstamp,
+
+    already_exists = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 0),
+
+    ok = keydir_remove(Ref, <<"abc">>),
+    not_found = keydir_get(Ref, <<"abc">>).
+
 
 -endif.
