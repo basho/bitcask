@@ -5,6 +5,7 @@
   {modules, [
              bitcask_nifs,
              bitcask_server,
+             bitcask,
              bitcask_fileops
             ]},
   {registered, []},
