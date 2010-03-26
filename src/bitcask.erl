@@ -22,56 +22,90 @@
 
 -export([open/1,
          get/2,
-         put/3,
+%         put/3,
          delete/2]).
 
+-include("bitcask.hrl").
+
 %% @type bc_state().
--record(bc_state, {dirname, filestate, keyhash}).
+-record(bc_state, {dirname,
+                   files,    % List of #filestate
+                   keydir}). % Key directory
 
 -define(TOMBSTONE, <<"bitcask_tombstone">>).
 
+
 open(Dirname) ->
+    %% Make sure the directory exists
+    ok = filelib:ensure_dir(filename:join(Dirname, "bitcask")),
 
-    % scan all files in Dirname to build up initial table
-    % (build hash table pointing at those)
-    % (use hintfiles when they exist)
-    KeyHash = stub_bitcask_nif:build_new_keyhash(Dirname),
-    % above is abstract, needs to walk files and also use keyhash nifs
+    %% Build a list of all the bitcask data files and sort it in
+    %% descending order (newest->oldest)
+    Files = lists:reverse(lists:sort(filelib:wildcard("bitcask.[0-9]+.data"))),
 
-    {ok, FS} = bitcask_fileops:open_new(Dirname),
-    {ok, #bc_state{dirname=Dirname,filestate=FS,keyhash=KeyHash}}.
+    %% Setup a keydir and scan all the data files into it
+    {ok, KeyDir} = bitcask_nifs:keydir_new(),
+    Files = scan_key_files(Files, KeyDir),
+    {ok, #bc_state{ dirname = Dirname, files = Files, keydir = KeyDir }}.
 
-get(_State=#bc_state{dirname=Dirname,keyhash=KeyHash},
-    Key) ->
+get(#bc_state{keydir = KeyDir} = State, Key) ->
+    case bitcask_nifs:keydir_get(KeyDir, Key) of
+        not_found ->
+            {not_found, State};
 
-    {Filename, Offset, Size} = stub_bitcask_nif:lookup_in_keyhash(KeyHash, Key),
-    % todo: fix nif API use above, I just put in the idea here.
-    % note: above might course also be notfound, check and report
+        E when is_record(E, bitcask_entry) ->
+            {Filestate, State2} = get_filestate(E#bitcask_entry.file_id, State),
+            case bitcask_fileops:read(Filestate, E#bitcask_entry.value_pos,
+                                      E#bitcask_entry.value_sz) of
+                {ok, _Key, ?TOMBSTONE} ->
+                    {not_found, State};
+                {ok, _Key, Value} ->
+                    %% TODO: We don't actually USE the key...do we really need to even
+                    %% read it? Or does TOMBSTONE play into this?
+                    {ok, Value, State}
+            end;
 
-    AbsName = filename:absname_join(Dirname,Filename),
-    {ok, Key, Data} = bitcask_fileops:read(AbsName, Offset, Size),
-    case Data of
-        ?TOMBSTONE ->
-            {error, notfound};
-        _ ->
-            {ok, Data}
+        {error, Reason} ->
+            {error, Reason}
     end.
 
-put(State=#bc_state{dirname=Dirname,
-                    filestate=FS,keyhash=KeyHash},
-    Key,Value) ->
-    {ok, Filename} = bitcask_fileops:filename(FS),
-    {ok, NewFS, OffSet, Size} = bitcask_fileops:write(FS,Key,Value),
-    stub_bitcask_nif:update(KeyHash, Key, Filename, OffSet, Size),
-    FinalFS = case OffSet+Size > some_large_threshold of
-        true ->
-            bitcask_fileops:close(NewFS),
-            {ok, FS1} = bitcask_fileops:open_new(Dirname),
-            FS1;
+% put(State=#bc_state{dirname=Dirname,
+%                     filestate=FS,keyhash=KeyHash},
+%     Key,Value) ->
+%     {ok, Filename} = bitcask_fileops:filename(FS),
+%     {ok, NewFS, OffSet, Size} = bitcask_fileops:write(FS,Key,Value),
+%     stub_bitcask_nif:update(KeyHash, Key, Filename, OffSet, Size),
+%     FinalFS = case OffSet+Size > some_large_threshold of
+%         true ->
+%             bitcask_fileops:close(NewFS),
+%             {ok, FS1} = bitcask_fileops:open_new(Dirname),
+%             FS1;
+%         false ->
+%             NewFS
+%     end,
+%     {ok,State#bc_state{filestate=FinalFS}}.
+
+delete(State, Key) ->
+    %put(State,Key,?TOMBSTONE).
+    ok.
+
+
+%% ===================================================================
+%% Internal functions
+%% ===================================================================
+
+scan_key_files([], KeyDir) ->
+    ok;
+scan_key_files([Filename | Rest], KeyDir) ->
+    scan_key_files(Rest, KeyDir).
+
+
+get_filestate(FileId, #bc_state{ dirname = Dirname, files = Files } = State) ->
+    Fname = bitcask_fileops:filename(Dirname, FileId),
+    case lists:keysearch(Fname, #filestate.filename, Files) of
+        {value, Filestate} ->
+            {Filestate, State};
         false ->
-            NewFS
-    end,
-    {ok,State#bc_state{filestate=FinalFS}}.
-
-delete(State, Key) -> put(State,Key,?TOMBSTONE).
-
+            {ok, Filestate} = bitcask_fileops:open_file(Fname),
+            {Filestate, State#bc_state { files = [Filestate | State#bc_state.files] }}
+    end.

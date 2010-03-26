@@ -24,65 +24,106 @@
 -module(bitcask_fileops).
 -author('Justin Sheehy <justin@basho.com>').
 
--export([open_new/1,filename/1,close/1,read/3,write/3]).
+-export([create_file/1,
+         open_file/1,
+         close/1,
+         write/3,
+         read/3,
+         filename/2]).
 
-%% @type filestate().
--record(filestate, {filename, fd, ofs}).
+-include("bitcask.hrl").
 
 -define(BOUNDARY, <<17:16>>).
 -define(KEYSIZEFIELD, 16).
 -define(VALSIZEFIELD, 32).
 
-%% @doc Open a new filename for writing.
+%% @doc Open a new file for writing.
 %% Called on a Dirname, will open a fresh file in that directory.
-%% @spec open_new(Dirname :: string()) -> {ok, filestate()}
-open_new(Dirname) ->
-    TStamp = integer_to_list(tstamp()),
-    Filename = TStamp ++ ".bitcask",
+%% @spec create_file(Dirname :: string()) -> {ok, filestate()}
+create_file(DirName) ->
+    Filename = filename(DirName, tstamp()),
     ok = filelib:ensure_dir(Filename),
     case bitcase_nifs:create_file(Filename) of
         true ->
             {ok, FD} = file:open(Filename, [read, write, raw, binary]),
-            {ok, #filestate{filename=Filename,fd=FD,ofs=0}};
-        _ ->
-            open_new(Dirname)
+            {ok, #filestate{filename = Filename, fd = FD, ofs = 0}};
+        false ->
+            %% Couldn't create a new file with the requested name, so let's
+            %% delay 500 ms and try again. The working assumption is that this is
+            %% not a highly contentious code point. Latency lovers beware!
+            timer:sleep(500),
+            create_file(DirName)
     end.
-%% @private
-tstamp() ->
-    {Mega, Sec, _Micro} = now(),
-    (Mega * 1000000) + Sec.
+
+
+%% @doc Open an existing file for reading.
+%% Called with fully-qualified filename.
+%% @spec open_file(Filename :: string()) -> {ok, filestate()} | {error, any()}
+open_file(Filename) ->
+    case file:open(Filename, [read, raw, binary]) of
+        {ok, FD} ->
+            {ok, #filestate{ filename = Filename, fd = FD, ofs = 0 }};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
 
 %% @doc Use when done writing a file.  (never open for writing again)
 %% @spec close(filestate()) -> ok
-close(_Filestate=#filestate{fd=FD}) ->
+close(#filestate{ fd = FD }) ->
     file:close(FD),
     ok.
 
-%% @doc Write a Key-named binary data field ("Bytes") to the Filestate.
-%% @spec write(filestate(), Key :: binary(), Bytes :: binary()) ->
+
+%% @doc Write a Key-named binary data field ("Value") to the Filestate.
+%% @spec write(filestate(), Key :: binary(), Value :: binary()) ->
 %%       {ok, filestate(), Offset :: integer(), Size :: integer()}
-write(Filestate=#filestate{fd=FD,ofs=OFS}, Key, Bytes) ->
-    KeySize = size(Key),
-    true = (KeySize =< ?KEYSIZEFIELD),
-    BytesSize = size(Bytes),
-    true = (BytesSize =< ?VALSIZEFIELD),
-    FullBytes = <<?BOUNDARY/binary,
-                  KeySize:?KEYSIZEFIELD,Key/binary,
-                  BytesSize:?VALSIZEFIELD,Bytes/binary>>,
-    FullSize = size(FullBytes),
-    ok = file:pwrite(FD,OFS,FullBytes),
-    {ok, Filestate#filestate{ofs=OFS+FullSize}, OFS, FullSize}.
+write(Filestate=#filestate{fd = FD, ofs = Offset}, Key, Value) ->
+    KeySz = size(Key),
+    true = (KeySz =< ?KEYSIZEFIELD),
+    ValueSz = size(Value),
+    true = (ValueSz =< ?VALSIZEFIELD),
+    %% Setup io_list for writing -- avoid merging binaries if we can help it
+    Bytes = [?BOUNDARY, <<KeySz:?KEYSIZEFIELD>>, Key,
+             <<ValueSz:?VALSIZEFIELD>>, Value],
+    ok = file:pwrite(FD, Offset, Bytes),
+    FinalSz = size(?BOUNDARY) + ?KEYSIZEFIELD + KeySz + ?VALSIZEFIELD + ValueSz,
+    {ok, Filestate#filestate{ofs = Offset + FinalSz}, Offset, FinalSz}.
+
 
 %% @doc Given an Offset and Size, get the corresponding k/v from Filename.
 %% @spec read(Filename :: string(), Offset :: integer(), Size :: integer()) ->
 %%       {ok, Key :: binary(), Bytes :: binary()}
-read(Filename, Offset, Size) ->
-    {ok, FD} = file:open(Filename, [read, raw, binary]),
-    {ok, <<17:16,
-           KeySize:?KEYSIZEFIELD,
-           KeyPlusVal/binary>>} = file:pread(FD, Offset, Size),
-    <<Key:KeySize/binary,_BytesSize:?VALSIZEFIELD,Bytes/binary>> = KeyPlusVal,
-    {ok, Key, Bytes}.
+read(Filename, Offset, Size) when is_list(Filename) ->
+    case open_file(Filename) of
+        {ok, Fstate} ->
+            read(Fstate, Offset, Size);
+        {error, Reason} ->
+            {error, Reason}
+    end;
+read(#filestate { fd = FD }, Offset, Size) ->
+    case file:pread(FD, Offset, Size) of
+        {ok, Bytes} ->
+            <<17:16,
+             KeySz:?KEYSIZEFIELD,
+             Key:KeySz/bytes,
+             ValueSz:?VALSIZEFIELD,
+             Value:ValueSz/bytes>> = Bytes,
+            {ok, Key, Value};
+        {error, Reason} ->
+            {error, Reason}
+    end.
 
-filename(_Filestate=#filestate{filename=Filename}) -> {ok, Filename}.
+filename(Dirname, Tstamp) ->
+    filename:join(Dirname, lists:concat(["bitcask.", Tstamp, ".data"])).
+
+
+%% ===================================================================
+%% Internal functions
+%% ===================================================================
+
+%% @private
+tstamp() ->
+    {Mega, Sec, _Micro} = now(),
+    (Mega * 1000000) + Sec.
 
