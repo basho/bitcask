@@ -23,7 +23,10 @@
 -export([keydir_new/0,
          keydir_put/6,
          keydir_get/2,
-         keydir_remove/2]).
+         keydir_remove/2,
+         keydir_itr/1,
+         keydir_itr_next/1,
+         keydir_fold/3]).
 
 -on_load(init/0).
 
@@ -54,12 +57,34 @@ keydir_get(_Ref, _Key) ->
 keydir_remove(_Ref, _Key) ->
     "NIF library not loaded".
 
+keydir_itr(_Ref) ->
+    "NIF library not loaded".
+
+keydir_itr_next(_Itr) ->
+    "NIF library not loaded".
+
+keydir_fold(Ref, Fun, Acc0) ->
+    Itr = keydir_itr(Ref),
+    keydir_fold_cont(keydir_itr_next(Itr), Fun, Acc0).
+
+
+
+%% ===================================================================
+%% Internal functions
+%% ===================================================================
+
+keydir_fold_cont(not_found, _Fun, Acc0) ->
+    Acc0;
+keydir_fold_cont({Curr, Next}, Fun, Acc0) ->
+    Acc = Fun(Curr, Acc0),
+    keydir_fold_cont(keydir_itr_next(Next), Fun, Acc).
+
 %% ===================================================================
 %% EUnit tests
 %% ===================================================================
 -ifdef(TEST).
 
-keydir_test() ->
+keydir_basic_test() ->
     {ok, Ref} = keydir_new(),
     ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
 
@@ -74,5 +99,16 @@ keydir_test() ->
     ok = keydir_remove(Ref, <<"abc">>),
     not_found = keydir_get(Ref, <<"abc">>).
 
+keydir_itr_test() ->
+    {ok, Ref} = keydir_new(),
+    ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
+    ok = keydir_put(Ref, <<"def">>, 0, 4567, 1234, 2),
+    ok = keydir_put(Ref, <<"hij">>, 1, 7890, 0, 3),
+
+    List = keydir_fold(Ref, fun(E, Acc) -> [ E | Acc] end, []),
+    3 = length(List),
+    true = lists:keymember(<<"abc">>, #bitcask_entry.key, List),
+    true = lists:keymember(<<"def">>, #bitcask_entry.key, List),
+    true = lists:keymember(<<"hij">>, #bitcask_entry.key, List).
 
 -endif.

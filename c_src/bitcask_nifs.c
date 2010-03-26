@@ -51,13 +51,17 @@ ERL_NIF_TERM bitcask_nifs_keydir_new(ErlNifEnv* env, int argc, const ERL_NIF_TER
 ERL_NIF_TERM bitcask_nifs_keydir_get(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_put(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_keydir_first(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_keydir_next(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
 static ErlNifFunc nif_funcs[] =
 {
     {"keydir_new", 0, bitcask_nifs_keydir_new},
     {"keydir_put", 6, bitcask_nifs_keydir_put},
     {"keydir_get", 2, bitcask_nifs_keydir_get},
-    {"keydir_remove", 2, bitcask_nifs_keydir_remove}
+    {"keydir_remove", 2, bitcask_nifs_keydir_remove},
+    {"keydir_itr", 1, bitcask_nifs_keydir_first},
+    {"keydir_itr_next", 1, bitcask_nifs_keydir_next}
 };
 
 ERL_NIF_TERM bitcask_nifs_keydir_new(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -176,6 +180,69 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
         return enif_make_badarg(env);
     }
 }
+
+ERL_NIF_TERM bitcask_nifs_keydir_first(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_keydir_handle* handle;
+
+    if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle))
+    {
+        if (handle->keydir)
+        {
+            return enif_make_ulong(env, (unsigned long)handle->keydir);
+        }
+        else
+        {
+            return enif_make_atom(env, "not_found");
+        }
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
+ERL_NIF_TERM bitcask_nifs_keydir_next(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_keydir_entry* entry = 0;
+
+    if (enif_get_ulong(env, argv[0], (unsigned long*)(&entry)))
+    {
+        if (entry)
+        {
+            ErlNifBinary key;
+
+            // Alloc the binary and make sure it succeeded
+            if (!enif_alloc_binary(env, entry->key_sz, &key))
+            {
+                return enif_make_atom(env, "allocation_error");
+            }
+
+            // Copy the data from our key to the new allocated binary
+            // TODO: If we maintained a ErlNifBinary in the original entry, could we
+            // get away with not doing a copy here?
+            memcpy(key.data, entry->key, entry->key_sz);
+            ERL_NIF_TERM curr = enif_make_tuple6(env,
+                                                 enif_make_atom(env, "bitcask_entry"),
+                                                 enif_make_binary(env, &key),
+                                                 enif_make_uint(env, entry->file_id),
+                                                 enif_make_uint(env, entry->value_sz),
+                                                 enif_make_ulong(env, entry->value_pos),
+                                                 enif_make_uint(env, entry->tstamp));
+            ERL_NIF_TERM next = enif_make_ulong(env, (unsigned long)entry->hh.next);
+            return enif_make_tuple2(env, curr, next);
+        }
+        else
+        {
+            return enif_make_atom(env, "not_found");
+        }
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
 
 static void bitcask_nifs_keydir_resource_cleanup(ErlNifEnv* env, void* arg)
 {
