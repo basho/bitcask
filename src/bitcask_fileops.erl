@@ -24,7 +24,7 @@
 -module(bitcask_fileops).
 -author('Justin Sheehy <justin@basho.com>').
 
--export([open/1,close/1,read/3,write/3]).
+-export([open_new/1,filename/1,close/1,read/3,write/3]).
 
 %% @type filestate().
 -record(filestate, {filename, fd, ofs}).
@@ -34,13 +34,23 @@
 -define(VALSIZEFIELD, 32).
 
 %% @doc Open a new filename for writing.
-%% This should only be called on a not-yet-existent filename in a writable dir.
-%% @spec open(Filename :: string()) -> {ok, filestate()}
-open(Filename) ->
-    false = filelib:is_file(Filename),
+%% Called on a Dirname, will open a fresh file in that directory.
+%% @spec open_new(Dirname :: string()) -> {ok, filestate()}
+open_new(Dirname) ->
+    TStamp = integer_to_list(tstamp()),
+    Filename = TStamp ++ ".bitcask",
     ok = filelib:ensure_dir(Filename),
-    {ok, FD} = file:open(Filename, [read, write, raw, binary]),
-    {ok, #filestate{filename=Filename,fd=FD,ofs=0}}.
+    case bitcase_nifs:create_file(Filename) of
+        true ->
+            {ok, FD} = file:open(Filename, [read, write, raw, binary]),
+            {ok, #filestate{filename=Filename,fd=FD,ofs=0}};
+        _ ->
+            open_new(Dirname)
+    end.
+%% @private
+tstamp() ->
+    {Mega, Sec, _Micro} = now(),
+    (Mega * 1000000) + Sec.
 
 %% @doc Use when done writing a file.  (never open for writing again)
 %% @spec close(filestate()) -> ok
@@ -73,4 +83,6 @@ read(Filename, Offset, Size) ->
            KeyPlusVal/binary>>} = file:pread(FD, Offset, Size),
     <<Key:KeySize/binary,_BytesSize:?VALSIZEFIELD,Bytes/binary>> = KeyPlusVal,
     {ok, Key, Bytes}.
+
+filename(_Filestate=#filestate{filename=Filename}) -> {ok, Filename}.
 
