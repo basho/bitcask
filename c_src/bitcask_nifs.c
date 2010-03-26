@@ -30,7 +30,7 @@ static ErlNifResourceType* bitcask_keydir_RESOURCE;
 typedef struct
 {
     UT_hash_handle hh;         /* Required for uthash */
-    uint16_t file_id;
+    uint32_t file_id;
     uint32_t value_sz;
     uint64_t value_pos;
     uint32_t tstamp;
