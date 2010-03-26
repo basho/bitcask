@@ -27,7 +27,8 @@
          keydir_copy/1,
          keydir_itr/1,
          keydir_itr_next/1,
-         keydir_fold/3]).
+         keydir_fold/3,
+         create_file/1]).
 
 -on_load(init/0).
 
@@ -71,6 +72,8 @@ keydir_fold(Ref, Fun, Acc0) ->
     Itr = keydir_itr(Ref),
     keydir_fold_cont(keydir_itr_next(Itr), Fun, Acc0).
 
+create_file(Filename) ->
+    "NIF library not loaded".
 
 
 %% ===================================================================
@@ -124,5 +127,10 @@ keydir_copy_test() ->
     {ok, Ref2} = keydir_copy(Ref1),
     ?assertNot(keydir_itr(Ref1) == keydir_itr(Ref2)).
 
+create_file_test() ->
+    Fname = "/tmp/bitcask_nifs.createfile.test",
+    file:delete(Fname),
+    true = create_file(Fname),
+    false = create_file(Fname).
 
 -endif.

@@ -22,6 +22,9 @@
 #include "erl_nif.h"
 #include "uthash.h"
 
+#include <fcntl.h>
+#include <unistd.h>
+
 static ErlNifResourceType* bitcask_keydir_RESOURCE;
 
 typedef struct
@@ -55,6 +58,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_copy(ErlNifEnv* env, int argc, const ERL_NIF_TE
 ERL_NIF_TERM bitcask_nifs_keydir_itr(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
+ERL_NIF_TERM bitcask_nifs_create_file(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+
 static ErlNifFunc nif_funcs[] =
 {
     {"keydir_new", 0, bitcask_nifs_keydir_new},
@@ -63,7 +68,9 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_remove", 2, bitcask_nifs_keydir_remove},
     {"keydir_copy", 1, bitcask_nifs_keydir_copy},
     {"keydir_itr", 1, bitcask_nifs_keydir_itr},
-    {"keydir_itr_next", 1, bitcask_nifs_keydir_itr_next}
+    {"keydir_itr_next", 1, bitcask_nifs_keydir_itr_next},
+
+    {"create_file", 1, bitcask_nifs_create_file}
 };
 
 ERL_NIF_TERM bitcask_nifs_keydir_new(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -279,6 +286,29 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
         else
         {
             return enif_make_atom(env, "not_found");
+        }
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
+ERL_NIF_TERM bitcask_nifs_create_file(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    char filename[4096];
+    if (enif_get_string(env, argv[0], filename, sizeof(filename), ERL_NIF_LATIN1) > 0)
+    {
+        // Try to open the provided filename exclusively.
+        int fd = open(filename, O_CREAT | O_EXCL, 0);
+        if (fd > -1)
+        {
+            close(fd);
+            return enif_make_atom(env, "true");
+        }
+        else
+        {
+            return enif_make_atom(env, "false");
         }
     }
     else
