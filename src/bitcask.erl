@@ -30,6 +30,7 @@
 
 %% @type bc_state().
 -record(bc_state, {dirname,
+                   openfile, % filestate open for writing
                    files,    % List of #filestate
                    keydir}). % Key directory
 
@@ -52,7 +53,11 @@ open(Dirname) ->
     %% Setup a keydir and scan all the data files into it
     {ok, KeyDir} = bitcask_nifs:keydir_new(),
     Files = scan_key_files(Files, KeyDir),
-    {ok, #bc_state{ dirname = Dirname, files = Files, keydir = KeyDir }}.
+    {ok, OpenFS} = bitcask_fileops:create_file(Dirname),
+    {ok, #bc_state{dirname=Dirname,
+                   openfile=OpenFS,
+                   files=Files,
+                   keydir=KeyDir}}.
 
 get(#bc_state{keydir = KeyDir} = State, Key) ->
     case bitcask_nifs:keydir_get(KeyDir, Key) of
