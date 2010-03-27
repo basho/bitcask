@@ -28,6 +28,10 @@
 
 -include("bitcask.hrl").
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 %% @type bc_state().
 -record(bc_state, {dirname,
                    openfile, % filestate open for writing
@@ -118,3 +122,21 @@ get_filestate(FileId, #bc_state{ dirname = Dirname, files = Files } = State) ->
             {ok, Filestate} = bitcask_fileops:open_file(Fname),
             {Filestate, State#bc_state { files = [Filestate | State#bc_state.files] }}
     end.
+
+
+%% ===================================================================
+%% EUnit tests
+%% ===================================================================
+-ifdef(TEST).
+
+roundtrip_test() ->
+    os:cmd("rm -rf /tmp/bc.test"),
+    {ok, B} = bitcask:open("/tmp/bc.test"),
+    {ok, B1} = bitcask:put(B,<<"k">>,<<"v">>),
+    {ok, <<"v">>, B2} = bitcask:get(B1,<<"k">>),
+    {ok, B3} = bitcask:put(B2, <<"k2">>, <<"v2">>),
+    {ok, B4} = bitcask:put(B3, <<"k">>,<<"v3">>),
+    {ok, <<"v2">>, B5} = bitcask:get(B4, <<"k2">>),
+    {ok, <<"v3">>, _} = bitcask:get(B5, <<"k">>).
+
+-endif.
