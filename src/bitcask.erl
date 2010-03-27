@@ -58,12 +58,8 @@ get(#bc_state{keydir = KeyDir} = State, Key) ->
             {Filestate, State2} = get_filestate(E#bitcask_entry.file_id, State),
             case bitcask_fileops:read(Filestate, E#bitcask_entry.value_pos,
                                       E#bitcask_entry.value_sz) of
-                {ok, _Key, ?TOMBSTONE} ->
-                    {not_found, State};
-                {ok, _Key, Value} ->
-                    %% TODO: We don't actually USE the key...do we really need to even
-                    %% read it? Or does TOMBSTONE play into this?
-                    {ok, Value, State}
+                {ok, _Key, ?TOMBSTONE} -> {not_found, State};
+                {ok, _Key, Value} -> {ok, Value, State}
             end;
 
         {error, Reason} ->
