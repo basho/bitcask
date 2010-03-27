@@ -49,19 +49,15 @@ open(Dirname) ->
 
     %% Build a list of all the bitcask data files and sort it in
     %% descending order (newest->oldest)
-    Files = [bitcask_fileops:filename(Dirname, N) ||
-             N <- lists:reverse(lists:sort(
-                   [list_to_integer(hd(string:tokens(X,"."))) ||
-                       X <- lists:reverse(lists:sort(
-                                            filelib:wildcard("*data")))]))],
+    SortedFiles = list_data_files(Dirname),
 
     %% Setup a keydir and scan all the data files into it
     {ok, KeyDir} = bitcask_nifs:keydir_new(),
-    ok = scan_key_files(Files, KeyDir),  %% MAKE THIS NOT A NOP
+    ok = scan_key_files(SortedFiles, KeyDir),  %% MAKE THIS NOT A NOP
     {ok, OpenFS} = bitcask_fileops:create_file(Dirname),
     {ok, #bc_state{dirname=Dirname,
                    openfile=OpenFS,
-                   files=Files,
+                   files=[],
                    keydir=KeyDir}}.
 
 get(#bc_state{keydir = KeyDir} = State, Key) ->
@@ -107,6 +103,9 @@ delete(_State, _Key) ->
 %% Internal functions
 %% ===================================================================
 
+reverse_sort(L) ->
+    lists:reverse(lists:sort(L)).
+
 scan_key_files([], _KeyDir) ->
     ok;
 scan_key_files([_Filename | Rest], KeyDir) ->
@@ -123,6 +122,16 @@ get_filestate(FileId, #bc_state{ dirname = Dirname, files = Files } = State) ->
             {Filestate, State#bc_state { files = [Filestate | State#bc_state.files] }}
     end.
 
+list_data_files(Dirname) ->
+    %% Build a list of {tstamp, filename} for all files in the directory that
+    %% match our regex. Then reverse sort that list and extract the fully-qualified
+    %% filename.
+    Files = filelib:fold_files(Dirname, "[0-9]+.bitcask.data", false,
+                               fun(F, Acc) ->
+                                       [{bitcask_fileops:file_tstamp(F), F} | Acc]
+                               end, []),
+    [filename:join(Dirname, F) || {_Tstamp, F} <- reverse_sort(Files)].
+
 
 %% ===================================================================
 %% EUnit tests
@@ -138,5 +147,18 @@ roundtrip_test() ->
     {ok, B4} = bitcask:put(B3, <<"k">>,<<"v3">>),
     {ok, <<"v2">>, B5} = bitcask:get(B4, <<"k2">>),
     {ok, <<"v3">>, _} = bitcask:get(B5, <<"k">>).
+
+list_data_files_test() ->
+    os:cmd("rm -rf /tmp/bc.test.list; mkdir -p /tmp/bc.test.list"),
+
+    %% Generate a list of files from 12->8 (already in order we expect
+    ExpFiles = [?FMT("/tmp/bc.test.list/~w.bitcask.data", [I]) ||
+                   I <- lists:seq(12, 8, -1)],
+
+    %% Create each of the files
+    [] = os:cmd(?FMT("touch ~s", [string:join(ExpFiles, " ")])),
+
+    %% Now use the list_data_files to scan the dir
+    ExpFiles = list_data_files("/tmp/bc.test.list").
 
 -endif.

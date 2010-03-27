@@ -11,3 +11,5 @@
                     fd,       % File handle
                     ofs }).   % Current offset for writing
 
+
+-define(FMT(Str, Args), lists:flatten(io_lib:format(Str, Args))).

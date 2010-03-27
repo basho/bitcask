@@ -117,11 +117,13 @@ read(#filestate { fd = FD }, Offset, Size) ->
     end.
 
 filename(Dirname, Tstamp) ->
-    filename:join(Dirname, 
+    filename:join(Dirname,
                   lists:concat([integer_to_list(Tstamp),".bitcask.data"])).
 
-file_tstamp(_Filestate=#filestate{filename=FN}) ->
-    list_to_integer(hd(string:tokens(filename:basename(FN),"."))).
+file_tstamp(_Filestate=#filestate{filename=Filename}) ->
+    file_tstamp(Filename);
+file_tstamp(Filename) when is_list(Filename) ->
+    list_to_integer(filename:basename(Filename, ".bitcask.data")).
 
 %% ===================================================================
 %% Internal functions
