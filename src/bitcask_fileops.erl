@@ -49,7 +49,7 @@ create_file(DirName) ->
             {ok, #filestate{filename = Filename, fd = FD, ofs = 0}};
         false ->
             %% Couldn't create a new file with the requested name, so let's
-            %% delay 500 ms and try again. The working assumption is that this is
+            %% delay 500 ms & try again. The working assumption is that this is
             %% not a highly contentious code point. Latency lovers beware!
             timer:sleep(500),
             create_file(DirName)
