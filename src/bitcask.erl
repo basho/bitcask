@@ -35,12 +35,12 @@
 
 %% @type bc_state().
 -record(bc_state, {dirname,
-                   openfile, % filestate open for writing
-                   files,    % List of #filestate
-                   keydir}). % Key directory
+                   write_file,                  % File for writing
+                   read_files,                  % Files opened for reading
+                   max_file_size = 16#80000000, % 2GB default max_file size
+                   keydir}).                    % Key directory
 
 -define(TOMBSTONE, <<"bitcask_tombstone">>).
--define(LARGE_FILESIZE, 2#1111111111111111111111111111111).
 
 %% Filename convention is {integer_timestamp}.bitcask
 
@@ -54,16 +54,16 @@ open(Dirname) ->
 
     %% Setup a keydir and scan all the data files into it
     {ok, KeyDir} = bitcask_nifs:keydir_new(),
-    OpenFiles = scan_key_files(SortedFiles, KeyDir, []),
-    {ok, OpenFS} = bitcask_fileops:create_file(Dirname),
+    ReadFiles = scan_key_files(SortedFiles, KeyDir, []),
+    {ok, WriteFile} = bitcask_fileops:create_file(Dirname),
     {ok, #bc_state{dirname = Dirname,
-                   openfile = OpenFS,
-                   files = OpenFiles,
+                   write_file = WriteFile,
+                   read_files = ReadFiles,
                    keydir = KeyDir}}.
 
-close(#bc_state { openfile = OpenFS, files = Files }) ->
-    [ok = bitcask_fileops:close(F) || F <- Files],
-    ok = bitcask_fileops:close(OpenFS).
+close(#bc_state { write_file = WriteFile, read_files = ReadFiles }) ->
+    [ok = bitcask_fileops:close(F) || F <- ReadFiles],
+    ok = bitcask_fileops:close(WriteFile).
 
 
 get(#bc_state{keydir = KeyDir} = State, Key) ->
@@ -75,30 +75,38 @@ get(#bc_state{keydir = KeyDir} = State, Key) ->
             {Filestate, State2} = get_filestate(E#bitcask_entry.file_id, State),
             case bitcask_fileops:read(Filestate, E#bitcask_entry.value_pos,
                                       E#bitcask_entry.value_sz) of
-                {ok, _Key, ?TOMBSTONE} -> {not_found, State2};
-                {ok, _Key, Value} -> {ok, Value, State2}
+                {ok, _Key, ?TOMBSTONE} ->
+                    {not_found, State2};
+                {ok, _Key, Value} ->
+                    {ok, Value, State2}
             end;
         {error, Reason} ->
             {error, Reason}
     end.
 
-put(State=#bc_state{dirname=Dirname,openfile=OpenFS,keydir=KeyHash,
-                    files=Files},
-    Key,Value) ->
-    Tstamp = bitcask_fileops:tstamp(),
-    {ok, NewFS, OffSet, Size} = bitcask_fileops:write(OpenFS, Key, Value, Tstamp),
-    ok = bitcask_nifs:keydir_put(KeyHash, Key,
-                                 bitcask_fileops:file_tstamp(OpenFS),
-                                 Size, OffSet, Tstamp),
-    {FinalFS,FinalFiles} = case OffSet+Size > ?LARGE_FILESIZE of
-        true ->
-            bitcask_fileops:close(NewFS),
-            {ok, OpenFS} = bitcask_fileops:create_file(Dirname),
-            {OpenFS,[NewFS#filestate.filename|Files]};
-        false ->
-            {NewFS,Files}
+put(#bc_state{ dirname = Dirname, keydir = KeyDir } = State, Key, Value) ->
+    case bitcask_fileops:check_write(State#bc_state.write_file,
+                                     Key, Value, State#bc_state.max_file_size) of
+        wrap ->
+            %% Time to start a new write file. Note that we do not close the old one,
+            %% just transition it. The thinking is that closing/reopening for read only
+            %% access would flush the O/S cache for the file, which may be undesirable.
+            ok = bitcask_fileops:sync(State#bc_state.write_file),
+            {ok, WriteFile} = bitcask_fileops:create_file(Dirname),
+            State1 = State#bc_state{ write_file = WriteFile,
+                                     read_files = [State#bc_state.write_file |
+                                                   State#bc_state.read_files]};
+        ok ->
+            WriteFile = State#bc_state.write_file,
+            State1 = State
     end,
-    {ok,State#bc_state{openfile=FinalFS,files=FinalFiles}}.
+
+    Tstamp = bitcask_fileops:tstamp(),
+    {ok, NewWriteFile, OffSet, Size} = bitcask_fileops:write(WriteFile, Key, Value, Tstamp),
+    ok = bitcask_nifs:keydir_put(KeyDir, Key,
+                                 bitcask_fileops:file_tstamp(WriteFile),
+                                 Size, OffSet, Tstamp),
+    {ok, State1#bc_state { write_file = NewWriteFile }}.
 
 delete(_State, _Key) ->
     %put(State,Key,?TOMBSTONE).
@@ -128,14 +136,14 @@ scan_key_files([Filename | Rest], KeyDir, Acc) ->
     scan_key_files(Rest, KeyDir, [File | Acc]).
 
 
-get_filestate(FileId, #bc_state{ dirname = Dirname, files = Files } = State) ->
+get_filestate(FileId, #bc_state{ dirname = Dirname, read_files = ReadFiles } = State) ->
     Fname = bitcask_fileops:filename(Dirname, FileId),
-    case lists:keysearch(Fname, #filestate.filename, Files) of
+    case lists:keysearch(Fname, #filestate.filename, ReadFiles) of
         {value, Filestate} ->
             {Filestate, State};
         false ->
             {ok, Filestate} = bitcask_fileops:open_file(Fname),
-            {Filestate, State#bc_state { files = [Filestate | State#bc_state.files] }}
+            {Filestate, State#bc_state { read_files = [Filestate | State#bc_state.read_files] }}
     end.
 
 list_data_files(Dirname) ->
@@ -190,7 +198,7 @@ fold_test() ->
                              Bc
                      end, B, Inputs),
 
-    File = B1#bc_state.openfile,
+    File = B1#bc_state.write_file,
     L = bitcask_fileops:fold(File, fun(K, V, _Ts, _Pos, Acc) ->
                                            [{K, V} | Acc]
                                    end, []),
@@ -216,5 +224,31 @@ open_test() ->
                        {ok, V, Bc} = bitcask:get(Bc0, K),
                        Bc
                end, B2, Inputs).
+
+wrap_test() ->
+    os:cmd("rm -rf /tmp/bc.test.wrap"),
+
+    Inputs = [{<<"k">>, <<"v">>},
+              {<<"k2">>, <<"v2">>},
+              {<<"k3">>, <<"v3">>}],
+
+    {ok, B} = bitcask:open("/tmp/bc.test.wrap"),
+
+    %% Tweak max file size to be 1 byte so that every put should create a new
+    %% file
+    B1 = B#bc_state { max_file_size = 1 },
+    B2 = lists:foldl(fun({K, V}, Bc0) ->
+                             {ok, Bc} = bitcask:put(Bc0, K, V),
+                             Bc
+                     end, B1, Inputs),
+
+    close(B2),
+
+    {ok, B3} = bitcask:open("/tmp/bc.test.wrap"),
+    lists:foldl(fun({K, V}, Bc0) ->
+                       {ok, V, Bc} = bitcask:get(Bc0, K),
+                       Bc
+               end, B3, Inputs).
+
 
 -endif.

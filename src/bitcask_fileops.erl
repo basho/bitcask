@@ -29,10 +29,12 @@
          close/1,
          write/4,
          read/3,
+         sync/1,
          fold/3,
          filename/2,
          file_tstamp/1,
-         tstamp/0]).
+         tstamp/0,
+         check_write/4]).
 
 -include("bitcask.hrl").
 
@@ -117,6 +119,9 @@ read(#filestate { fd = FD }, Offset, Size) ->
             {error, Reason}
     end.
 
+sync(#filestate { fd = Fd }) ->
+    ok = file:sync(Fd).
+
 fold(#filestate { fd = Fd }, Fun, Acc) ->
     %% TODO: Add some sort of check that this is a read-only file
     {ok, _} = file:position(Fd, bof),
@@ -137,6 +142,16 @@ file_tstamp(#filestate{tstamp=Tstamp}) ->
     Tstamp;
 file_tstamp(Filename) when is_list(Filename) ->
     list_to_integer(filename:basename(Filename, ".bitcask.data")).
+
+check_write(#filestate { ofs = Offset }, Key, Value, MaxSize) ->
+    Size = ?HEADER_SIZE + size(Key) + size(Value),
+    case (Offset + Size) > MaxSize of
+        true ->
+            wrap;
+        false ->
+            ok
+    end.
+
 
 %% ===================================================================
 %% Internal functions
