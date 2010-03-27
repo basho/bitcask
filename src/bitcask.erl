@@ -79,11 +79,11 @@ get(#bc_state{keydir = KeyDir} = State, Key) ->
 put(State=#bc_state{dirname=Dirname,openfile=OpenFS,keydir=KeyHash,
                     files=Files},
     Key,Value) ->
-    {ok, NewFS, OffSet, Size} = bitcask_fileops:write(OpenFS,Key,Value),
-    ok = bitcask_nifs:keydir_put(KeyHash,Key,
+    Tstamp = bitcask_fileops:tstamp(),
+    {ok, NewFS, OffSet, Size} = bitcask_fileops:write(OpenFS, Key, Value, Tstamp),
+    ok = bitcask_nifs:keydir_put(KeyHash, Key,
                                  bitcask_fileops:file_tstamp(OpenFS),
-                                 Size,OffSet,
-                                 bitcask_fileops:tstamp()),
+                                 Size, OffSet, Tstamp),
     {FinalFS,FinalFiles} = case OffSet+Size > ?LARGE_FILESIZE of
         true ->
             bitcask_fileops:close(NewFS),

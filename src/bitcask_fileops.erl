@@ -27,7 +27,7 @@
 -export([create_file/1,
          open_file/1,
          close/1,
-         write/3,
+         write/4,
          read/3,
          filename/2,
          file_tstamp/1,
@@ -35,7 +35,7 @@
 
 -include("bitcask.hrl").
 
--define(BOUNDARY, <<17:16>>).
+-define(TSTAMPFIELD,  32).
 -define(KEYSIZEFIELD, 16).
 -define(VALSIZEFIELD, 32).
 
@@ -80,15 +80,16 @@ close(#filestate{ fd = FD }) ->
 
 
 %% @doc Write a Key-named binary data field ("Value") to the Filestate.
-%% @spec write(filestate(), Key :: binary(), Value :: binary()) ->
+%% @spec write(filestate(), Key :: binary(), Value :: binary(), Tstamp :: integer()) ->
 %%       {ok, filestate(), Offset :: integer(), Size :: integer()}
-write(Filestate=#filestate{fd = FD, ofs = Offset}, Key, Value) ->
+write(Filestate=#filestate{fd = FD, ofs = Offset}, Key, Value, Tstamp) ->
     KeySz = size(Key),
     true = (KeySz =< ?KEYSIZEFIELD),
     ValueSz = size(Value),
     true = (ValueSz =< ?VALSIZEFIELD),
     %% Setup io_list for writing -- avoid merging binaries if we can help it
-    Bytes = [?BOUNDARY, <<KeySz:?KEYSIZEFIELD>>, Key,
+    Bytes = [<<Tstamp:?TSTAMPFIELD>>,
+             <<KeySz:?KEYSIZEFIELD>>, Key,
              <<ValueSz:?VALSIZEFIELD>>, Value],
     ok = file:pwrite(FD, Offset, Bytes),
     FinalSz = iolist_size(Bytes),
@@ -97,7 +98,7 @@ write(Filestate=#filestate{fd = FD, ofs = Offset}, Key, Value) ->
 
 %% @doc Given an Offset and Size, get the corresponding k/v from Filename.
 %% @spec read(Filename :: string(), Offset :: integer(), Size :: integer()) ->
-%%       {ok, Key :: binary(), Bytes :: binary()}
+%%       {ok, Key :: binary(), Value :: binary()}
 read(Filename, Offset, Size) when is_list(Filename) ->
     case open_file(Filename) of
         {ok, Fstate} ->
@@ -108,11 +109,9 @@ read(Filename, Offset, Size) when is_list(Filename) ->
 read(#filestate { fd = FD }, Offset, Size) ->
     case file:pread(FD, Offset, Size) of
         {ok, Bytes} ->
-            <<17:16,
-             KeySz:?KEYSIZEFIELD,
-             Key:KeySz/bytes,
-             ValueSz:?VALSIZEFIELD,
-             Value:ValueSz/bytes>> = Bytes,
+            <<_Tstamp:?TSTAMPFIELD,
+              KeySz:?KEYSIZEFIELD, Key:KeySz/bytes,
+              ValueSz:?VALSIZEFIELD, Value:ValueSz/bytes>> = Bytes,
             {ok, Key, Value};
         {error, Reason} ->
             {error, Reason}
