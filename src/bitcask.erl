@@ -35,6 +35,7 @@
 
 -define(TOMBSTONE, <<"bitcask_tombstone">>).
 
+%% Filename convention is {integer_timestamp}.bitcask
 
 open(Dirname) ->
     %% Make sure the directory exists
@@ -42,7 +43,11 @@ open(Dirname) ->
 
     %% Build a list of all the bitcask data files and sort it in
     %% descending order (newest->oldest)
-    Files = lists:reverse(lists:sort(filelib:wildcard("bitcask.[0-9]+.data"))),
+    Files = [integer_to_list(N) ++ ".bitcask" ||
+             N <- lists:reverse(lists:sort(
+                   [list_to_integer(hd(string:tokens(X,"."))) ||
+                       X <- lists:reverse(lists:sort(
+                                            filelib:wildcard("*bitcask")))]))],
 
     %% Setup a keydir and scan all the data files into it
     {ok, KeyDir} = bitcask_nifs:keydir_new(),
