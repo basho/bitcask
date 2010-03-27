@@ -161,4 +161,21 @@ list_data_files_test() ->
     %% Now use the list_data_files to scan the dir
     ExpFiles = list_data_files("/tmp/bc.test.list").
 
+fold_test() ->
+    os:cmd("rm -rf /tmp/bc.test.fold"),
+
+    Inputs = [{<<"k">>, <<"v">>},
+              {<<"k2">>, <<"v2">>},
+              {<<"k3">>, <<"v3">>}],
+
+    {ok, B} = bitcask:open("/tmp/bc.test.fold"),
+    B1 = lists:foldl(fun({K, V}, Bc0) ->
+                             {ok, Bc} = bitcask:put(Bc0, K, V),
+                             Bc
+                     end, B, Inputs),
+
+    File = B1#bc_state.openfile,
+    L = bitcask_fileops:fold(File, fun(K, V, _Ts, Acc) -> [{K, V} | Acc] end, []),
+    Inputs = lists:reverse(L).
+
 -endif.

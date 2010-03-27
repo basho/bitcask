@@ -29,6 +29,7 @@
          close/1,
          write/4,
          read/3,
+         fold/3,
          filename/2,
          file_tstamp/1,
          tstamp/0]).
@@ -38,6 +39,7 @@
 -define(TSTAMPFIELD,  32).
 -define(KEYSIZEFIELD, 16).
 -define(VALSIZEFIELD, 32).
+-define(HEADER_SIZE,  10). % 4 + 2 + 4 bytes
 
 %% @doc Open a new file for writing.
 %% Called on a Dirname, will open a fresh file in that directory.
@@ -88,9 +90,8 @@ write(Filestate=#filestate{fd = FD, ofs = Offset}, Key, Value, Tstamp) ->
     ValueSz = size(Value),
     true = (ValueSz =< ?VALSIZEFIELD),
     %% Setup io_list for writing -- avoid merging binaries if we can help it
-    Bytes = [<<Tstamp:?TSTAMPFIELD>>,
-             <<KeySz:?KEYSIZEFIELD>>, Key,
-             <<ValueSz:?VALSIZEFIELD>>, Value],
+    Bytes = [<<Tstamp:?TSTAMPFIELD>>, <<KeySz:?KEYSIZEFIELD>>,
+             <<ValueSz:?VALSIZEFIELD>>, Key, Value],
     ok = file:pwrite(FD, Offset, Bytes),
     FinalSz = iolist_size(Bytes),
     {ok, Filestate#filestate{ofs = Offset + FinalSz}, Offset, FinalSz}.
@@ -109,10 +110,21 @@ read(Filename, Offset, Size) when is_list(Filename) ->
 read(#filestate { fd = FD }, Offset, Size) ->
     case file:pread(FD, Offset, Size) of
         {ok, Bytes} ->
-            <<_Tstamp:?TSTAMPFIELD,
-              KeySz:?KEYSIZEFIELD, Key:KeySz/bytes,
-              ValueSz:?VALSIZEFIELD, Value:ValueSz/bytes>> = Bytes,
+            <<_Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD, ValueSz:?VALSIZEFIELD,
+              Key:KeySz/bytes, Value:ValueSz/bytes>> = Bytes,
             {ok, Key, Value};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+fold(#filestate { fd = Fd }, Fun, Acc) ->
+    %% TODO: Add some sort of check that this is a read-only file
+    {ok, _} = file:position(Fd, bof),
+    case file:read(Fd, ?HEADER_SIZE) of
+        {ok, <<_Tstamp:?TSTAMPFIELD, _KeySz:?KEYSIZEFIELD, _ValueSz:?VALSIZEFIELD>> = H} ->
+            fold(Fd, H, Fun, Acc);
+        eof ->
+            Acc;
         {error, Reason} ->
             {error, Reason}
     end.
@@ -134,4 +146,18 @@ file_tstamp(Filename) when is_list(Filename) ->
 tstamp() ->
     {Mega, Sec, _Micro} = now(),
     (Mega * 1000000) + Sec.
+
+
+fold(Fd, Header, Fun, Acc0) ->
+    <<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD, ValueSz:?VALSIZEFIELD>> = Header,
+    ReadSz = KeySz + ValueSz + ?HEADER_SIZE,
+    case file:read(Fd, ReadSz) of
+        {ok, <<Key:KeySz/bytes, Value:ValueSz/bytes, NextHeader:?HEADER_SIZE/bytes>>} ->
+            Acc = Fun(Key, Value, Tstamp, Acc0),
+            fold(Fd, NextHeader, Fun, Acc);
+        {ok, <<Key:KeySz/bytes, Value:ValueSz/bytes>>} ->
+            Fun(Key, Value, Tstamp, Acc0);
+        {error, Reason} ->
+            {error, Reason}
+    end.
 
