@@ -114,9 +114,11 @@ ERL_NIF_TERM bitcask_nifs_keydir_put(ErlNifEnv* env, int argc, const ERL_NIF_TER
             KEYDIR_HASH_ADD(handle->keydir, new_entry);
             return enif_make_atom(env, "ok");
         }
-        else if (old_entry->tstamp < entry.tstamp)
+        else if (old_entry->tstamp <= entry.tstamp)
         {
-            // Entry already exists -- let's just update the relevant info
+            // Entry already exists -- let's just update the relevant info. Note that if you
+            // do multiple updates in a second, the last one in wins!
+            // TODO: Safe?
             old_entry->file_id = entry.file_id;
             old_entry->value_sz = entry.value_sz;
             old_entry->value_pos = entry.value_pos;
