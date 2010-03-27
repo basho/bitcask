@@ -29,7 +29,9 @@
          close/1,
          write/3,
          read/3,
-         filename/2]).
+         filename/2,
+         file_tstamp/1,
+         tstamp/0]).
 
 -include("bitcask.hrl").
 
@@ -43,7 +45,7 @@
 create_file(DirName) ->
     Filename = filename(DirName, tstamp()),
     ok = filelib:ensure_dir(Filename),
-    case bitcase_nifs:create_file(Filename) of
+    case bitcask_nifs:create_file(Filename) of
         true ->
             {ok, FD} = file:open(Filename, [read, write, raw, binary]),
             {ok, #filestate{filename = Filename, fd = FD, ofs = 0}};
@@ -118,6 +120,8 @@ filename(Dirname, Tstamp) ->
     filename:join(Dirname, 
                   lists:concat([integer_to_list(Tstamp),".bitcask.data"])).
 
+file_tstamp(_Filestate=#filestate{filename=FN}) ->
+    list_to_integer(hd(string:tokens(filename:basename(FN),"."))).
 
 %% ===================================================================
 %% Internal functions

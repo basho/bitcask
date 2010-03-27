@@ -23,7 +23,7 @@
 
 -export([open/1,
          get/2,
-%         put/3,
+         put/3,
          delete/2]).
 
 -include("bitcask.hrl").
@@ -35,6 +35,7 @@
                    keydir}). % Key directory
 
 -define(TOMBSTONE, <<"bitcask_tombstone">>).
+-define(LARGE_FILESIZE, 2#1111111111111111111111111111111).
 
 %% Filename convention is {integer_timestamp}.bitcask
 
@@ -44,7 +45,7 @@ open(Dirname) ->
 
     %% Build a list of all the bitcask data files and sort it in
     %% descending order (newest->oldest)
-    Files = [bitcask_fileops:filename(N) ||
+    Files = [bitcask_fileops:filename(Dirname, N) ||
              N <- lists:reverse(lists:sort(
                    [list_to_integer(hd(string:tokens(X,"."))) ||
                        X <- lists:reverse(lists:sort(
@@ -52,7 +53,7 @@ open(Dirname) ->
 
     %% Setup a keydir and scan all the data files into it
     {ok, KeyDir} = bitcask_nifs:keydir_new(),
-    Files = scan_key_files(Files, KeyDir),
+    ok = scan_key_files(Files, KeyDir),  %% MAKE THIS NOT A NOP
     {ok, OpenFS} = bitcask_fileops:create_file(Dirname),
     {ok, #bc_state{dirname=Dirname,
                    openfile=OpenFS,
@@ -75,21 +76,23 @@ get(#bc_state{keydir = KeyDir} = State, Key) ->
             {error, Reason}
     end.
 
-% put(State=#bc_state{dirname=Dirname,
-%                     filestate=FS,keyhash=KeyHash},
-%     Key,Value) ->
-%     {ok, Filename} = bitcask_fileops:filename(FS),
-%     {ok, NewFS, OffSet, Size} = bitcask_fileops:write(FS,Key,Value),
-%     stub_bitcask_nif:update(KeyHash, Key, Filename, OffSet, Size),
-%     FinalFS = case OffSet+Size > some_large_threshold of
-%         true ->
-%             bitcask_fileops:close(NewFS),
-%             {ok, FS1} = bitcask_fileops:open_new(Dirname),
-%             FS1;
-%         false ->
-%             NewFS
-%     end,
-%     {ok,State#bc_state{filestate=FinalFS}}.
+put(State=#bc_state{dirname=Dirname,openfile=OpenFS,keydir=KeyHash,
+                    files=Files},
+    Key,Value) ->
+    {ok, NewFS, OffSet, Size} = bitcask_fileops:write(OpenFS,Key,Value),
+    ok = bitcask_nifs:keydir_put(KeyHash,Key,
+                                 bitcask_fileops:file_tstamp(OpenFS),
+                                 Size,OffSet,
+                                 bitcask_fileops:tstamp()),
+    {FinalFS,FinalFiles} = case OffSet+Size > ?LARGE_FILESIZE of
+        true ->
+            bitcask_fileops:close(NewFS),
+            {ok, OpenFS} = bitcask_fileops:create_file(Dirname),
+            {OpenFS,[NewFS#filestate.filename|Files]};
+        false ->
+            {NewFS,Files}
+    end,
+    {ok,State#bc_state{openfile=FinalFS,files=FinalFiles}}.
 
 delete(_State, _Key) ->
     %put(State,Key,?TOMBSTONE).
