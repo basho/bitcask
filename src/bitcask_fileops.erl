@@ -48,7 +48,8 @@ create_file(DirName) ->
     case bitcask_nifs:create_file(Filename) of
         true ->
             {ok, FD} = file:open(Filename, [read, write, raw, binary]),
-            {ok, #filestate{filename = Filename, fd = FD, ofs = 0}};
+            {ok, #filestate{filename = Filename, tstamp = file_tstamp(Filename),
+                            fd = FD, ofs = 0}};
         false ->
             %% Couldn't create a new file with the requested name, so let's
             %% delay 500 ms & try again. The working assumption is that this is
@@ -64,7 +65,8 @@ create_file(DirName) ->
 open_file(Filename) ->
     case file:open(Filename, [read, raw, binary]) of
         {ok, FD} ->
-            {ok, #filestate{ filename = Filename, fd = FD, ofs = 0 }};
+            {ok, #filestate{ filename = Filename, tstamp = file_tstamp(Filename),
+                             fd = FD, ofs = 0 }};
         {error, Reason} ->
             {error, Reason}
     end.
@@ -120,8 +122,8 @@ filename(Dirname, Tstamp) ->
     filename:join(Dirname,
                   lists:concat([integer_to_list(Tstamp),".bitcask.data"])).
 
-file_tstamp(_Filestate=#filestate{filename=Filename}) ->
-    file_tstamp(Filename);
+file_tstamp(#filestate{tstamp=Tstamp}) ->
+    Tstamp;
 file_tstamp(Filename) when is_list(Filename) ->
     list_to_integer(filename:basename(Filename, ".bitcask.data")).
 

@@ -8,6 +8,7 @@
 
 %% @type filestate().
 -record(filestate, {filename, % Filename
+                    tstamp,   % Tstamp portion of filename
                     fd,       % File handle
                     ofs }).   % Current offset for writing
 

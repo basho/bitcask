@@ -139,6 +139,9 @@ list_data_files(Dirname) ->
 -ifdef(TEST).
 
 roundtrip_test() ->
+    dbg:tracer(),
+    dbg:p(all, call),
+    dbg:tpl(bitcask_fileops, []),
     os:cmd("rm -rf /tmp/bc.test"),
     {ok, B} = bitcask:open("/tmp/bc.test"),
     {ok, B1} = bitcask:put(B,<<"k">>,<<"v">>),
