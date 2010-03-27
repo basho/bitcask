@@ -122,7 +122,7 @@ fold(#filestate { fd = Fd }, Fun, Acc) ->
     {ok, _} = file:position(Fd, bof),
     case file:read(Fd, ?HEADER_SIZE) of
         {ok, <<_Tstamp:?TSTAMPFIELD, _KeySz:?KEYSIZEFIELD, _ValueSz:?VALSIZEFIELD>> = H} ->
-            fold(Fd, H, Fun, Acc);
+            fold(Fd, H, 0, Fun, Acc);
         eof ->
             Acc;
         {error, Reason} ->
@@ -148,15 +148,19 @@ tstamp() ->
     (Mega * 1000000) + Sec.
 
 
-fold(Fd, Header, Fun, Acc0) ->
+fold(Fd, Header, Offset, Fun, Acc0) ->
     <<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD, ValueSz:?VALSIZEFIELD>> = Header,
     ReadSz = KeySz + ValueSz + ?HEADER_SIZE,
     case file:read(Fd, ReadSz) of
-        {ok, <<Key:KeySz/bytes, Value:ValueSz/bytes, NextHeader:?HEADER_SIZE/bytes>>} ->
-            Acc = Fun(Key, Value, Tstamp, Acc0),
-            fold(Fd, NextHeader, Fun, Acc);
-        {ok, <<Key:KeySz/bytes, Value:ValueSz/bytes>>} ->
-            Fun(Key, Value, Tstamp, Acc0);
+        {ok, <<Key:KeySz/bytes, Value:ValueSz/bytes, Rest/binary>>} ->
+            PosInfo = {Offset, ReadSz},
+            Acc = Fun(Key, Value, Tstamp, PosInfo, Acc0),
+            case Rest of
+                <<NextHeader:?HEADER_SIZE/bytes>> ->
+                    fold(Fd, NextHeader, Offset + ReadSz, Fun, Acc);
+                <<>> ->
+                    Acc
+            end;
         {error, Reason} ->
             {error, Reason}
     end.

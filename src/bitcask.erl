@@ -22,6 +22,7 @@
 -module(bitcask).
 
 -export([open/1,
+         close/1,
          get/2,
          put/3,
          delete/2]).
@@ -53,12 +54,17 @@ open(Dirname) ->
 
     %% Setup a keydir and scan all the data files into it
     {ok, KeyDir} = bitcask_nifs:keydir_new(),
-    ok = scan_key_files(SortedFiles, KeyDir),  %% MAKE THIS NOT A NOP
+    OpenFiles = scan_key_files(SortedFiles, KeyDir, []),
     {ok, OpenFS} = bitcask_fileops:create_file(Dirname),
-    {ok, #bc_state{dirname=Dirname,
-                   openfile=OpenFS,
-                   files=[],
-                   keydir=KeyDir}}.
+    {ok, #bc_state{dirname = Dirname,
+                   openfile = OpenFS,
+                   files = OpenFiles,
+                   keydir = KeyDir}}.
+
+close(#bc_state { openfile = OpenFS, files = Files }) ->
+    [ok = bitcask_fileops:close(F) || F <- Files],
+    ok = bitcask_fileops:close(OpenFS).
+
 
 get(#bc_state{keydir = KeyDir} = State, Key) ->
     case bitcask_nifs:keydir_get(KeyDir, Key) of
@@ -106,10 +112,20 @@ delete(_State, _Key) ->
 reverse_sort(L) ->
     lists:reverse(lists:sort(L)).
 
-scan_key_files([], _KeyDir) ->
-    ok;
-scan_key_files([_Filename | Rest], KeyDir) ->
-    scan_key_files(Rest, KeyDir).
+scan_key_files([], _KeyDir, Acc) ->
+    Acc;
+scan_key_files([Filename | Rest], KeyDir, Acc) ->
+    {ok, File} = bitcask_fileops:open_file(Filename),
+    F = fun(K, _V, Tstamp, {Offset, TotalSz}, _) ->
+                bitcask_nifs:keydir_put(KeyDir,
+                                        K,
+                                        bitcask_fileops:file_tstamp(File),
+                                        TotalSz,
+                                        Offset,
+                                        Tstamp)
+        end,
+    bitcask_fileops:fold(File, F, undefined),
+    scan_key_files(Rest, KeyDir, [File | Acc]).
 
 
 get_filestate(FileId, #bc_state{ dirname = Dirname, files = Files } = State) ->
@@ -139,8 +155,8 @@ list_data_files(Dirname) ->
 -ifdef(TEST).
 
 roundtrip_test() ->
-    os:cmd("rm -rf /tmp/bc.test"),
-    {ok, B} = bitcask:open("/tmp/bc.test"),
+    os:cmd("rm -rf /tmp/bc.test.roundtrip"),
+    {ok, B} = bitcask:open("/tmp/bc.test.roundtrip"),
     {ok, B1} = bitcask:put(B,<<"k">>,<<"v">>),
     {ok, <<"v">>, B2} = bitcask:get(B1,<<"k">>),
     {ok, B3} = bitcask:put(B2, <<"k2">>, <<"v2">>),
@@ -175,7 +191,30 @@ fold_test() ->
                      end, B, Inputs),
 
     File = B1#bc_state.openfile,
-    L = bitcask_fileops:fold(File, fun(K, V, _Ts, Acc) -> [{K, V} | Acc] end, []),
+    L = bitcask_fileops:fold(File, fun(K, V, _Ts, _Pos, Acc) ->
+                                           [{K, V} | Acc]
+                                   end, []),
     Inputs = lists:reverse(L).
+
+open_test() ->
+    os:cmd("rm -rf /tmp/bc.test.open"),
+
+    Inputs = [{<<"k">>, <<"v">>},
+              {<<"k2">>, <<"v2">>},
+              {<<"k3">>, <<"v3">>}],
+
+    {ok, B} = bitcask:open("/tmp/bc.test.open"),
+    B1 = lists:foldl(fun({K, V}, Bc0) ->
+                             {ok, Bc} = bitcask:put(Bc0, K, V),
+                             Bc
+                     end, B, Inputs),
+
+    close(B1),
+
+    {ok, B2} = bitcask:open("/tmp/bc.test.open"),
+    lists:foldl(fun({K, V}, Bc0) ->
+                       {ok, V, Bc} = bitcask:get(Bc0, K),
+                       Bc
+               end, B2, Inputs).
 
 -endif.
