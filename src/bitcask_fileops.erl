@@ -91,7 +91,7 @@ write(Filestate=#filestate{fd = FD, ofs = Offset}, Key, Value) ->
     Bytes = [?BOUNDARY, <<KeySz:?KEYSIZEFIELD>>, Key,
              <<ValueSz:?VALSIZEFIELD>>, Value],
     ok = file:pwrite(FD, Offset, Bytes),
-    FinalSz = size(?BOUNDARY) + ?KEYSIZEFIELD + KeySz + ?VALSIZEFIELD + ValueSz,
+    FinalSz = iolist_size(Bytes),
     {ok, Filestate#filestate{ofs = Offset + FinalSz}, Offset, FinalSz}.
 
 
