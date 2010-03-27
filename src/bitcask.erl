@@ -58,10 +58,9 @@ get(#bc_state{keydir = KeyDir} = State, Key) ->
             {Filestate, State2} = get_filestate(E#bitcask_entry.file_id, State),
             case bitcask_fileops:read(Filestate, E#bitcask_entry.value_pos,
                                       E#bitcask_entry.value_sz) of
-                {ok, _Key, ?TOMBSTONE} -> {not_found, State};
-                {ok, _Key, Value} -> {ok, Value, State}
+                {ok, _Key, ?TOMBSTONE} -> {not_found, State2};
+                {ok, _Key, Value} -> {ok, Value, State2}
             end;
-
         {error, Reason} ->
             {error, Reason}
     end.
