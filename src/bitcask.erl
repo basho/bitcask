@@ -245,6 +245,10 @@ wrap_test() ->
     close(B2),
 
     {ok, B3} = bitcask:open("/tmp/bc.test.wrap"),
+
+    %% Expect 4 files, since we open a new one on startup + the 3
+    %% for each key written
+    4 = length(B3#bc_state.read_files),
     lists:foldl(fun({K, V}, Bc0) ->
                        {ok, V, Bc} = bitcask:get(Bc0, K),
                        Bc
