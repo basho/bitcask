@@ -115,7 +115,8 @@ read(#filestate { fd = FD }, Offset, Size) ->
     end.
 
 filename(Dirname, Tstamp) ->
-    filename:join(Dirname, lists:concat(["bitcask.", Tstamp, ".data"])).
+    filename:join(Dirname, 
+                  lists:concat([integer_to_list(Tstamp),".bitcask.data"])).
 
 
 %% ===================================================================

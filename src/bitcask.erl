@@ -43,11 +43,11 @@ open(Dirname) ->
 
     %% Build a list of all the bitcask data files and sort it in
     %% descending order (newest->oldest)
-    Files = [integer_to_list(N) ++ ".bitcask" ||
+    Files = [bitcask_fileops:filename(N) ||
              N <- lists:reverse(lists:sort(
                    [list_to_integer(hd(string:tokens(X,"."))) ||
                        X <- lists:reverse(lists:sort(
-                                            filelib:wildcard("*bitcask")))]))],
+                                            filelib:wildcard("*data")))]))],
 
     %% Setup a keydir and scan all the data files into it
     {ok, KeyDir} = bitcask_nifs:keydir_new(),
