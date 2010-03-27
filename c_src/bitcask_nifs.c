@@ -300,7 +300,7 @@ ERL_NIF_TERM bitcask_nifs_create_file(ErlNifEnv* env, int argc, const ERL_NIF_TE
     if (enif_get_string(env, argv[0], filename, sizeof(filename), ERL_NIF_LATIN1) > 0)
     {
         // Try to open the provided filename exclusively.
-        int fd = open(filename, O_CREAT | O_EXCL, 0);
+        int fd = open(filename, O_CREAT | O_EXCL, S_IREAD | S_IWRITE);
         if (fd > -1)
         {
             close(fd);
