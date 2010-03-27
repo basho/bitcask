@@ -91,7 +91,7 @@ get(#bc_state{keydir = KeyDir} = State, Key) ->
 %     end,
 %     {ok,State#bc_state{filestate=FinalFS}}.
 
-delete(State, Key) ->
+delete(_State, _Key) ->
     %put(State,Key,?TOMBSTONE).
     ok.
 
@@ -100,9 +100,9 @@ delete(State, Key) ->
 %% Internal functions
 %% ===================================================================
 
-scan_key_files([], KeyDir) ->
+scan_key_files([], _KeyDir) ->
     ok;
-scan_key_files([Filename | Rest], KeyDir) ->
+scan_key_files([_Filename | Rest], KeyDir) ->
     scan_key_files(Rest, KeyDir).
 
 
