@@ -60,26 +60,31 @@ open(Dirname, Opts) ->
     case proplists:get_bool(read_write, Opts) of
         true ->
             %% Try to acquire the write lock, or bail if unable to
-            case bitcask_lockops:write_lock_acquire(Dirname) of
+            case bitcask_lockops:lock_acquire(
+                   bitcask_lockops:write_lock_filename(Dirname)) of
                 true ->
-                    %% Open up the new file for writing and update the write lock file
-                    {ok, NewWritingFile} = bitcask_fileops:create_file(Dirname),
-                    NewWritingFilename = bitcask_fileops:filename(NewWritingFile),
-                    ok = bitcask_lockops:write_lock_update(Dirname, NewWritingFilename);
-
+                    %% Open up the new file for writing
+                    %% and update the write lock file
+                    {ok, WritingFile} = bitcask_fileops:create_file(Dirname),
+                    WritingFilename = bitcask_fileops:filename(WritingFile),
+                    ok = bitcask_lockops:lock_update(
+                           bitcask_lockops:write_lock_filename(Dirname),
+                           WritingFilename);
                 false ->
-                    NewWritingFile = undefined, % Make erlc happy w/ non-local exit
+                    WritingFile = undefined, % Make erlc happy w/ non-local exit
                     throw({error, write_locked})
             end;
         false ->
-            NewWritingFile = undefined
+            WritingFile = undefined
     end,
 
-    %% If we don't have a NewWritingFile, check the write lock and see
+    %% If we don't have a WritingFile, check the write lock and see
     %% what file is currently active so we don't attempt to read it.
-    case NewWritingFile of
+    case WritingFile of
         undefined ->
-            {_ActivePid, ActiveFile} = bitcask_lockops:write_lock_check(Dirname);
+            {_ActivePid, ActiveFile} = bitcask_lockops:lock_check(
+                                         bitcask_lockops:write_lock_filename(
+                                           Dirname));
         _ ->
             ActiveFile = undefined
     end,
@@ -104,7 +109,7 @@ open(Dirname, Opts) ->
     %% Setup basic state
     {ok, #bc_state{dirname = Dirname,
                    read_files = ReadFiles,
-                   write_file = NewWritingFile, % May be undefined
+                   write_file = WritingFile, % May be undefined
                    max_file_size = MaxFileSize,
                    keydir = KeyDir}}.
 
@@ -120,7 +125,8 @@ close(#bc_state { write_file = WriteFile, read_files = ReadFiles, dirname = Dirn
             ok;
         _ ->
             ok = bitcask_fileops:close(WriteFile),
-            ok = bitcask_lockops:write_lock_release(Dirname)
+            ok = bitcask_lockops:lock_release(
+                   bitcask_lockops:write_lock_filename(Dirname))
     end.
 
 

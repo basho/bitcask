@@ -21,21 +21,25 @@
 %% -------------------------------------------------------------------
 -module(bitcask_lockops).
 
--export([write_lock_check/1,
-         write_lock_acquire/1,
-         write_lock_update/2,
-         write_lock_release/1]).
+-export([lock_check/1,
+         lock_acquire/1,
+         lock_update/2,
+         lock_release/1,
+         write_lock_filename/1,
+         merge_lock_filename/1]).
 
-write_lock_check(Dirname) ->
-    write_lock_check(Dirname, 3).
+lock_check(Filename) ->
+    lock_check(Filename, 3).
 
-write_lock_check(Dirname, 0) ->
-    error_logger:error_msg("Timed out waiting for partial write lock in ~s\n", [Dirname]),
+lock_check(Filename, 0) ->
+    error_logger:error_msg("Timed out waiting for partial write lock in ~s\n",
+                           [Filename]),
     {undefined, undefined};
-write_lock_check(Dirname, Count) ->
-    case file:read_file(write_lock_file(Dirname)) of
+lock_check(Filename, Count) ->
+    case file:read_file(Filename) of
         {ok, Bin} ->
-            case re:run(Bin, "([0-9]+) (.*)\n", [{capture, all_but_first, list}]) of
+            case re:run(Bin, "([0-9]+) (.*)\n",
+                        [{capture, all_but_first, list}]) of
                 {match, [WritingPid, []]} ->
                     {WritingPid, undefined};
                 {match, [WritingPid, WritingFile]} ->
@@ -43,42 +47,42 @@ write_lock_check(Dirname, Count) ->
                 nomatch ->
                     %% A lock file exists, but is not complete.
                     timer:sleep(10),
-                    write_lock_check(Dirname, Count-1)
+                    lock_check(Filename, Count-1)
             end;
         {error, enoent} ->
             %% Lock file doesn't exist
             {undefined, undefined};
         {error, Reason} ->
-            error_logger:error_msg("Failed to check write lock in ~s: ~p\n", [Dirname, Reason]),
+            error_logger:error_msg("Failed to check write lock in ~s: ~p\n",
+                                   [Filename, Reason]),
             {undefined, undefined}
     end.
 
-write_lock_acquire(Dirname) ->
-    case bitcask_nifs:create_file(filename:join(Dirname, "bitcask.write.lock")) of
+lock_acquire(Filename) ->
+    case bitcask_nifs:create_file(Filename) of
         true ->
-            %% Write out our PID w/ empty place for file name (since we don't know it yet)
-            ok = file:write_file(write_lock_file(Dirname),
-                                 [os:getpid(), " \n"]),
+            %% Write out our PID w/ empty place for file name
+            %% (since we don't know it yet)
+            ok = file:write_file(Filename, [os:getpid(), " \n"]),
             true;
         false ->
             false
     end.
 
-write_lock_release(Dirname) ->
+lock_release(Filename) ->
     ThisOsPid = os:getpid(),
-    case write_lock_check(Dirname) of
+    case lock_check(Filename) of
         {ThisOsPid, _} ->
-            ok = file:delete(write_lock_file(Dirname));
-
+            ok = file:delete(Filename);
         _ ->
             {error, not_write_lock_owner}
     end.
 
-write_lock_update(Dirname, ActiveFileName) ->
+lock_update(Filename, ActiveFileName) ->
     ThisOsPid = os:getpid(),
-    case write_lock_check(Dirname) of
+    case lock_check(Filename) of
         {ThisOsPid, _} ->
-            ok = file:write_file(write_lock_file(Dirname),
+            ok = file:write_file(Filename,
                                  [os:getpid(), " ", ActiveFileName, "\n"]);
         _ ->
             {error, not_write_lock_owner}
@@ -89,5 +93,8 @@ write_lock_update(Dirname, ActiveFileName) ->
 %% Internal functions
 %% ===================================================================
 
-write_lock_file(Dirname) ->
+write_lock_filename(Dirname) ->
     filename:join(Dirname, "bitcask.write.lock").
+
+merge_lock_filename(Dirname) ->
+    filename:join(Dirname, "bitcask.merge.lock").
