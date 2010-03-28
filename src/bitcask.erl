@@ -224,8 +224,8 @@ write_lock_check(Dirname, Count) ->
     case file:read_file(filename:join(Dirname, "bitcask.write.lock")) of
         {ok, Bin} ->
             case re:run(Bin, "([0-9]+) (.*)\n", [{capture, all_but_first, list}]) of
-                {match, [WritingFile, []]} ->
-                    {WritingFile, undefined};
+                {match, [WritingPid, []]} ->
+                    {WritingPid, undefined};
                 {match, [WritingPid, WritingFile]} ->
                     {WritingPid, WritingFile};
                 nomatch ->
