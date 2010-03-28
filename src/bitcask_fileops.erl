@@ -31,7 +31,8 @@
          read/3,
          sync/1,
          fold/3,
-         filename/2,
+         mk_filename/2,
+         filename/1,
          file_tstamp/1,
          tstamp/0,
          check_write/4]).
@@ -47,7 +48,7 @@
 %% Called on a Dirname, will open a fresh file in that directory.
 %% @spec create_file(Dirname :: string()) -> {ok, filestate()}
 create_file(DirName) ->
-    Filename = filename(DirName, tstamp()),
+    Filename = mk_filename(DirName, tstamp()),
     ok = filelib:ensure_dir(Filename),
     case bitcask_nifs:create_file(Filename) of
         true ->
@@ -134,9 +135,12 @@ fold(#filestate { fd = Fd }, Fun, Acc) ->
             {error, Reason}
     end.
 
-filename(Dirname, Tstamp) ->
+mk_filename(Dirname, Tstamp) ->
     filename:join(Dirname,
                   lists:concat([integer_to_list(Tstamp),".bitcask.data"])).
+
+filename(#filestate { filename = Fname }) ->
+    Fname.
 
 file_tstamp(#filestate{tstamp=Tstamp}) ->
     Tstamp;
