@@ -60,11 +60,13 @@ open(Dirname, Opts) ->
     case proplists:get_bool(read_write, Opts) of
         true ->
             %% Try to acquire the write lock, or bail if unable to
-            case write_lock_acquire(Dirname) of
+            case bitcask_lockops:write_lock_acquire(Dirname) of
                 true ->
                     %% Open up the new file for writing and update the write lock file
                     {ok, NewWritingFile} = bitcask_fileops:create_file(Dirname),
-                    ok = write_lock_update(Dirname, bitcask_fileops:filename(NewWritingFile));
+                    NewWritingFilename = bitcask_fileops:filename(NewWritingFile),
+                    ok = bitcask_lockops:write_lock_update(Dirname, NewWritingFilename);
+
                 false ->
                     NewWritingFile = undefined, % Make erlc happy w/ non-local exit
                     throw({error, write_locked})
@@ -77,7 +79,7 @@ open(Dirname, Opts) ->
     %% what file is currently active so we don't attempt to read it.
     case NewWritingFile of
         undefined ->
-            {_ActivePid, ActiveFile} = write_lock_check(Dirname);
+            {_ActivePid, ActiveFile} = bitcask_lockops:write_lock_check(Dirname);
         _ ->
             ActiveFile = undefined
     end,
@@ -118,7 +120,7 @@ close(#bc_state { write_file = WriteFile, read_files = ReadFiles, dirname = Dirn
             ok;
         _ ->
             ok = bitcask_fileops:close(WriteFile),
-            ok = file:delete(filename:join(Dirname, "bitcask.write.lock"))
+            ok = bitcask_lockops:write_lock_release(Dirname)
     end.
 
 
@@ -214,53 +216,6 @@ list_data_files(Dirname, WritingFile) ->
     [filename:join(Dirname, F) || {_Tstamp, F} <- reverse_sort(Files),
                                   F /= WritingFile].
 
-write_lock_check(Dirname) ->
-    write_lock_check(Dirname, 3).
-
-write_lock_check(Dirname, 0) ->
-    error_logger:error_msg("Timed out waiting for partial write lock in ~s\n", [Dirname]),
-    {undefined, undefined};
-write_lock_check(Dirname, Count) ->
-    case file:read_file(filename:join(Dirname, "bitcask.write.lock")) of
-        {ok, Bin} ->
-            case re:run(Bin, "([0-9]+) (.*)\n", [{capture, all_but_first, list}]) of
-                {match, [WritingFile, []]} ->
-                    {WritingFile, undefined};
-                {match, [WritingPid, WritingFile]} ->
-                    {WritingPid, WritingFile};
-                nomatch ->
-                    %% A lock file exists, but is not complete.
-                    timer:sleep(10),
-                    write_lock_check(Dirname, Count-1)
-            end;
-        {error, enoent} ->
-            %% Lock file doesn't exist
-            {undefined, undefined};
-        {error, Reason} ->
-            error_logger:error_msg("Failed to check write lock in ~s: ~p\n", [Dirname, Reason]),
-            {undefined, undefined}
-    end.
-
-write_lock_acquire(Dirname) ->
-    case bitcask_nifs:create_file(filename:join(Dirname, "bitcask.write.lock")) of
-        true ->
-            %% Write out our PID w/ empty place for file name (since we don't know it yet)
-            ok = file:write_file(filename:join(Dirname, "bitcask.write.lock"),
-                                 [os:getpid(), " \n"]),
-            true;
-        false ->
-            false
-    end.
-
-write_lock_update(Dirname, ActiveFileName) ->
-    ThisOsPid = os:getpid(),
-    case write_lock_check(Dirname) of
-        {ThisOsPid, _} ->
-            ok = file:write_file(filename:join(Dirname, "bitcask.write.lock"),
-                                 [os:getpid(), " ", ActiveFileName, "\n"]);
-        _ ->
-            {error, not_write_lock_owner}
-    end.
 
 %% ===================================================================
 %% EUnit tests
