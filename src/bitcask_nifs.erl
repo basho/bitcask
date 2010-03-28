@@ -72,7 +72,7 @@ keydir_fold(Ref, Fun, Acc0) ->
     Itr = keydir_itr(Ref),
     keydir_fold_cont(keydir_itr_next(Itr), Fun, Acc0).
 
-create_file(Filename) ->
+create_file(_Filename) ->
     "NIF library not loaded".
 
 
