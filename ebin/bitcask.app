@@ -6,8 +6,7 @@
              bitcask_nifs,
              bitcask_server,
              bitcask,
-             bitcask_fileops,
-             bitcask_lockops
+             bitcask_fileops
             ]},
   {registered, []},
   {applications, [
