@@ -25,7 +25,8 @@
          close/1,
          get/2,
          put/3,
-         delete/2]).
+         delete/2,
+         merge/1]).
 
 -include("bitcask.hrl").
 
@@ -177,6 +178,28 @@ put(#bc_state{ dirname = Dirname, keydir = KeyDir } = State, Key, Value) ->
 delete(State, Key) ->
     put(State, Key, ?TOMBSTONE).
 
+merge(Dirname) ->
+    {ok, State} = bitcask:open(Dirname),
+    case bitcask_lockops:lock_acquire(
+           bitcask_lockops:merge_lock_filename(Dirname)) of
+        true -> ok;
+        false -> throw({error, merge_locked})
+    end,
+    {ok, MergeFile} = bitcask_fileops:create_file(Dirname),
+    MergeFilename = bitcask_fileops:filename(MergeFile),
+    ok = bitcask_lockops:lock_update(
+           bitcask_lockops:merge_lock_filename(Dirname),
+           MergeFilename),
+    {ok, HintKeyDir} = bitcask_nifs:keydir_new(),
+    {ok, DelKeyDir} = bitcask_nifs:keydir_new(),
+    AllMergedFiles = merge_files(State,MergeFile,HintKeyDir,DelKeyDir,[]),
+    ReadFiles = State#bc_state.read_files,
+    [ok = bitcask_fileops:close(F) || F <- ReadFiles],    
+    [ok = bitcask_fileops:delete(F) || F <- ReadFiles],    
+    ok = bitcask_lockops:lock_release(
+           bitcask_lockops:merge_lock_filename(Dirname)),
+    ok = make_hintfiles(AllMergedFiles),
+    ok.
 
 %% ===================================================================
 %% Internal functions
@@ -222,6 +245,95 @@ list_data_files(Dirname, WritingFile) ->
     [filename:join(Dirname, F) || {_Tstamp, F} <- reverse_sort(Files),
                                   F /= WritingFile].
 
+make_hintfiles([]) -> ok;
+make_hintfiles([{DataFile,KeyDir}|Rest]) ->
+    %% todo: write this then modify scan_key_files to
+    %%       use hints when present
+   %fold over HintKeyDir, writing each
+   %{KeySize,Key,(Timestamp,MergeFile,Offset,Size)}
+   %in the tail of HintFile
+   % "TSTAMP.bitcask.hint.merging"
+   % "TSTAMP.bitcask.hint"
+    ok.
+
+merge_files(_State=#bc_state{read_files=[]},
+            MergeFile,HintKeyDir,_DelKeyDir,AllMergedFiles) ->
+    %% AllMergedFiles is a list of [{#filestate, HintKeyDir}]
+    ok = bitcask_fileops:close(MergeFile),
+    [{MergeFile,HintKeyDir}|AllMergedFiles];
+merge_files(State=#bc_state{read_files=[File|Rest]},
+            MergeFile,HintKeyDir,DelKeyDir,AllMergedFiles) ->
+    F = fun(K, V, Tstamp, {_Offset, _Size},
+            {F_MergeFile,F_HintKeyDir,F_DelKeyDir,F_AllMergedFiles}) ->
+                merge_single_entry(K,V,Tstamp,F_MergeFile,
+                             State,F_HintKeyDir,F_DelKeyDir,F_AllMergedFiles)
+        end,
+    {Z_MergeFile,Z_HintKeyDir,Z_DelKeyDir,Z_AllMergedFiles} = 
+        bitcask_fileops:fold(File, F, {MergeFile,
+                                       HintKeyDir,DelKeyDir,AllMergedFiles}),
+    merge_files(State#bc_state{read_files=Rest},
+                Z_MergeFile,Z_HintKeyDir,Z_DelKeyDir,Z_AllMergedFiles).
+
+merge_single_entry(K,V,Tstamp,MergeFile,
+  _State=#bc_state{dirname=Dirname,keydir=KeyDir,max_file_size=MaxFileSize},
+                                        HintKeyDir,DelKeyDir,AllMergedFiles) ->
+    case out_of_date(K,Tstamp,[KeyDir,HintKeyDir,DelKeyDir]) of
+        true -> 
+            {MergeFile,HintKeyDir,DelKeyDir,AllMergedFiles};
+        false ->
+            case (V =:= ?TOMBSTONE) of
+                true ->
+                    ok = bitcask_nifs:keydir_put(DelKeyDir, K,
+                                                 Tstamp,0,0,Tstamp),
+                    {MergeFile,HintKeyDir,DelKeyDir,AllMergedFiles};
+                false ->
+                    ok = bitcask_nifs:keydir_remove(DelKeyDir, K),
+
+                    {Z_MergeFile,Z_HintKeyDir,Z_AllMergedFiles} = 
+                        case bitcask_fileops:check_write(MergeFile, K, V, 
+                                                         MaxFileSize) of
+                            wrap ->
+                                ok = bitcask_fileops:sync(MergeFile),
+                                ok = bitcask_fileops:close(MergeFile),
+                                {ok, NewMergeFile} = 
+                                    bitcask_fileops:create_file(Dirname),
+                                {ok, NewHintKeyDir} = bitcask_nifs:keydir_new(),
+                                {NewMergeFile,NewHintKeyDir,
+                                 [{MergeFile,HintKeyDir}|AllMergedFiles]};
+                            ok ->
+                                {MergeFile,HintKeyDir,AllMergedFiles}
+                        end,
+                    {ok, WrittenFile, OffSet, Size} =
+                        bitcask_fileops:write(Z_MergeFile,K, V, Tstamp),
+                    case KeyDir of
+                        undefined ->
+                            nop;
+                        _ ->
+                            ok = bitcask_nifs:keydir_put(KeyDir, K,
+                                      bitcask_fileops:file_tstamp(WrittenFile),
+                                      Size, OffSet, Tstamp)
+                    end,
+                    ok = bitcask_nifs:keydir_put(Z_HintKeyDir, K,
+                                      bitcask_fileops:file_tstamp(WrittenFile),
+                                      Size, OffSet, Tstamp),
+                    {WrittenFile,Z_HintKeyDir,DelKeyDir,Z_AllMergedFiles}
+            end
+    end.
+
+out_of_date(_Key,_Tstamp,[]) ->
+    false;
+out_of_date(Key,Tstamp,[undefined|Rest]) ->
+    out_of_date(Key,Tstamp,Rest);
+out_of_date(Key,Tstamp,[KeyDir|Rest]) ->
+    case bitcask_nifs:keydir_get(KeyDir, Key) of
+        not_found -> out_of_date(Key,Tstamp,Rest);
+        E when is_record(E, bitcask_entry) ->
+            case Tstamp < E#bitcask_entry.tstamp of
+                true -> true;
+                false -> out_of_date(Key,Tstamp,Rest)
+            end;
+        {error, Reason} -> {error, Reason}
+    end.
 
 %% ===================================================================
 %% EUnit tests

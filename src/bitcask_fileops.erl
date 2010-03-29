@@ -30,6 +30,7 @@
          write/4,
          read/3,
          sync/1,
+         delete/1,
          fold/3,
          mk_filename/2,
          filename/1,
@@ -83,6 +84,11 @@ close(#filestate{ fd = FD }) ->
     file:close(FD),
     ok.
 
+%% @doc Use only after merging, to permanently delete a data file.
+%% @spec delete(filestate()) -> ok
+delete(#filestate{ filename = FN }) ->
+    file:delete(FN),
+    ok.
 
 %% @doc Write a Key-named binary data field ("Value") to the Filestate.
 %% @spec write(filestate(), Key :: binary(), Value :: binary(), Tstamp :: integer()) ->
