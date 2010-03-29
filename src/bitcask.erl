@@ -418,4 +418,25 @@ wrap_test() ->
                end, B, default_dataset()).
 
 
+merge_test() ->
+    %% Initialize dataset with max_file_size set to 1 so that each file will
+    %% only contain a single key.
+    B0 = init_dataset("/tmp/bc.test.merge", [{max_file_size, 1}], default_dataset()),
+
+    %% Verify there are 4 files (one for each key + extra)
+    4 = length(B0#bc_state.read_files),
+    close(B0),
+
+    %% Merge everything
+    ok = merge("/tmp/bc.test.merge"),
+
+    {ok, B} = bitcask:open("/tmp/bc.test.merge"),
+    1 = length(B#bc_state.read_files),
+    lists:foldl(fun({K, V}, Bc0) ->
+                        {ok, V, Bc} = bitcask:get(Bc0, K),
+                        Bc
+                end, B, default_dataset()).
+
+
+
 -endif.
