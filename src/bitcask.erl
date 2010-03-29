@@ -49,9 +49,13 @@
 %% * A write lock - bitcask.write.lock (Optional)
 %% * A merge lock - bitcask.merge.lock (Optional)
 
+%% @doc Open a new or existing bitcask datastore for read-only access.
+-spec open(Dirname::string()) -> {ok, #bc_state{}} | {error, any()}.
 open(Dirname) ->
     open(Dirname, []).
 
+%% @doc Open a new or existing bitcask datastore with additional options.
+-spec open(Dirname::string(), Opts::[_]) -> {ok, #bc_state{}} | {error, any()}.
 open(Dirname, Opts) ->
     %% Make sure the directory exists
     ok = filelib:ensure_dir(filename:join(Dirname, "bitcask")),
@@ -114,7 +118,8 @@ open(Dirname, Opts) ->
                    max_file_size = MaxFileSize,
                    keydir = KeyDir}}.
 
-
+%% @doc Close a bitcask data store and flush all pending writes (if any) to disk.
+-spec close(#bc_state{}) -> ok.
 close(#bc_state { write_file = WriteFile, read_files = ReadFiles, dirname = Dirname }) ->
     %% Clean up all the reading files
     [ok = bitcask_fileops:close(F) || F <- ReadFiles],
@@ -130,7 +135,8 @@ close(#bc_state { write_file = WriteFile, read_files = ReadFiles, dirname = Dirn
                    bitcask_lockops:write_lock_filename(Dirname))
     end.
 
-
+%% @doc Retrieve a value by key from a bitcask datastore.
+-spec get(#bc_state{}, binary()) -> not_found | {ok, Value::binary(), #bc_state{}}.
 get(#bc_state{keydir = KeyDir} = State, Key) ->
     case bitcask_nifs:keydir_get(KeyDir, Key) of
         not_found ->
@@ -149,6 +155,8 @@ get(#bc_state{keydir = KeyDir} = State, Key) ->
             {error, Reason}
     end.
 
+%% @doc Store a key and value in a bitcase datastore.
+-spec put(#bc_state{}, Key::binary(), Value::binary()) -> {ok, #bc_state{}} | {error, any()}.
 put(#bc_state{ write_file = undefined }, _Key, _Value) ->
     {error, read_only};
 put(#bc_state{ dirname = Dirname, keydir = KeyDir } = State, Key, Value) ->
@@ -175,9 +183,13 @@ put(#bc_state{ dirname = Dirname, keydir = KeyDir } = State, Key, Value) ->
                                  Size, OffSet, Tstamp),
     {ok, State1#bc_state { write_file = NewWriteFile }}.
 
+%% @doc Delete a key from a bitcask datastore.
+-spec delete(#bc_state{}, Key::binary()) -> {ok, #bc_state{}} | {error, any()}.
 delete(State, Key) ->
     put(State, Key, ?TOMBSTONE).
 
+%% @doc Merge several data files within a bitcask datastore into a more compact form.
+-spec merge(Dirname::string()) -> ok | {error, any()}.
 merge(Dirname) ->
     {ok, State} = bitcask:open(Dirname),
     case bitcask_lockops:lock_acquire(
@@ -194,8 +206,8 @@ merge(Dirname) ->
     {ok, DelKeyDir} = bitcask_nifs:keydir_new(),
     AllMergedFiles = merge_files(State,MergeFile,HintKeyDir,DelKeyDir,[]),
     ReadFiles = State#bc_state.read_files,
-    [ok = bitcask_fileops:close(F) || F <- ReadFiles],    
-    [ok = bitcask_fileops:delete(F) || F <- ReadFiles],    
+    [ok = bitcask_fileops:close(F) || F <- ReadFiles],
+    [ok = bitcask_fileops:delete(F) || F <- ReadFiles],
     ok = bitcask_lockops:lock_release(
            bitcask_lockops:merge_lock_filename(Dirname)),
     ok = make_hintfiles(AllMergedFiles),
