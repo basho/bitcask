@@ -21,21 +21,26 @@
 %% -------------------------------------------------------------------
 -module(bitcask_lockops).
 
--export([lock_check/1,
-         lock_acquire/1,
-         lock_update/2,
-         lock_release/1,
-         write_lock_filename/1,
-         merge_lock_filename/1]).
+-export([check/2,
+         acquire/2,
+         release/2,
+         update/3]).
 
-lock_check(Filename) ->
-    lock_check(Filename, 3).
+-type lock_types() :: merge | write.
 
-lock_check(Filename, 0) ->
+%% @doc Check for the existence of lock in the specified directory. Returns a
+%% tuple containing the operating system PID and the file currently locked. If
+%% the lock file doesn't exist, the tuple will just be {undefined, undefined}.
+-spec check(Type::lock_types(), Dirname::string()) -> { string() , string() }.
+check(Type, Dirname) ->
+    check_loop(lock_filename(Type, Dirname), 3).
+
+%% @private
+check_loop(Filename, 0) ->
     error_logger:error_msg("Timed out waiting for partial write lock in ~s\n",
                            [Filename]),
     {undefined, undefined};
-lock_check(Filename, Count) ->
+check_loop(Filename, Count) ->
     case file:read_file(Filename) of
         {ok, Bin} ->
             case re:run(Bin, "([0-9]+) (.*)\n",
@@ -47,7 +52,7 @@ lock_check(Filename, Count) ->
                 nomatch ->
                     %% A lock file exists, but is not complete.
                     timer:sleep(10),
-                    lock_check(Filename, Count-1)
+                    check_loop(Filename, Count-1)
             end;
         {error, enoent} ->
             %% Lock file doesn't exist
@@ -58,7 +63,11 @@ lock_check(Filename, Count) ->
             {undefined, undefined}
     end.
 
-lock_acquire(Filename) ->
+%% @doc Attempt to lock the specified directory with a specific type of lock (merge or write). Returns
+%% true on success.
+-spec acquire(Type::lock_types(), Dirname::string()) -> true | false.
+acquire(Type, Dirname) ->
+    Filename = lock_filename(Type, Dirname),
     case bitcask_nifs:create_file(Filename) of
         true ->
             %% Write out our PID w/ empty place for file name
@@ -69,23 +78,33 @@ lock_acquire(Filename) ->
             false
     end.
 
-lock_release(Filename) ->
+%% @doc Attempt to remove a write or merge lock on a directory. Ownership by
+%% this O/S PID is verified; within the Erlang VM you must serialize calls for a
+%% given directory.
+-spec release(Type::lock_types(), Dirname::string()) -> ok | {error, not_lock_owner}.
+release(Type, Dirname) ->
     ThisOsPid = os:getpid(),
-    case lock_check(Filename) of
+    Filename = lock_filename(Type, Dirname),
+    case check_loop(Filename, 3) of
         {ThisOsPid, _} ->
             ok = file:delete(Filename);
         _ ->
-            {error, not_write_lock_owner}
+            {error, not_lock_owner}
     end.
 
-lock_update(Filename, ActiveFileName) ->
+%% @doc Update the contents of a lock file within a directory. Ownership by this
+%% O/S PID is verified; within the Erlang VM you must serialize updates to avoid
+%% data loss.
+-spec update(Type::lock_types(), Dirname::string(), ActiveFileName::string()) -> ok | {error, not_lock_owner}.
+update(Type, Dirname, ActiveFileName) ->
     ThisOsPid = os:getpid(),
-    case lock_check(Filename) of
+    Filename = lock_filename(Type, Dirname),
+    case check_loop(Filename, 3) of
         {ThisOsPid, _} ->
             ok = file:write_file(Filename,
                                  [os:getpid(), " ", ActiveFileName, "\n"]);
         _ ->
-            {error, not_write_lock_owner}
+            {error, not_lock_owner}
     end.
 
 
@@ -93,8 +112,5 @@ lock_update(Filename, ActiveFileName) ->
 %% Internal functions
 %% ===================================================================
 
-write_lock_filename(Dirname) ->
-    filename:join(Dirname, "bitcask.write.lock").
-
-merge_lock_filename(Dirname) ->
-    filename:join(Dirname, "bitcask.merge.lock").
+lock_filename(Type, Dirname) ->
+    filename:join(Dirname, lists:concat(["bitcast.", Type, ".lock"])).

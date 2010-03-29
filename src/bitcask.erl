@@ -65,16 +65,14 @@ open(Dirname, Opts) ->
     case proplists:get_bool(read_write, Opts) of
         true ->
             %% Try to acquire the write lock, or bail if unable to
-            case bitcask_lockops:lock_acquire(
-                   bitcask_lockops:write_lock_filename(Dirname)) of
+            case bitcask_lockops:acquire(write, Dirname) of
                 true ->
                     %% Open up the new file for writing
                     %% and update the write lock file
                     {ok, WritingFile} = bitcask_fileops:create_file(Dirname),
                     WritingFilename = bitcask_fileops:filename(WritingFile),
-                    ok = bitcask_lockops:lock_update(
-                           bitcask_lockops:write_lock_filename(Dirname),
-                           WritingFilename);
+                    ok = bitcask_lockops:update(write, Dirname, WritingFilename);
+
                 false ->
                     WritingFile = undefined, % Make erlc happy w/ non-local exit
                     throw({error, write_locked})
@@ -87,9 +85,8 @@ open(Dirname, Opts) ->
     %% what file is currently active so we don't attempt to read it.
     case WritingFile of
         undefined ->
-            {_ActivePid, ActiveFile} = bitcask_lockops:lock_check(
-                                         bitcask_lockops:write_lock_filename(
-                                           Dirname));
+            {_ActivePid, ActiveFile} = bitcask_lockops:check(write, Dirname);
+
         _ ->
             ActiveFile = undefined
     end,
@@ -131,8 +128,7 @@ close(#bc_state { write_file = WriteFile, read_files = ReadFiles, dirname = Dirn
             ok;
         _ ->
             ok = bitcask_fileops:close(WriteFile),
-            ok = bitcask_lockops:lock_release(
-                   bitcask_lockops:write_lock_filename(Dirname))
+            ok = bitcask_lockops:release(write, Dirname)
     end.
 
 %% @doc Retrieve a value by key from a bitcask datastore.
@@ -192,24 +188,20 @@ delete(State, Key) ->
 -spec merge(Dirname::string()) -> ok | {error, any()}.
 merge(Dirname) ->
     {ok, State} = bitcask:open(Dirname),
-    case bitcask_lockops:lock_acquire(
-           bitcask_lockops:merge_lock_filename(Dirname)) of
+    case bitcask_lockops:acquire(merge, Dirname) of
         true -> ok;
         false -> throw({error, merge_locked})
     end,
     {ok, MergeFile} = bitcask_fileops:create_file(Dirname),
     MergeFilename = bitcask_fileops:filename(MergeFile),
-    ok = bitcask_lockops:lock_update(
-           bitcask_lockops:merge_lock_filename(Dirname),
-           MergeFilename),
+    ok = bitcask_lockops:update(merge, Dirname, MergeFilename),
     {ok, HintKeyDir} = bitcask_nifs:keydir_new(),
     {ok, DelKeyDir} = bitcask_nifs:keydir_new(),
     AllMergedFiles = merge_files(State,MergeFile,HintKeyDir,DelKeyDir,[]),
     ReadFiles = State#bc_state.read_files,
     [ok = bitcask_fileops:close(F) || F <- ReadFiles],
     [ok = bitcask_fileops:delete(F) || F <- ReadFiles],
-    ok = bitcask_lockops:lock_release(
-           bitcask_lockops:merge_lock_filename(Dirname)),
+    ok = bitcask_lockops:release(merge, Dirname),
     ok = make_hintfiles(AllMergedFiles),
     ok.
 
