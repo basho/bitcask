@@ -28,6 +28,7 @@
          keydir_itr/1,
          keydir_itr_next/1,
          keydir_fold/3,
+         keydir_info/1,
          create_file/1]).
 
 -on_load(init/0).
@@ -72,6 +73,9 @@ keydir_fold(Ref, Fun, Acc0) ->
     Itr = keydir_itr(Ref),
     keydir_fold_cont(keydir_itr_next(Itr), Fun, Acc0).
 
+keydir_info(_Ref) ->
+    "NIF library not loaded".
+
 create_file(_Filename) ->
     "NIF library not loaded".
 
@@ -95,6 +99,8 @@ keydir_basic_test() ->
     {ok, Ref} = keydir_new(),
     ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
 
+    {1, 3} = keydir_info(Ref),
+
     E = keydir_get(Ref, <<"abc">>),
     0 = E#bitcask_entry.file_id,
     1234 = E#bitcask_entry.value_sz,
@@ -111,6 +117,8 @@ keydir_itr_test() ->
     ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
     ok = keydir_put(Ref, <<"def">>, 0, 4567, 1234, 2),
     ok = keydir_put(Ref, <<"hij">>, 1, 7890, 0, 3),
+
+    {3, 9} = keydir_info(Ref),
 
     List = keydir_fold(Ref, fun(E, Acc) -> [ E | Acc] end, []),
     3 = length(List),

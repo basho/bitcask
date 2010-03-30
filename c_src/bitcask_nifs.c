@@ -42,6 +42,8 @@ typedef struct
 typedef struct
 {
     bitcask_keydir_entry* keydir;
+    size_t  key_count;
+    size_t  key_bytes;
 } bitcask_keydir_handle;
 
 // Hash table helper functions
@@ -57,6 +59,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
 ERL_NIF_TERM bitcask_nifs_keydir_copy(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_itr(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_keydir_info(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
 ERL_NIF_TERM bitcask_nifs_create_file(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
@@ -69,6 +72,7 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_copy", 1, bitcask_nifs_keydir_copy},
     {"keydir_itr", 1, bitcask_nifs_keydir_itr},
     {"keydir_itr_next", 1, bitcask_nifs_keydir_itr_next},
+    {"keydir_info", 1, bitcask_nifs_keydir_info},
 
     {"create_file", 1, bitcask_nifs_create_file}
 };
@@ -79,6 +83,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_new(ErlNifEnv* env, int argc, const ERL_NIF_TER
                                                        bitcask_keydir_RESOURCE,
                                                        sizeof(bitcask_keydir_handle));
     handle->keydir = 0;
+    handle->key_count = 0;
+    handle->key_bytes = 0;
     ERL_NIF_TERM result = enif_make_resource(env, handle);
     enif_release_resource(env, handle);
     return enif_make_tuple2(env, enif_make_atom(env, "ok"), result);
@@ -104,7 +110,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_put(ErlNifEnv* env, int argc, const ERL_NIF_TER
         if (old_entry == 0)
         {
             // No entry exists at all yet; add one
-            bitcask_keydir_entry* new_entry = enif_alloc(env, sizeof(bitcask_keydir_entry) + key.size);
+            bitcask_keydir_entry* new_entry = enif_alloc(env, sizeof(bitcask_keydir_entry) +
+                                                         key.size);
             new_entry->file_id = entry.file_id;
             new_entry->value_sz = entry.value_sz;
             new_entry->value_pos = entry.value_pos;
@@ -112,6 +119,11 @@ ERL_NIF_TERM bitcask_nifs_keydir_put(ErlNifEnv* env, int argc, const ERL_NIF_TER
             new_entry->key_sz = key.size;
             memcpy(new_entry->key, key.data, key.size);
             KEYDIR_HASH_ADD(handle->keydir, new_entry);
+
+            // Update the global stats
+            handle->key_count++;
+            handle->key_bytes += key.size;
+
             return enif_make_atom(env, "ok");
         }
         else if (old_entry->tstamp <= entry.tstamp)
@@ -180,8 +192,14 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
         KEYDIR_HASH_FIND(handle->keydir, key, entry);
         if (entry != 0)
         {
+            // Update the global stats
+            handle->key_count--;
+            handle->key_bytes -= entry->key_sz;
+
             HASH_DEL(handle->keydir, entry);
             enif_free(env, entry);
+
+
         }
 
         return enif_make_atom(env, "ok");
@@ -202,6 +220,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_copy(ErlNifEnv* env, int argc, const ERL_NIF_TE
                                                                 bitcask_keydir_RESOURCE,
                                                                 sizeof(bitcask_keydir_handle));
         new_handle->keydir = 0;
+        new_handle->key_count = handle->key_count;
+        new_handle->key_bytes = handle->key_bytes;
 
         // Deep copy each item from the existing handle
         bitcask_keydir_entry* curr;
@@ -295,6 +315,23 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
         return enif_make_badarg(env);
     }
 }
+
+ERL_NIF_TERM bitcask_nifs_keydir_info(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_keydir_handle* handle;
+
+    if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle))
+    {
+        return enif_make_tuple2(env,
+                                enif_make_ulong(env, handle->key_count),
+                                enif_make_ulong(env, handle->key_bytes));
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
 
 ERL_NIF_TERM bitcask_nifs_create_file(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
