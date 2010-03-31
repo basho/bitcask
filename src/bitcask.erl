@@ -41,7 +41,15 @@
                    max_file_size,               % Max. size of a written file
                    keydir}).                    % Key directory
 
--define(TOMBSTONE, <<"bitcask_tombstone">>).
+-record(mstate, { dirname,
+                  max_file_size,
+                  input_files,
+                  out_file,
+                  merged_files,
+                  all_keydir,
+                  hint_keydir,
+                  del_keydir }).
+
 -define(DEFAULT_MAX_FILE_SIZE, 16#80000000). % 2GB default
 
 %% A bitcask is a directory containing:
@@ -81,20 +89,10 @@ open(Dirname, Opts) ->
             WritingFile = undefined
     end,
 
-    %% If we don't have a WritingFile, check the write lock and see
-    %% what file is currently active so we don't attempt to read it.
-    case WritingFile of
-        undefined ->
-            {_ActivePid, ActiveFile} = bitcask_lockops:check(write, Dirname);
-
-        _ ->
-            ActiveFile = undefined
-    end,
-
     %% Build a list of all the bitcask data files and sort it in
     %% descending order (newest->oldest). Pass the currently active
     %% writing file so that one is not loaded (may be 'undefined')
-    SortedFiles = list_data_files(Dirname, ActiveFile),
+    SortedFiles = readable_files(Dirname),
 
     %% Setup a keydir and scan all the data files into it
     {ok, KeyDir} = bitcask_nifs:keydir_new(),
@@ -187,22 +185,46 @@ delete(State, Key) ->
 %% @doc Merge several data files within a bitcask datastore into a more compact form.
 -spec merge(Dirname::string()) -> ok | {error, any()}.
 merge(Dirname) ->
-    {ok, State} = bitcask:open(Dirname),
+    %% Try to lock for merging
     case bitcask_lockops:acquire(merge, Dirname) of
         true -> ok;
         false -> throw({error, merge_locked})
     end,
-    {ok, MergeFile} = bitcask_fileops:create_file(Dirname),
-    MergeFilename = bitcask_fileops:filename(MergeFile),
-    ok = bitcask_lockops:update(merge, Dirname, MergeFilename),
+
+    %% Setup our first output merge file and update the merge lock accordingly
+    {ok, Outfile} = bitcask_fileops:create_file(Dirname),
+    ok = bitcask_lockops:update(merge, Dirname,
+                                bitcask_fileops:filename(Outfile)),
+
+    %% Initialize all the keydirs we need. The hint keydir will get recreated
+    %% each time we wrap a file, so that it only contains keys associated
+    %% with the current out_file
+    {ok, AllKeyDir} = bitcask_nifs:keydir_new(),
     {ok, HintKeyDir} = bitcask_nifs:keydir_new(),
     {ok, DelKeyDir} = bitcask_nifs:keydir_new(),
-    AllMergedFiles = merge_files(State,MergeFile,HintKeyDir,DelKeyDir,[]),
-    ReadFiles = State#bc_state.read_files,
-    [ok = bitcask_fileops:close(F) || F <- ReadFiles],
-    [ok = bitcask_fileops:delete(F) || F <- ReadFiles],
+
+    %% TODO: Pull max file size from config
+
+    %% Initialize our state for the merge
+    State = #mstate { dirname = Dirname,
+                      max_file_size = 16#80000000, % 2GB default
+                      input_files = readable_files(Dirname),
+                      out_file = Outfile,
+                      merged_files = [],
+                      all_keydir = AllKeyDir,
+                      hint_keydir = HintKeyDir,
+                      del_keydir = DelKeyDir },
+
+    %% Finally, start the merge process
+    State1 = merge_files(State),
+
+    %% Make sure to close the final output file
+    close_outfile(State1),
+
+    %% Cleanup the original input files and release our lock
+    [ok = bitcask_fileops:close(F) || F <- State#mstate.input_files],
+    [ok = bitcask_fileops:delete(F) || F <- State#mstate.input_files],
     ok = bitcask_lockops:release(merge, Dirname),
-    ok = make_hintfiles(AllMergedFiles),
     ok.
 
 %% ===================================================================
@@ -238,106 +260,116 @@ get_filestate(FileId, #bc_state{ dirname = Dirname, read_files = ReadFiles } = S
             {Filestate, State#bc_state { read_files = [Filestate | State#bc_state.read_files] }}
     end.
 
-list_data_files(Dirname, WritingFile) ->
+list_data_files(Dirname, WritingFile, Mergingfile) ->
     %% Build a list of {tstamp, filename} for all files in the directory that
-    %% match our regex. Then reverse sort that list and extract the fully-qualified
-    %% filename.
+    %% match our regex. Then reverse sort that list and extract the 
+    %% fully-qualified filename.
     Files = filelib:fold_files(Dirname, "[0-9]+.bitcask.data", false,
                                fun(F, Acc) ->
-                                       [{bitcask_fileops:file_tstamp(F), F} | Acc]
+                                    [{bitcask_fileops:file_tstamp(F), F} | Acc]
                                end, []),
     [filename:join(Dirname, F) || {_Tstamp, F} <- reverse_sort(Files),
-                                  F /= WritingFile].
+                                  F /= WritingFile,
+                                  F /= Mergingfile].
 
-make_hintfiles([]) -> ok;
-make_hintfiles([{DataFile,KeyDir}|Rest]) ->
-    %% todo: write this then modify scan_key_files to
-    %%       use hints when present
-   %fold over HintKeyDir, writing each
-   %{KeySize,Key,(Timestamp,MergeFile,Offset,Size)}
-   %in the tail of HintFile
-   % "TSTAMP.bitcask.hint.merging"
-   % "TSTAMP.bitcask.hint"
-    ok.
-
-merge_files(_State=#bc_state{read_files=[]},
-            MergeFile,HintKeyDir,_DelKeyDir,AllMergedFiles) ->
-    %% AllMergedFiles is a list of [{#filestate, HintKeyDir}]
-    ok = bitcask_fileops:close(MergeFile),
-    [{MergeFile,HintKeyDir}|AllMergedFiles];
-merge_files(State=#bc_state{read_files=[File|Rest]},
-            MergeFile,HintKeyDir,DelKeyDir,AllMergedFiles) ->
-    F = fun(K, V, Tstamp, {_Offset, _Size},
-            {F_MergeFile,F_HintKeyDir,F_DelKeyDir,F_AllMergedFiles}) ->
-                merge_single_entry(K,V,Tstamp,F_MergeFile,
-                             State,F_HintKeyDir,F_DelKeyDir,F_AllMergedFiles)
+merge_files(#mstate { input_files = [] } = State) ->
+    State;
+merge_files(#mstate { input_files = [Filename | Rest]} = State) ->
+    %% Open the next file
+    {ok, File} = bitcask_fileops:open_file(Filename),
+    F = fun(K, V, Tstamp, _Pos, State0) ->
+                merge_single_entry(K, V, Tstamp, State0)
         end,
-    {Z_MergeFile,Z_HintKeyDir,Z_DelKeyDir,Z_AllMergedFiles} = 
-        bitcask_fileops:fold(File, F, {MergeFile,
-                                       HintKeyDir,DelKeyDir,AllMergedFiles}),
-    merge_files(State#bc_state{read_files=Rest},
-                Z_MergeFile,Z_HintKeyDir,Z_DelKeyDir,Z_AllMergedFiles).
+    State1 = bitcask_fileops:fold(File, F, State),
+    ok = bitcask_filops:close(File),
+    merge_files(State1#mstate { input_files = Rest }).
 
-merge_single_entry(K,V,Tstamp,MergeFile,
-  _State=#bc_state{dirname=Dirname,keydir=KeyDir,max_file_size=MaxFileSize},
-                                        HintKeyDir,DelKeyDir,AllMergedFiles) ->
-    case out_of_date(K,Tstamp,[KeyDir,HintKeyDir,DelKeyDir]) of
-        true -> 
-            {MergeFile,HintKeyDir,DelKeyDir,AllMergedFiles};
+merge_single_entry(K, V, Tstamp, #mstate { dirname = Dirname } = State) ->
+    case out_of_date(K, Tstamp, [State#mstate.all_keydir,
+                                 State#mstate.del_keydir]) of
+        true ->
+            State;
         false ->
             case (V =:= ?TOMBSTONE) of
                 true ->
-                    ok = bitcask_nifs:keydir_put(DelKeyDir, K,
-                                                 Tstamp,0,0,Tstamp),
-                    {MergeFile,HintKeyDir,DelKeyDir,AllMergedFiles};
+                    ok = bitcask_nifs:keydir_put(State#mstate.del_keydir, K,
+                                                 Tstamp, 0, 0, Tstamp),
+                    State;
                 false ->
-                    ok = bitcask_nifs:keydir_remove(DelKeyDir, K),
+                    ok = bitcask_nifs:keydir_remove(State#mstate.del_keydir, K),
 
-                    {Z_MergeFile,Z_HintKeyDir,Z_AllMergedFiles} = 
-                        case bitcask_fileops:check_write(MergeFile, K, V, 
-                                                         MaxFileSize) of
+                    %% See if it's time to rotate to the next file
+                    State1 =
+                        case bitcask_fileops:check_write(State#mstate.out_file,
+                                            K, V, State#mstate.max_file_size) of
                             wrap ->
-                                ok = bitcask_fileops:sync(MergeFile),
-                                ok = bitcask_fileops:close(MergeFile),
-                                {ok, NewMergeFile} = 
+                                %% Close the current output file
+                                close_outfile(State),
+
+                                %% Start our next file and update state
+                                {ok, NewFile} = 
                                     bitcask_fileops:create_file(Dirname),
-                                {ok, NewHintKeyDir} = bitcask_nifs:keydir_new(),
-                                {NewMergeFile,NewHintKeyDir,
-                                 [{MergeFile,HintKeyDir}|AllMergedFiles]};
+                                {ok, HintKeyDir} = bitcask_nifs:keydir_new(),
+                                State#mstate { out_file = NewFile,
+                                               hint_keydir = HintKeyDir };
                             ok ->
-                                {MergeFile,HintKeyDir,AllMergedFiles}
+                                State
                         end,
-                    {ok, WrittenFile, OffSet, Size} =
-                        bitcask_fileops:write(Z_MergeFile,K, V, Tstamp),
-                    case KeyDir of
-                        undefined ->
-                            nop;
-                        _ ->
-                            ok = bitcask_nifs:keydir_put(KeyDir, K,
-                                      bitcask_fileops:file_tstamp(WrittenFile),
-                                      Size, OffSet, Tstamp)
-                    end,
-                    ok = bitcask_nifs:keydir_put(Z_HintKeyDir, K,
-                                      bitcask_fileops:file_tstamp(WrittenFile),
-                                      Size, OffSet, Tstamp),
-                    {WrittenFile,Z_HintKeyDir,DelKeyDir,Z_AllMergedFiles}
+
+                    {ok, Outfile, OffSet, Size} = 
+                        bitcask_fileops:write(State1#mstate.out_file,
+                                              K, V, Tstamp),
+
+      %% TODO: update live writer's keydir w/ new NIF interface
+
+                    %% Update the keydir for the current out file
+                    ok = bitcask_nifs:keydir_put(State#mstate.hint_keydir, K,
+                                         bitcask_fileops:file_tstamp(Outfile),
+                                                 Size, OffSet, Tstamp),
+                    %% Update the keydir of all keys we've seen over this merge
+                    ok = bitcask_nifs:keydir_put(State#mstate.all_keydir, K,
+                                         bitcask_fileops:file_tstamp(Outfile),
+                                                 Size, OffSet, Tstamp),
+                    State1#mstate { out_file = Outfile }
             end
     end.
 
-out_of_date(_Key,_Tstamp,[]) ->
+close_outfile(State) ->
+    %% Close the current output file
+    ok = bitcask_fileops:sync(State#mstate.out_file),
+    ok = bitcask_fileops:close(State#mstate.out_file),
+
+    %% TODO: Dump the hint keydir to disk here
+   %fold over HintKeyDir, writing each
+   %{KeySize,Key,(Timestamp,MergeFile,Offset,Size)}
+
+    ok.
+
+out_of_date(_Key, _Tstamp, []) ->
     false;
-out_of_date(Key,Tstamp,[undefined|Rest]) ->
-    out_of_date(Key,Tstamp,Rest);
-out_of_date(Key,Tstamp,[KeyDir|Rest]) ->
+out_of_date(Key, Tstamp, [KeyDir|Rest]) ->
     case bitcask_nifs:keydir_get(KeyDir, Key) of
-        not_found -> out_of_date(Key,Tstamp,Rest);
+        not_found ->
+            out_of_date(Key, Tstamp, Rest);
+
         E when is_record(E, bitcask_entry) ->
             case Tstamp < E#bitcask_entry.tstamp of
-                true -> true;
-                false -> out_of_date(Key,Tstamp,Rest)
+                true  -> true;
+                false -> out_of_date(Key, Tstamp, Rest)
             end;
-        {error, Reason} -> {error, Reason}
+
+        {error, Reason} ->
+            {error, Reason}
     end.
+
+readable_files(Dirname) ->
+    %% Check the write and/or merge locks to see what files are currently
+    %% being written to. Generate our list excepting those.
+    {_, WritingFile} = bitcask_lockops:check(write, Dirname),
+    {_, MergingFile} = bitcask_lockops:check(merge, Dirname),
+    list_data_files(Dirname, WritingFile, MergingFile).
+
+
 
 %% ===================================================================
 %% EUnit tests
@@ -385,7 +417,7 @@ list_data_files_test() ->
     [] = os:cmd(?FMT("touch ~s", [string:join(ExpFiles, " ")])),
 
     %% Now use the list_data_files to scan the dir
-    ExpFiles = list_data_files("/tmp/bc.test.list", undefined).
+    ExpFiles = list_data_files("/tmp/bc.test.list", undefined, undefined).
 
 fold_test() ->
     B = init_dataset("/tmp/bc.test.fold", default_dataset()),
