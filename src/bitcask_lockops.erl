@@ -20,6 +20,8 @@
 %%
 %% -------------------------------------------------------------------
 -module(bitcask_lockops).
+-author('David Smith <@basho.com>').
+-author('Justin Sheehy <justin@basho.com>').
 
 -export([check/2,
          acquire/2,
