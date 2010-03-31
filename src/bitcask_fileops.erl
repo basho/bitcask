@@ -44,7 +44,8 @@
 -define(KEYSIZEFIELD, 16).
 -define(VALSIZEFIELD, 32).
 -define(HEADER_SIZE,  10). % 4 + 2 + 4 bytes
-
+-define(MAXKEYSIZE, 2#1111111111111111).
+-define(MAXVALSIZE, 2#11111111111111111111111111111111).
 %% @doc Open a new file for writing.
 %% Called on a Dirname, will open a fresh file in that directory.
 %% @spec create_file(Dirname :: string()) -> {ok, filestate()}
@@ -95,9 +96,9 @@ delete(#filestate{ filename = FN }) ->
 %%       {ok, filestate(), Offset :: integer(), Size :: integer()}
 write(Filestate=#filestate{fd = FD, ofs = Offset}, Key, Value, Tstamp) ->
     KeySz = size(Key),
-    true = (KeySz =< ?KEYSIZEFIELD),
+    true = (KeySz =< ?MAXKEYSIZE),
     ValueSz = size(Value),
-    true = (ValueSz =< ?VALSIZEFIELD),
+    true = (ValueSz =< ?MAXVALSIZE),
     %% Setup io_list for writing -- avoid merging binaries if we can help it
     Bytes = [<<Tstamp:?TSTAMPFIELD>>, <<KeySz:?KEYSIZEFIELD>>,
              <<ValueSz:?VALSIZEFIELD>>, Key, Value],
