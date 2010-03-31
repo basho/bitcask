@@ -222,8 +222,8 @@ merge(Dirname) ->
     close_outfile(State1),
 
     %% Cleanup the original input files and release our lock
-    [ok = bitcask_fileops:close(F) || F <- State#mstate.input_files],
-    [ok = bitcask_fileops:delete(F) || F <- State#mstate.input_files],
+    [file:close(F) || F <- State#mstate.input_files],
+    [file:delete(F) || F <- State#mstate.input_files],
     ok = bitcask_lockops:release(merge, Dirname),
     ok.
 
@@ -281,7 +281,7 @@ merge_files(#mstate { input_files = [Filename | Rest]} = State) ->
                 merge_single_entry(K, V, Tstamp, State0)
         end,
     State1 = bitcask_fileops:fold(File, F, State),
-    ok = bitcask_filops:close(File),
+    ok = bitcask_fileops:close(File),
     merge_files(State1#mstate { input_files = Rest }).
 
 merge_single_entry(K, V, Tstamp, #mstate { dirname = Dirname } = State) ->
@@ -459,8 +459,8 @@ merge_test() ->
     %% only contain a single key.
     B0 = init_dataset("/tmp/bc.test.merge", [{max_file_size, 1}], default_dataset()),
 
-    %% Verify there are 4 files (one for each key + extra)
-    4 = length(B0#bc_state.read_files),
+    %% Verify number of files in test data before merge
+    3 = length(B0#bc_state.read_files),
     close(B0),
 
     %% Merge everything
