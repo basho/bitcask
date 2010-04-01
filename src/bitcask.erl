@@ -584,6 +584,31 @@ merge_test() ->
                         Bc
                 end, B, default_dataset()).
 
+hint_test() ->
+    %% Initialize dataset by basically doing the merge_test
+    %% since merging is how hintfiles are made.
+    B0 = init_dataset("/tmp/bc.test.hints",
+                      [{max_file_size, 1}], default_dataset()),
+    3 = length(B0#bc_state.read_files),
+    close(B0),
+    ok = merge("/tmp/bc.test.hints"),
 
+    %% There should be exactly one of each type of file post-merge.
+    [DataFile] = filelib:wildcard("/tmp/bc.test.hints/*data"),
+    [HintFile] = filelib:wildcard("/tmp/bc.test.hints/*hint"),
+    {ok, DataHandle} = bitcask_fileops:open_file(DataFile),
+    {ok, HintHandle} = file:open(HintFile,[read,raw,binary]),
+
+    %% Hintfile should have the same data except for the Value
+    DF = fun(K,_V,TStamp,{Offset,Sz},Acc) ->
+                 [{K,TStamp,Offset,Sz}|Acc]
+         end,
+    HF = fun(K,TStamp,{Offset,Sz},Acc) ->
+                 [{K,TStamp,Offset,Sz}|Acc]
+         end,
+    
+    %% The real test.
+    true = (bitcask_fileops:fold(DataHandle,DF,[]) =:=
+            bitcask_fileops:hintfile_fold(HintHandle,HF,[])).
 
 -endif.
