@@ -48,6 +48,7 @@
                   input_files,
                   out_file,
                   merged_files,
+                  live_keydir,
                   all_keydir,
                   hint_keydir,
                   del_keydir }).
@@ -222,12 +223,36 @@ merge(Dirname) ->
         false -> throw({error, merge_locked})
     end,
 
+    %% Get the list of files we'll be merging
+    ReadableFiles = readable_files(Dirname),
+
+    %% Get the live keydir
+    case bitcask_nifs:keydir_new(Dirname) of
+        {ready, LiveKeyDir} ->
+            %% Simplest case; a key dir is already available and loaded. Go ahead and open
+            %% all the readable files
+            ReadFiles = [begin {ok, Fstate} = bitcask_fileops:open_file(F), Fstate end
+                         || F <- ReadableFiles];
+
+        {not_ready, LiveKeyDir} ->
+            %% Live keydir is newly created. We need to go ahead and load it
+            %% up in case a writer or reader comes along in this same VM.
+            ReadFiles = scan_key_files(ReadableFiles, LiveKeyDir, []),
+            bitcask_nifs:keydir_mark_as_ready(LiveKeyDir);
+
+        {error, not_ready} ->
+            %% Someone else is loading the keydir. We'll bail here and try again
+            %% later.
+            LiveKeyDir = undefined, ReadFiles = [], % Make erlc happy w/ non-local exit
+            throw({error, not_ready})
+    end,
+
     %% Setup our first output merge file and update the merge lock accordingly
     {ok, Outfile} = bitcask_fileops:create_file(Dirname),
     ok = bitcask_lockops:update(merge, Dirname,
                                 bitcask_fileops:filename(Outfile)),
 
-    %% Initialize all the keydirs we need. The hint keydir will get recreated
+    %% Initialize the other keydirs we need. The hint keydir will get recreated
     %% each time we wrap a file, so that it only contains keys associated
     %% with the current out_file
     {ok, AllKeyDir} = bitcask_nifs:keydir_new(),
@@ -239,9 +264,10 @@ merge(Dirname) ->
     %% Initialize our state for the merge
     State = #mstate { dirname = Dirname,
                       max_file_size = 16#80000000, % 2GB default
-                      input_files = readable_files(Dirname),
+                      input_files = ReadFiles,
                       out_file = Outfile,
                       merged_files = [],
+                      live_keydir = LiveKeyDir,
                       all_keydir = AllKeyDir,
                       hint_keydir = HintKeyDir,
                       del_keydir = DelKeyDir },
@@ -253,8 +279,8 @@ merge(Dirname) ->
     close_outfile(State1),
 
     %% Cleanup the original input files and release our lock
-    [file:close(F) || F <- State#mstate.input_files],
-    [file:delete(F) || F <- State#mstate.input_files],
+    [bitcask_fileops:close(F) || F <- State#mstate.input_files],
+    [file:delete(F) || F <- ReadableFiles],
     ok = bitcask_lockops:release(merge, Dirname),
     ok.
 
@@ -341,9 +367,7 @@ list_data_files(Dirname, WritingFile, Mergingfile) ->
 
 merge_files(#mstate { input_files = [] } = State) ->
     State;
-merge_files(#mstate { input_files = [Filename | Rest]} = State) ->
-    %% Open the next file
-    {ok, File} = bitcask_fileops:open_file(Filename),
+merge_files(#mstate { input_files = [File | Rest]} = State) ->
     F = fun(K, V, Tstamp, _Pos, State0) ->
                 merge_single_entry(K, V, Tstamp, State0)
         end,
@@ -374,8 +398,7 @@ merge_single_entry(K, V, Tstamp, #mstate { dirname = Dirname } = State) ->
                                 close_outfile(State),
 
                                 %% Start our next file and update state
-                                {ok, NewFile} = 
-                                    bitcask_fileops:create_file(Dirname),
+                                {ok, NewFile} = bitcask_fileops:create_file(Dirname),
                                 {ok, HintKeyDir} = bitcask_nifs:keydir_new(),
                                 State#mstate { out_file = NewFile,
                                                hint_keydir = HintKeyDir };
@@ -383,16 +406,22 @@ merge_single_entry(K, V, Tstamp, #mstate { dirname = Dirname } = State) ->
                                 State
                         end,
 
-                    {ok, Outfile, OffSet, Size} = 
+                    {ok, Outfile, OffSet, Size} =
                         bitcask_fileops:write(State1#mstate.out_file,
                                               K, V, Tstamp),
 
-      %% TODO: update live writer's keydir w/ new NIF interface
+                    %% Update live keydir for the current out file. It's possible that
+                    %% this is a noop, as someone else may have written a newer value
+                    %% whilst we were processing.
+                    ok = bitcask_nifs:keydir_put(State#mstate.live_keydir, K,
+                                                 bitcask_fileops:file_tstamp(Outfile),
+                                                 Size, OffSet, Tstamp),
 
                     %% Update the keydir for the current out file
                     ok = bitcask_nifs:keydir_put(State#mstate.hint_keydir, K,
                                          bitcask_fileops:file_tstamp(Outfile),
                                                  Size, OffSet, Tstamp),
+
                     %% Update the keydir of all keys we've seen over this merge
                     ok = bitcask_nifs:keydir_put(State#mstate.all_keydir, K,
                                          bitcask_fileops:file_tstamp(Outfile),
@@ -405,23 +434,23 @@ close_outfile(_State=#mstate{out_file=OutFile,hint_keydir=HintKeyDir}) ->
     %% Close the current output file
     ok = bitcask_fileops:sync(OutFile),
     ok = bitcask_fileops:close(OutFile),
+
     %% Now write the hints for faster keydir building
     HintFileName = bitcask_fileops:hintfile_name(OutFile) ++ ".tmp",
     {ok, FD} = file:open(HintFileName, [read, write, raw, binary]),
     F = fun(_E=#bitcask_entry{key=Key,value_sz=VSZ,value_pos=POS,tstamp=TS},
-            {HFD,HOff}) -> 
+            {HFD,HOff}) ->
                 KeySz = size(Key),
                 Bytes = [<<TS:?TSTAMPFIELD>>, <<KeySz:?KEYSIZEFIELD>>,
-                         <<VSZ:?VALSIZEFIELD>>, <<POS:?OFFSETFIELD>>, Key],
+                          <<VSZ:?VALSIZEFIELD>>, <<POS:?OFFSETFIELD>>, Key],
                 ok = file:pwrite(HFD, HOff, Bytes),
                 WrittenSz = iolist_size(Bytes),
                 {HFD,HOff+WrittenSz}
         end,
     bitcask_nifs:keydir_fold(HintKeyDir, F, {FD,0}),
     file:close(FD),
-    ok = file:rename(HintFileName, 
-                 lists:reverse(lists:nthtail(4, lists:reverse(HintFileName)))),
-    ok.
+    ok = file:rename(HintFileName, filename:rootname(HintFileName, ".tmp")).
+
 
 out_of_date(_Key, _Tstamp, []) ->
     false;
@@ -524,17 +553,17 @@ wrap_test() ->
     {ok, B} = bitcask:open("/tmp/bc.test.wrap"),
 
     %% Check that all our data is available
-    B2 = lists:foldl(fun({K, V}, Bc0) ->
-                             {ok, V, Bc} = bitcask:get(Bc0, K),
-                             Bc
-                     end, B, default_dataset()),
+    lists:foldl(fun({K, V}, Bc0) ->
+                        {ok, V, Bc} = bitcask:get(Bc0, K),
+                        Bc
+                end, B, default_dataset()),
 
     %% Finally, verify that there are 4 files currently opened for read (one for each key
     %% and the initial writing one)
     4 = length(readable_files("/tmp/bc.test.wrap")).
 
 
-merge_notest() ->
+merge_test() ->
     %% Initialize dataset with max_file_size set to 1 so that each file will
     %% only contain a single key.
     close(init_dataset("/tmp/bc.test.merge", [{max_file_size, 1}], default_dataset())),
