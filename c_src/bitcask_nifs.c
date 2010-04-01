@@ -175,10 +175,11 @@ ERL_NIF_TERM bitcask_nifs_keydir_new1(ErlNifEnv* env, int argc, const ERL_NIF_TE
             // to allocate enough room for the name.
             keydir = enif_alloc(env, sizeof(bitcask_keydir) + name_sz + 1);
             memset(keydir, '\0', sizeof(bitcask_keydir) + name_sz + 1);
-            strncpy(keydir->name, name, name_sz);
+            strncpy(keydir->name, name, name_sz + 1);
 
-            // Be sure to initialize the rwlock
+            // Be sure to initialize the rwlock and set our refcount
             keydir->lock = enif_rwlock_create(name);
+            keydir->refcount = 1;
 
             // Finally, register this new keydir in the globals
             GKEYDIR_HASH_ADD(priv->global_keydirs, keydir);
