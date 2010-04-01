@@ -17,6 +17,7 @@
 
 -define(TOMBSTONE, <<"bitcask_tombstone">>).
 
+-define(OFFSETFIELD,  64).
 -define(TSTAMPFIELD,  32).
 -define(KEYSIZEFIELD, 16).
 -define(VALSIZEFIELD, 32).

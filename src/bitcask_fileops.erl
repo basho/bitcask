@@ -36,6 +36,7 @@
          fold/3,
          mk_filename/2,
          filename/1,
+         hintfile_name/1,
          file_tstamp/1,
          tstamp/0,
          check_write/4]).
@@ -144,6 +145,10 @@ mk_filename(Dirname, Tstamp) ->
 
 filename(#filestate { filename = Fname }) ->
     Fname.
+
+hintfile_name(Filestate) ->
+    lists:reverse(lists:nthtail(5, lists:reverse(filename(Filestate))))
+        ++ ".hint".
 
 file_tstamp(#filestate{tstamp=Tstamp}) ->
     Tstamp;
