@@ -21,7 +21,7 @@
 %% -------------------------------------------------------------------
 -module(bitcask_nifs).
 
--export([keydir_new/0,
+-export([keydir_new/0, keydir_new/1,
          keydir_put/6,
          keydir_get/2,
          keydir_remove/2,
@@ -52,6 +52,9 @@ init() ->
 keydir_new() ->
     "NIF library not loaded".
 
+keydir_new(_Name) ->
+    "NIF library not loaded".
+
 keydir_put(_Ref, _Key, _FileId, _ValueSz, _ValuePos, _Tstamp) ->
     "NIF library not loaded".
 
@@ -71,8 +74,12 @@ keydir_itr_next(_Itr) ->
     "NIF library not loaded".
 
 keydir_fold(Ref, Fun, Acc0) ->
-    Itr = keydir_itr(Ref),
-    keydir_fold_cont(keydir_itr_next(Itr), Fun, Acc0).
+    case keydir_itr(Ref) of
+        ok ->
+            keydir_fold_cont(keydir_itr_next(Ref), Ref, Fun, Acc0);
+        {error, Reason} ->
+            {error, Reason}
+    end.
 
 keydir_info(_Ref) ->
     "NIF library not loaded".
@@ -85,11 +92,11 @@ create_file(_Filename) ->
 %% Internal functions
 %% ===================================================================
 
-keydir_fold_cont(not_found, _Fun, Acc0) ->
+keydir_fold_cont(not_found, _Ref, _Fun, Acc0) ->
     Acc0;
-keydir_fold_cont({Curr, Next}, Fun, Acc0) ->
+keydir_fold_cont(Curr, Ref, Fun, Acc0) ->
     Acc = Fun(Curr, Acc0),
-    keydir_fold_cont(keydir_itr_next(Next), Fun, Acc).
+    keydir_fold_cont(keydir_itr_next(Ref), Ref, Fun, Acc).
 
 %% ===================================================================
 %% EUnit tests
@@ -134,7 +141,19 @@ keydir_copy_test() ->
     ok = keydir_put(Ref1, <<"hij">>, 1, 7890, 0, 3),
 
     {ok, Ref2} = keydir_copy(Ref1),
-    ?assertNot(keydir_itr(Ref1) == keydir_itr(Ref2)).
+    #bitcask_entry { key = <<"abc">>} = keydir_get(Ref2, <<"abc">>).
+
+keydir_named_test() ->
+    {ok, Ref} = keydir_new("k1"),
+    ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
+
+    {ok, Ref2} = keydir_new("k1"),
+    #bitcask_entry { key = <<"abc">> } = keydir_get(Ref2, <<"abc">>).
+
+keydir_named_noitr_test() ->
+    {ok, Ref} = keydir_new("k1"),
+    {error, iteration_not_permitted} = keydir_itr(Ref).
+
 
 create_file_test() ->
     Fname = "/tmp/bitcask_nifs.createfile.test",
