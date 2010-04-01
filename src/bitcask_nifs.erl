@@ -24,6 +24,7 @@
 -author('Justin Sheehy <justin@basho.com>').
 
 -export([keydir_new/0, keydir_new/1,
+         keydir_mark_ready/1,
          keydir_put/6,
          keydir_get/2,
          keydir_remove/2,
@@ -55,6 +56,9 @@ keydir_new() ->
     "NIF library not loaded".
 
 keydir_new(_Name) ->
+    "NIF library not loaded".
+
+keydir_mark_ready(_Ref) ->
     "NIF library not loaded".
 
 keydir_put(_Ref, _Key, _FileId, _ValueSz, _ValuePos, _Tstamp) ->
@@ -146,14 +150,21 @@ keydir_copy_test() ->
     #bitcask_entry { key = <<"abc">>} = keydir_get(Ref2, <<"abc">>).
 
 keydir_named_test() ->
-    {ok, Ref} = keydir_new("k1"),
+    {not_ready, Ref} = keydir_new("k1"),
     ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
+    keydir_mark_ready(Ref),
 
-    {ok, Ref2} = keydir_new("k1"),
+    {ready, Ref2} = keydir_new("k1"),
     #bitcask_entry { key = <<"abc">> } = keydir_get(Ref2, <<"abc">>).
 
+keydir_named_not_ready_test() ->
+    {not_ready, Ref} = keydir_new("k2"),
+    ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
+
+    {error, not_ready} = keydir_new("k2").
+
 keydir_named_noitr_test() ->
-    {ok, Ref} = keydir_new("k1"),
+    {not_ready, Ref} = keydir_new("k3"),
     {error, iteration_not_permitted} = keydir_itr(Ref).
 
 

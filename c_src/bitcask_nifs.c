@@ -48,6 +48,7 @@ typedef struct
     size_t        key_bytes;
     unsigned int  refcount;
     ErlNifRWLock* lock;
+    char          is_ready;
     char          name[0];
 } bitcask_keydir;
 
@@ -76,9 +77,23 @@ typedef struct
 #define RW_LOCK(handle)   { if (keydir->lock) enif_rwlock_rwlock(keydir->lock); }
 #define RW_UNLOCK(handle) { if (keydir->lock) enif_rwlock_rwunlock(keydir->lock); }
 
+// Atoms (initialized in on_load)
+static ERL_NIF_TERM ATOM_ALLOCATION_ERROR;
+static ERL_NIF_TERM ATOM_ALREADY_EXISTS;
+static ERL_NIF_TERM ATOM_BITCASK_ENTRY;
+static ERL_NIF_TERM ATOM_ERROR;
+static ERL_NIF_TERM ATOM_FALSE;
+static ERL_NIF_TERM ATOM_ITERATION_NOT_PERMITTED;
+static ERL_NIF_TERM ATOM_NOT_FOUND;
+static ERL_NIF_TERM ATOM_NOT_READY;
+static ERL_NIF_TERM ATOM_OK;
+static ERL_NIF_TERM ATOM_READY;
+static ERL_NIF_TERM ATOM_TRUE;
+
 // Prototypes
 ERL_NIF_TERM bitcask_nifs_keydir_new0(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_new1(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_keydir_mark_ready(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_get(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_put(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
@@ -93,6 +108,7 @@ static ErlNifFunc nif_funcs[] =
 {
     {"keydir_new", 0, bitcask_nifs_keydir_new0},
     {"keydir_new", 1, bitcask_nifs_keydir_new1},
+    {"keydir_mark_ready", 1, bitcask_nifs_keydir_mark_ready},
     {"keydir_put", 6, bitcask_nifs_keydir_put},
     {"keydir_get", 2, bitcask_nifs_keydir_get},
     {"keydir_remove", 2, bitcask_nifs_keydir_remove},
@@ -120,7 +136,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_new0(ErlNifEnv* env, int argc, const ERL_NIF_TE
     handle->keydir = keydir;
     ERL_NIF_TERM result = enif_make_resource(env, handle);
     enif_release_resource(env, handle);
-    return enif_make_tuple2(env, enif_make_atom(env, "ok"), result);
+    return enif_make_tuple2(env, ATOM_OK, result);
 }
 
 ERL_NIF_TERM bitcask_nifs_keydir_new1(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -139,8 +155,19 @@ ERL_NIF_TERM bitcask_nifs_keydir_new1(ErlNifEnv* env, int argc, const ERL_NIF_TE
         GKEYDIR_HASH_FIND(priv->global_keydirs, name, keydir);
         if (keydir)
         {
-            // Existing keydir is available. Increment the refcount.
-            keydir->refcount++;
+            // Existing keydir is available. Check the is_ready flag to determine if
+            // the original creator is ready for other processes to use it.
+            if (!keydir->is_ready)
+            {
+                // Notify the caller that while the requested keydir exists, it's not
+                // ready for public usage.
+                enif_mutex_unlock(priv->global_keydirs_lock);
+                return enif_make_tuple2(env, ATOM_ERROR, ATOM_NOT_READY);
+            }
+            else
+            {
+                keydir->refcount++;
+            }
         }
         else
         {
@@ -166,7 +193,29 @@ ERL_NIF_TERM bitcask_nifs_keydir_new1(ErlNifEnv* env, int argc, const ERL_NIF_TE
         handle->keydir = keydir;
         ERL_NIF_TERM result = enif_make_resource(env, handle);
         enif_release_resource(env, handle);
-        return enif_make_tuple2(env, enif_make_atom(env, "ok"), result);
+
+        // Return to the caller a tuple with the reference and an atom
+        // indicating if the keydir is ready or not.
+        ERL_NIF_TERM is_ready_atom = keydir->is_ready ? ATOM_READY : ATOM_NOT_READY;
+        return enif_make_tuple2(env, is_ready_atom, result);
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
+ERL_NIF_TERM bitcask_nifs_keydir_mark_ready(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_keydir_handle* handle;
+
+    if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle))
+    {
+        bitcask_keydir* keydir = handle->keydir;
+        RW_LOCK(keydir);
+        keydir->is_ready = 1;
+        RW_UNLOCK(keydir);
+        return ATOM_OK;
     }
     else
     {
@@ -216,7 +265,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put(ErlNifEnv* env, int argc, const ERL_NIF_TER
             keydir->iterator = keydir->entries;
 
             RW_UNLOCK(keydir);
-            return enif_make_atom(env, "ok");
+            return ATOM_OK;
         }
         else if (old_entry->tstamp <= entry.tstamp)
         {
@@ -228,12 +277,12 @@ ERL_NIF_TERM bitcask_nifs_keydir_put(ErlNifEnv* env, int argc, const ERL_NIF_TER
             old_entry->value_pos = entry.value_pos;
             old_entry->tstamp = entry.tstamp;
             RW_UNLOCK(keydir);
-            return enif_make_atom(env, "ok");
+            return ATOM_OK;
         }
         else
         {
             RW_UNLOCK(keydir);
-            return enif_make_atom(env, "already_exists");
+            return ATOM_ALREADY_EXISTS;
         }
     }
     else
@@ -258,7 +307,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_get(ErlNifEnv* env, int argc, const ERL_NIF_TER
         if (entry != 0)
         {
             ERL_NIF_TERM result = enif_make_tuple6(env,
-                                                   enif_make_atom(env, "bitcask_entry"),
+                                                   ATOM_BITCASK_ENTRY,
                                                    argv[1], /* Key */
                                                    enif_make_uint(env, entry->file_id),
                                                    enif_make_uint(env, entry->value_sz),
@@ -270,7 +319,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_get(ErlNifEnv* env, int argc, const ERL_NIF_TER
         else
         {
             R_UNLOCK(keydir);
-            return enif_make_atom(env, "not_found");
+            return ATOM_NOT_FOUND;
         }
     }
     else
@@ -309,7 +358,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
         }
 
         RW_UNLOCK(keydir);
-        return enif_make_atom(env, "ok");
+        return ATOM_OK;
     }
     else
     {
@@ -354,7 +403,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_copy(ErlNifEnv* env, int argc, const ERL_NIF_TE
 
         ERL_NIF_TERM result = enif_make_resource(env, new_handle);
         enif_release_resource(env, new_handle);
-        return enif_make_tuple2(env, enif_make_atom(env, "ok"), result);
+        return enif_make_tuple2(env, ATOM_OK, result);
     }
     else
     {
@@ -373,13 +422,12 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr(ErlNifEnv* env, int argc, const ERL_NIF_TER
         // If this is a named keydir, we do not permit iteration for locking reasons.
         if (keydir->lock)
         {
-            return enif_make_tuple2(env, enif_make_atom(env, "error"),
-                                    enif_make_atom(env, "iteration_not_permitted"));
+            return enif_make_tuple2(env, ATOM_ERROR, ATOM_ITERATION_NOT_PERMITTED);
         }
 
         // Initialize the iterator
         keydir->iterator = keydir->entries;
-        return enif_make_atom(env, "ok");
+        return ATOM_OK;
     }
     else
     {
@@ -398,8 +446,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
         // If this is a named keydir, we do not permit iteration for locking reasons.
         if (keydir->lock)
         {
-            return enif_make_tuple2(env, enif_make_atom(env, "error"),
-                                    enif_make_atom(env, "iteration_not_permitted"));
+            return enif_make_tuple2(env, ATOM_ERROR, ATOM_ITERATION_NOT_PERMITTED);
         }
 
         if (keydir->iterator)
@@ -410,7 +457,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
             // Alloc the binary and make sure it succeeded
             if (!enif_alloc_binary(env, entry->key_sz, &key))
             {
-                return enif_make_atom(env, "allocation_error");
+                return ATOM_ALLOCATION_ERROR;
             }
 
             // Copy the data from our key to the new allocated binary
@@ -418,7 +465,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
             // get away with not doing a copy here?
             memcpy(key.data, entry->key, entry->key_sz);
             ERL_NIF_TERM curr = enif_make_tuple6(env,
-                                                 enif_make_atom(env, "bitcask_entry"),
+                                                 ATOM_BITCASK_ENTRY,
                                                  enif_make_binary(env, &key),
                                                  enif_make_uint(env, entry->file_id),
                                                  enif_make_uint(env, entry->value_sz),
@@ -432,7 +479,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
         }
         else
         {
-            return enif_make_atom(env, "not_found");
+            return ATOM_NOT_FOUND;
         }
     }
     else
@@ -473,11 +520,11 @@ ERL_NIF_TERM bitcask_nifs_create_file(ErlNifEnv* env, int argc, const ERL_NIF_TE
         if (fd > -1)
         {
             close(fd);
-            return enif_make_atom(env, "true");
+            return ATOM_TRUE;
         }
         else
         {
-            return enif_make_atom(env, "false");
+            return ATOM_FALSE;
         }
     }
     else
@@ -554,6 +601,19 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
     priv->global_keydirs = 0;
     priv->global_keydirs_lock = enif_mutex_create("bitcask_global_handles_lock");
     *priv_data = priv;
+
+    // Initialize atoms that we use throughout the NIF.
+    ATOM_ALLOCATION_ERROR = enif_make_atom(env, "allocation_error");
+    ATOM_ALREADY_EXISTS = enif_make_atom(env, "already_exists");
+    ATOM_BITCASK_ENTRY = enif_make_atom(env, "bitcask_entry");
+    ATOM_ERROR = enif_make_atom(env, "error");
+    ATOM_FALSE = enif_make_atom(env, "false");
+    ATOM_ITERATION_NOT_PERMITTED = enif_make_atom(env, "iteration_not_permitted");
+    ATOM_NOT_FOUND = enif_make_atom(env, "not_found");
+    ATOM_NOT_READY = enif_make_atom(env, "not_ready");
+    ATOM_OK = enif_make_atom(env, "ok");
+    ATOM_READY = enif_make_atom(env, "ready");
+    ATOM_TRUE = enif_make_atom(env, "true");
 
     return 0;
 }
