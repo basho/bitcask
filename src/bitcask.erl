@@ -20,6 +20,8 @@
 %%
 %% -------------------------------------------------------------------
 -module(bitcask).
+-author('David Smith <@basho.com>').
+-author('Justin Sheehy <justin@basho.com>').
 
 -export([open/1, open/2,
          close/1,
@@ -238,15 +240,28 @@ scan_key_files([], _KeyDir, Acc) ->
     Acc;
 scan_key_files([Filename | Rest], KeyDir, Acc) ->
     {ok, File} = bitcask_fileops:open_file(Filename),
-    F = fun(K, _V, Tstamp, {Offset, TotalSz}, _) ->
-                bitcask_nifs:keydir_put(KeyDir,
-                                        K,
-                                        bitcask_fileops:file_tstamp(File),
-                                        TotalSz,
-                                        Offset,
-                                        Tstamp)
-        end,
-    bitcask_fileops:fold(File, F, undefined),
+    case file:open(bitcask_fileops:hintfile_name(File),[read,raw,binary]) of
+        {error, enoent} ->
+            F = fun(K, _V, Tstamp, {Offset, TotalSz}, _) ->
+                        bitcask_nifs:keydir_put(KeyDir,
+                                                K,
+                                            bitcask_fileops:file_tstamp(File),
+                                                TotalSz,
+                                                Offset,
+                                                Tstamp)
+                end,
+            bitcask_fileops:fold(File, F, undefined);
+        {ok, HintFD} ->
+            F = fun(K, Tstamp, {Offset, TotalSz}, _) ->
+                        bitcask_nifs:keydir_put(KeyDir,
+                                                K,
+                                            bitcask_fileops:file_tstamp(File),
+                                                TotalSz,
+                                                Offset,
+                                                Tstamp)
+                end,
+            bitcask_fileops:hintfile_fold(HintFD, F, undefined)
+    end,
     scan_key_files(Rest, KeyDir, [File | Acc]).
 
 
@@ -334,15 +349,26 @@ merge_single_entry(K, V, Tstamp, #mstate { dirname = Dirname } = State) ->
             end
     end.
 
-close_outfile(State) ->
+close_outfile(_State=#mstate{out_file=OutFile,hint_keydir=HintKeyDir}) ->
     %% Close the current output file
-    ok = bitcask_fileops:sync(State#mstate.out_file),
-    ok = bitcask_fileops:close(State#mstate.out_file),
-
-    %% TODO: Dump the hint keydir to disk here
-   %fold over HintKeyDir, writing each
-   %{KeySize,Key,(Timestamp,MergeFile,Offset,Size)}
-
+    ok = bitcask_fileops:sync(OutFile),
+    ok = bitcask_fileops:close(OutFile),
+    %% Now write the hints for faster keydir building
+    HintFileName = bitcask_fileops:hintfile_name(OutFile) ++ ".tmp",
+    {ok, FD} = file:open(HintFileName, [read, write, raw, binary]),
+    F = fun(_E=#bitcask_entry{key=Key,value_sz=VSZ,value_pos=POS,tstamp=TS},
+            {HFD,HOff}) -> 
+                KeySz = size(Key),
+                Bytes = [<<TS:?TSTAMPFIELD>>, <<KeySz:?KEYSIZEFIELD>>,
+                         <<VSZ:?VALSIZEFIELD>>, <<POS:?OFFSETFIELD>>, Key],
+                ok = file:pwrite(HFD, HOff, Bytes),
+                WrittenSz = iolist_size(Bytes),
+                {HFD,HOff+WrittenSz}
+        end,
+    bitcask_nifs:keydir_fold(HintKeyDir, F, {FD,0}),
+    file:close(FD),
+    ok = file:rename(HintFileName, 
+                 lists:reverse(lists:nthtail(4, lists:reverse(HintFileName)))),
     ok.
 
 out_of_date(_Key, _Tstamp, []) ->

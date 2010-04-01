@@ -20,6 +20,8 @@
 %%
 %% -------------------------------------------------------------------
 -module(bitcask_nifs).
+-author('David Smith <@basho.com>').
+-author('Justin Sheehy <justin@basho.com>').
 
 -export([keydir_new/0, keydir_new/1,
          keydir_put/6,
