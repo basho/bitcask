@@ -238,7 +238,7 @@ merge(Dirname) ->
             %% Live keydir is newly created. We need to go ahead and load it
             %% up in case a writer or reader comes along in this same VM.
             ReadFiles = scan_key_files(ReadableFiles, LiveKeyDir, []),
-            bitcask_nifs:keydir_mark_as_ready(LiveKeyDir);
+            bitcask_nifs:keydir_mark_ready(LiveKeyDir);
 
         {error, not_ready} ->
             %% Someone else is loading the keydir. We'll bail here and try again

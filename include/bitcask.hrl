@@ -21,6 +21,7 @@
 -define(TSTAMPFIELD,  32).
 -define(KEYSIZEFIELD, 16).
 -define(VALSIZEFIELD, 32).
--define(HEADER_SIZE,  10). % 4 + 2 + 4 bytes
+-define(CRCSIZEFIELD, 32).
+-define(HEADER_SIZE,  14). % 4 + 4 + 2 + 4 bytes
 -define(MAXKEYSIZE, 2#1111111111111111).
 -define(MAXVALSIZE, 2#11111111111111111111111111111111).

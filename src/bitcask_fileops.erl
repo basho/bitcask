@@ -97,9 +97,11 @@ write(Filestate=#filestate{fd = FD, ofs = Offset}, Key, Value, Tstamp) ->
     true = (KeySz =< ?MAXKEYSIZE),
     ValueSz = size(Value),
     true = (ValueSz =< ?MAXVALSIZE),
+
     %% Setup io_list for writing -- avoid merging binaries if we can help it
-    Bytes = [<<Tstamp:?TSTAMPFIELD>>, <<KeySz:?KEYSIZEFIELD>>,
-             <<ValueSz:?VALSIZEFIELD>>, Key, Value],
+    Bytes0 = [<<Tstamp:?TSTAMPFIELD>>, <<KeySz:?KEYSIZEFIELD>>,
+              <<ValueSz:?VALSIZEFIELD>>, Key, Value],
+    Bytes  = [<<(erlang:crc32(Bytes0)):?CRCSIZEFIELD>> | Bytes0],
     ok = file:pwrite(FD, Offset, Bytes),
     FinalSz = iolist_size(Bytes),
     {ok, Filestate#filestate{ofs = Offset + FinalSz}, Offset, FinalSz}.
@@ -117,10 +119,18 @@ read(Filename, Offset, Size) when is_list(Filename) ->
     end;
 read(#filestate { fd = FD }, Offset, Size) ->
     case file:pread(FD, Offset, Size) of
-        {ok, Bytes} ->
+        {ok, <<Crc32:?CRCSIZEFIELD/unsigned, Bytes/binary>>} ->
+            %% Unpack the actual data
             <<_Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD, ValueSz:?VALSIZEFIELD,
-              Key:KeySz/bytes, Value:ValueSz/bytes>> = Bytes,
-            {ok, Key, Value};
+             Key:KeySz/bytes, Value:ValueSz/bytes>> = Bytes,
+
+            %% Verify the CRC of the data
+            case erlang:crc32(Bytes) of
+                Crc32 ->
+                    {ok, Key, Value};
+                _BadCrc ->
+                    {error, bad_crc}
+            end;
         {error, Reason} ->
             {error, Reason}
     end.
@@ -132,7 +142,8 @@ fold(#filestate { fd = Fd }, Fun, Acc) ->
     %% TODO: Add some sort of check that this is a read-only file
     {ok, _} = file:position(Fd, bof),
     case file:read(Fd, ?HEADER_SIZE) of
-        {ok, <<_Tstamp:?TSTAMPFIELD, _KeySz:?KEYSIZEFIELD, _ValueSz:?VALSIZEFIELD>> = H} ->
+        {ok, <<_Crc:?CRCSIZEFIELD, _Tstamp:?TSTAMPFIELD, _KeySz:?KEYSIZEFIELD,
+              _ValueSz:?VALSIZEFIELD>> = H} ->
             fold(Fd, H, 0, Fun, Acc);
         eof ->
             Acc;
@@ -206,7 +217,7 @@ tstamp() ->
 
 
 fold(Fd, Header, Offset, Fun, Acc0) ->
-    <<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD, ValueSz:?VALSIZEFIELD>> = Header,
+    <<_Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD, ValueSz:?VALSIZEFIELD>> = Header,
     ReadSz = KeySz + ValueSz + ?HEADER_SIZE,
     case file:read(Fd, ReadSz) of
         {ok, <<Key:KeySz/bytes, Value:ValueSz/bytes, Rest/binary>>} ->
