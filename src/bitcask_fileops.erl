@@ -34,6 +34,7 @@
          sync/1,
          delete/1,
          fold/3,
+         hintfile_fold/3,
          mk_filename/2,
          filename/1,
          hintfile_name/1,
@@ -135,6 +136,35 @@ fold(#filestate { fd = Fd }, Fun, Acc) ->
             fold(Fd, H, 0, Fun, Acc);
         eof ->
             Acc;
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+hintfile_fold(Fd, Fun, Acc) ->
+    {ok, _} = file:position(Fd, bof),
+    case file:read(Fd, 18) of
+        {ok, H = <<_TS:?TSTAMPFIELD, _KeySz:?KEYSIZEFIELD,
+                   _VSZ:?VALSIZEFIELD, _POS:?OFFSETFIELD>>} ->
+            hintfile_fold(Fd, H, Fun, Acc);
+        eof ->
+            Acc;
+        {error, Reason} ->
+            {error, Reason}
+    end.
+hintfile_fold(Fd, Header, Fun, Acc0) ->
+    <<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
+      ValueSz:?VALSIZEFIELD, Offset:?OFFSETFIELD>> = Header,
+    ReadSz = KeySz + 18,
+    case file:read(Fd, ReadSz) of
+        {ok, <<Key:KeySz/bytes, Rest/binary>>} ->
+            PosInfo = {Offset, ValueSz},
+            Acc = Fun(Key, Tstamp, PosInfo, Acc0),
+            case Rest of
+                <<NextHeader:18/bytes>> ->
+                    hintfile_fold(Fd, NextHeader, Fun, Acc);
+                <<>> ->
+                    Acc
+            end;
         {error, Reason} ->
             {error, Reason}
     end.
