@@ -28,6 +28,7 @@
          get/2,
          put/3,
          delete/2,
+         fold/3,
          merge/1]).
 
 -include("bitcask.hrl").
@@ -213,6 +214,41 @@ put(#bc_state{ dirname = Dirname, keydir = KeyDir } = State, Key, Value) ->
 -spec delete(#bc_state{}, Key::binary()) -> {ok, #bc_state{}} | {error, any()}.
 delete(State, Key) ->
     put(State, Key, ?TOMBSTONE).
+
+%% @doc fold over all K/V pairs in a bitcask datastore.
+%% Fun is expected to take F(K,V,Acc0) -> Acc
+-spec fold(#bc_state{},fun(),any()) -> any() | {error, any()}.
+fold(_State=#bc_state{keydir=KeyDir,dirname=Dirname},Fun,Acc0) ->
+    ReadFiles = readable_files(Dirname),
+    {_,_,Tseed} = now(),
+    {ok, Bloom} = ebloom:new(1000000,0.00003,Tseed), % arbitrary large bloom
+    SubFun = fun(K,V,_TStamp,{Offset,_Sz},Acc) ->
+            case ebloom:contains(Bloom,K) of
+                true ->
+                    Acc;
+                false ->
+                    case bitcask_nifs:keydir_get(KeyDir, K) of
+                        not_found ->
+                            Acc;
+                        E when is_record(E, bitcask_entry) ->
+                            case Offset =:= E#bitcask_entry.value_pos of
+                                false ->
+                                    Acc;
+                                true ->
+                                    ebloom:insert(Bloom,K),
+                                    Fun(K,V,Acc)
+                            end;
+                        {error,Reason} ->
+                            {error,Reason}
+                    end
+            end
+    end,
+    subfold(SubFun,ReadFiles,Acc0).
+subfold(_SubFun,[],Acc) ->
+    Acc;
+subfold(SubFun,[File|Rest],Acc) ->
+    {ok,FD} = bitcask_fileops:open_file(File),
+    subfold(SubFun,Rest,bitcask_fileops:fold(FD,SubFun,Acc)).
 
 %% @doc Merge several data files within a bitcask datastore into a more compact form.
 -spec merge(Dirname::string()) -> ok | {error, any()}.
@@ -610,5 +646,21 @@ hint_test() ->
     %% The real test.
     true = (bitcask_fileops:fold(DataHandle,DF,[]) =:=
             bitcask_fileops:hintfile_fold(HintHandle,HF,[])).
+
+bitfold_test() ->
+    os:cmd("rm -rf /tmp/bc.test.bitfold"),
+    {ok, B} = bitcask:open("/tmp/bc.test.bitfold", [read_write]),
+    {ok, B1} = bitcask:put(B,<<"k">>,<<"v">>),
+    {ok, <<"v">>, B2} = bitcask:get(B1,<<"k">>),
+    {ok, B3} = bitcask:put(B2, <<"k2">>, <<"v2">>),
+    {ok, B4} = bitcask:put(B3, <<"k">>,<<"v3">>),
+    {ok, <<"v2">>, B5} = bitcask:get(B4, <<"k2">>),
+    {ok, <<"v3">>, B6} = bitcask:get(B5, <<"k">>),
+    close(B6),
+    {ok, T} = bitcask:open("/tmp/bc.test.bitfold"),
+    true = ([{<<"k">>,<<"v3">>},{<<"k2">>,<<"v2">>}] =:= 
+            bitcask:fold(T,fun(K,V,Acc) -> [{K,V}|Acc] end,[])),
+    close(T),
+    ok.
 
 -endif.
