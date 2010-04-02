@@ -1,8 +1,12 @@
+.PHONY: rel deps
 
-all: compile
+all: deps compile
 
 compile:
 	./rebar compile eunit
+
+deps:
+	./rebar get-deps
 
 clean:
 	./rebar clean
