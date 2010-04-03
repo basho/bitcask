@@ -223,23 +223,28 @@ fold(_State=#bc_state{keydir=KeyDir,dirname=Dirname},Fun,Acc0) ->
     {_,_,Tseed} = now(),
     {ok, Bloom} = ebloom:new(1000000,0.00003,Tseed), % arbitrary large bloom
     SubFun = fun(K,V,_TStamp,{Offset,_Sz},Acc) ->
-            case ebloom:contains(Bloom,K) of
+            case V =:= ?TOMBSTONE of
                 true ->
                     Acc;
                 false ->
-                    case bitcask_nifs:keydir_get(KeyDir, K) of
-                        not_found ->
+                    case ebloom:contains(Bloom,K) of
+                        true ->
                             Acc;
-                        E when is_record(E, bitcask_entry) ->
-                            case Offset =:= E#bitcask_entry.value_pos of
-                                false ->
+                false ->
+                            case bitcask_nifs:keydir_get(KeyDir, K) of
+                                not_found ->
                                     Acc;
-                                true ->
-                                    ebloom:insert(Bloom,K),
+                                E when is_record(E, bitcask_entry) ->
+                                    case Offset =:= E#bitcask_entry.value_pos of
+                                        false ->
+                                            Acc;
+                                        true ->
+                                            ebloom:insert(Bloom,K),
                                     Fun(K,V,Acc)
-                            end;
-                        {error,Reason} ->
-                            {error,Reason}
+                                    end;
+                                {error,Reason} ->
+                                    {error,Reason}
+                            end
                     end
             end
     end,
@@ -656,9 +661,11 @@ bitfold_test() ->
     {ok, B4} = bitcask:put(B3, <<"k">>,<<"v3">>),
     {ok, <<"v2">>, B5} = bitcask:get(B4, <<"k2">>),
     {ok, <<"v3">>, B6} = bitcask:get(B5, <<"k">>),
-    close(B6),
+    {ok, B7} = bitcask:delete(B6,<<"k">>),
+    {ok, B8} = bitcask:put(B7, <<"k7">>,<<"v7">>),
+    close(B8),
     {ok, T} = bitcask:open("/tmp/bc.test.bitfold"),
-    true = ([{<<"k">>,<<"v3">>},{<<"k2">>,<<"v2">>}] =:= 
+    true = ([{<<"k7">>,<<"v7">>},{<<"k2">>,<<"v2">>}] =:= 
             bitcask:fold(T,fun(K,V,Acc) -> [{K,V}|Acc] end,[])),
     close(T),
     ok.
