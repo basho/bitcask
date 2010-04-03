@@ -28,6 +28,7 @@
          get/2,
          put/3,
          delete/2,
+         list_keys/1,
          fold/3,
          merge/1]).
 
@@ -214,6 +215,10 @@ put(#bc_state{ dirname = Dirname, keydir = KeyDir } = State, Key, Value) ->
 -spec delete(#bc_state{}, Key::binary()) -> {ok, #bc_state{}} | {error, any()}.
 delete(State, Key) ->
     put(State, Key, ?TOMBSTONE).
+
+%% @doc List all keys in a bitcask datastore.
+-spec list_keys(#bc_state{}) -> [Key::binary()] | {error, any()}.
+list_keys(State) -> fold(State,fun(K,_V,Acc) -> [K|Acc] end,[]).
 
 %% @doc fold over all K/V pairs in a bitcask datastore.
 %% Fun is expected to take F(K,V,Acc0) -> Acc
@@ -667,6 +672,23 @@ bitfold_test() ->
     {ok, T} = bitcask:open("/tmp/bc.test.bitfold"),
     true = ([{<<"k7">>,<<"v7">>},{<<"k2">>,<<"v2">>}] =:= 
             bitcask:fold(T,fun(K,V,Acc) -> [{K,V}|Acc] end,[])),
+    close(T),
+    ok.
+
+list_keys_test() ->
+    os:cmd("rm -rf /tmp/bc.test.listkeys"),
+    {ok, B} = bitcask:open("/tmp/bc.test.listkeys", [read_write]),
+    {ok, B1} = bitcask:put(B,<<"k">>,<<"v">>),
+    {ok, <<"v">>, B2} = bitcask:get(B1,<<"k">>),
+    {ok, B3} = bitcask:put(B2, <<"k2">>, <<"v2">>),
+    {ok, B4} = bitcask:put(B3, <<"k">>,<<"v3">>),
+    {ok, <<"v2">>, B5} = bitcask:get(B4, <<"k2">>),
+    {ok, <<"v3">>, B6} = bitcask:get(B5, <<"k">>),
+    {ok, B7} = bitcask:delete(B6,<<"k">>),
+    {ok, B8} = bitcask:put(B7, <<"k7">>,<<"v7">>),
+    close(B8),
+    {ok, T} = bitcask:open("/tmp/bc.test.listkeys"),
+    true = ([<<"k7">>,<<"k2">>] =:= bitcask:list_keys(T)),
     close(T),
     ok.
 
