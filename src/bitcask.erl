@@ -28,6 +28,7 @@
          get/2,
          put/3,
          delete/2,
+         sync/1,
          list_keys/1,
          fold/3,
          merge/1]).
@@ -43,6 +44,7 @@
                    write_file,                  % File for writing
                    read_files,                  % Files opened for reading
                    max_file_size,               % Max. size of a written file
+                   sync_on_put,                 % Boolean flag controlling if we sync on each put
                    keydir}).                    % Key directory
 
 -record(mstate, { dirname,
@@ -103,6 +105,9 @@ open(Dirname, Opts) ->
             MaxFileSize = ?DEFAULT_MAX_FILE_SIZE
     end,
 
+    %% Determine if we need to sync on every put
+    SyncOnPut = proplists:get_bool(sync_on_put, Opts),
+
     %% Get the named keydir for this directory. If we get it and it's already
     %% marked as ready, that indicates another caller has already loaded
     %% all the data from disk and we can short-circuit scanning all the files.
@@ -145,6 +150,7 @@ open(Dirname, Opts) ->
                    read_files = ReadFiles,
                    write_file = WritingFile, % May be undefined
                    max_file_size = MaxFileSize,
+                   sync_on_put = SyncOnPut,
                    keydir = KeyDir}}.
 
 %% @doc Close a bitcask data store and flush all pending writes (if any) to disk.
@@ -209,12 +215,29 @@ put(#bc_state{ dirname = Dirname, keydir = KeyDir } = State, Key, Value) ->
     ok = bitcask_nifs:keydir_put(KeyDir, Key,
                                  bitcask_fileops:file_tstamp(WriteFile),
                                  Size, OffSet, Tstamp),
+
+    %% If necessary, sync
+    case State1#bc_state.sync_on_put of
+        true ->
+            ok = bitcask_fileops:sync(NewWriteFile);
+        false ->
+            ok
+    end,
+
     {ok, State1#bc_state { write_file = NewWriteFile }}.
 
 %% @doc Delete a key from a bitcask datastore.
 -spec delete(#bc_state{}, Key::binary()) -> {ok, #bc_state{}} | {error, any()}.
 delete(State, Key) ->
     put(State, Key, ?TOMBSTONE).
+
+%% @doc Force any writes to sync to disk.
+-spec sync(#bc_state{}) -> ok.
+sync(#bc_state { write_file = undefined}) ->
+    ok;
+sync(#bc_state { write_file = WriteFile}) ->
+    ok = bitcask_fileops:sync(WriteFile).
+
 
 %% @doc List all keys in a bitcask datastore.
 -spec list_keys(#bc_state{}) -> [Key::binary()] | {error, any()}.
