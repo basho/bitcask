@@ -20,7 +20,7 @@
 %%
 %% -------------------------------------------------------------------
 -module(bitcask).
--author('David Smith <@basho.com>').
+-author('Dave Smith <dizzyd@basho.com>').
 -author('Justin Sheehy <justin@basho.com>').
 
 -export([open/1, open/2,
