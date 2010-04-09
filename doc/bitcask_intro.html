@@ -1,0 +1,337 @@
+<html>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
+    <title>Bitcask</title>
+  </head>
+<body>
+
+<h3>    
+Bitcask: because you need another a key/value storage engine
+</h3>
+
+<em>
+David ("Dizzy") Smith and Justin Sheehy
+<br>
+with advice and inspiration from Eric Brewer
+</em>
+
+<p>
+The origin of bitcask is tied to the history of the
+<a href="http://www.basho.com/Riak.html">Riak</a> distributed
+database.  In a Riak key/value cluster, each node uses pluggable local
+storage; nearly anything k/v-shaped can be used as the per-host
+storage engine.  This pluggability allowed progress on Riak to be
+parallelized such that storage engines could be improved and tested
+without impact on the rest of the codebase.
+</p><p>
+Many such local key/value stores already exist, including but not
+limited to Berkeley DB, Tokyo Cabinet, and Innostore.
+</p><p>
+There are many goals we sought when evaluating such storage engines, including:
+</p><p>
+<ul>
+<li> low latency per item read or written</li>
+<li> high throughput, especially when writing an incoming stream of random items</li>
+<li> ability to handle datasets much larger than RAM w/o degradation</li>
+<li> crash friendliness, both in terms of fast recovery and not losing data</li>
+<li> ease of backup and restore</li>
+<li> a relatively simple, understandable (and thus supportable) code
+    structure and data format</li>
+<li> predictable behavior under heavy access load or large volume</li>
+</ul>
+</p><p>
+Achieving some of these is easy.  Achieving them all is less so.
+</p>
+<p>
+None of the local key/value storage systems available (including but
+not limited to those written by the authors) were ideal with regard to
+all of the above goals.  We were discussing this issue with
+Eric Brewer (besides a 
+<a href="http://www.cs.berkeley.edu/~brewer/papers/">
+long history of great work in distributed systems</a>, he recently
+<a href="http://berkeley.edu/news/media/releases/2010/03/15_brewer.shtml">
+was awarded the ACM-Infosys Foundation Award for scalable Web technology
+</a>)
+when he had a key insight about hash table log merging: that
+doing so could potentially be made as fast or faster than LSM-trees.
+</p><p>
+This led us to explore some of the techniques used in the
+log-structured file systems first developed in the 1980s and 1990s in
+a new light.  That exploration led to the development of
+<a href="http://hg.basho.com/bitcask/">bitcask, a
+storage system that meets all of the above goals very well</a>.  While
+bitcask was originally developed with a goal of being used under Riak,
+it was also built to be generic and can serve as a local key/value
+store for other applications as well.
+</p><p>
+The model we ended up going with is conceptually very simple.  A
+bitcask instance is a directory, and we enforce that only one
+operating system process will open that bitcask for writing at a given
+time.  (think of that process effectively as the "database server") At
+any moment, one file is "active" in that directory for writing by the
+server.  When that file meets a size threshold it will be closed, and
+a new active file will be created.  Once a file is closed, either
+purposefully or due to server exit, it is considered immutable and
+will never be opened for writing again.
+</p><p>
+<img src="bitcask_silo.png">
+</p><p>
+
+The active file is only written by appending, which means that
+sequential writes do not require disk seeking.  The format that is
+written for each key/value entry is simple:
+</p><p>
+<img src="file_entry_text.png">
+</p><p>
+As each put request is handled, a new entry is appeneded to the active file. Note that deletion is simple a "put" of a special tombstone value, which will be removed on the next merge.
+Thus, a bitcask data file is nothing more than a linear sequence of
+these entries:
+</p><p>
+<img src="data_file.png">
+</p><p>
+After the append completes, an in-memory structure called a "keydir"
+is updated.  A keydir is simply a hash table that maps every key in a
+bitcask to a fixed-size structure giving the file, offset, and size of
+the most recently written entry for that key.
+</p><p>
+<img src="keydir.png">
+</p><p>
+When a write occurs, the keydir is atomically updated with the
+location of the newest data. The old data is still present on disk,
+but any new reads will use the latest version available in the
+keydir. As we'll see later, the merge process will eventually remove
+the old value.
+</p><p>
+A read or "get" is simple, and doesn't ever require more than a single
+disk seek.  We look up the key in our keydir, and from there we read
+the data using the file_id, position, and size that are returned from that
+lookup.  In many cases, the operating system's filesystem read-ahead
+cache makes this a much faster operation than would be otherwise
+expected.
+</p><p>
+<img src="read_path.png">
+</p><p>
+This simple model will use up a lot of space over time, since we just
+write out new values without touching the old ones.  A process for
+compaction that we refer to as "merging" solves this.  The merge
+process iterates over all non-active (i.e. immutable) files in a
+bitcask and produces as output a set of data files containing only the
+"live" or latest versions of each present key.  
+</p><p>
+When this is done we also create a "hint file" next to each data file.
+These are essentially like the data files but instead of the values
+they contain the position and size of the values within the
+corresponding data file.
+</p><p>
+<img src="merge_silo.png">
+</p><p>
+When a bitcask process starts, it checks to see if there is already
+another process running for that bitcask.  If so, it will share the
+keydir with that process.  If not, it scans all of the data files in a
+directory in order to build a new keydir.  For any data file that has
+a hint file, that will be scanned instead for a much quicker startup time.
+</p><p>
+That's basically the whole deal.  Obviously, we've not tried to expose
+every single detail of operations in this document but rather to help
+you understand the general mechanisms of bitcask.  A few quick notes
+on a couple of areas we breezed past are probably in order:
+</p><p>
+<ul>
+<li>
+ We mentioned that we rely on the operating system's filesystem cache
+  for read performance.  We have discussed adding a bitcask-internal
+  read cache as well, but given how much mileage we get for free right
+  now it's unclear how much that will pay off.
+</li>
+<li>
+ We will probably present benchmarks against various API-similar
+  local storage systems sometime soon.  However, our initial goal with
+  bitcask was not to be the fastest storage engine but rather to get
+  "enough" speed and also high quality and simplicity of code, design,
+  and file format.  That said, in our initial simple benchmarking we
+  have seen bitcask outperform other fast storage systems handily for
+  many scenarios.
+</li>
+<li>
+ Some of the hardest implementation details are also the least
+  interesting to most outsiders, so we haven't included (in this
+  document) a description of, for instance, the internal keydir
+  locking scheme.
+</li>
+<li>
+ Bitcask does not perform any compression of data, as the
+  cost/benefit of doing so is very application-dependent.
+</li>
+</ul>
+</p><p>
+And let's look at the goals we had when we set out:
+</p><p>
+<ul>
+<li> low latency per item read or written
+<p>
+   Bitcask is fast.  We plan on doing more thorough benchmarks soon,
+   but with sub-millisecond median times for both put and get
+   operations in our early tests we are confident that it can be made
+   to meet this goal for us.
+</li>
+<li> high throughput, especially when writing an incoming stream of random items
+<p>
+   In those same early tests on a laptop with slow disks, we have
+   seen throughput of 5000-6000 writes per second.
+</li>
+<li> ability to handle datasets much larger than RAM w/o degradation
+<p>
+   The tests mentioned above exceeded RAM on the system in question,
+   and showed no sign of changed behavior at that point.  This is
+   consistent with our expectations given the design of bitcask.
+</li>
+<li> crash friendliness, both in terms of fast recovery and not losing data
+<p>
+   As the data files and the commit log are the same thing in bitcask,
+   recovery is trivial with no need for "replay."  The hint files
+   produced when merging make the startup process speedy.
+</li>
+<li> ease of backup and restore
+<p>
+   Since the files are immutable after rotation, backup can use
+   whatever system-level mechanism is preferred by the operator with
+   ease.  Restoration requires nothing more than placing the data
+   files in the desired directory.
+</li>
+<li> a relatively simple, understandable (and thus supportable) code
+   structure and data format
+<p>
+   Bitcask is conceptually simple, clean code, and the data files are
+   very easy to understand and manage.  We feel very comfortable
+   supporting a system resting atop bitcask.
+</li>
+<li> predictable behavior under heavy access load or large volume
+<p>
+   Under heavy access load we've already seen bitcask do well.  So far
+   it has only seen double-digit gigabyte volumes, but we'll be
+   testing it with more soon.  The shape of bitcask is such that we do
+   not expect it to perform too differently under larger volume, with
+   the one predictable exception that the keydir structure grows by a
+   small amount with the number of keys and must fit entirely in RAM.
+</li>
+</ul>
+</p><p>
+In summary, given this specific set of goals, bitcask suits our needs
+better than anything else we had available.
+</p><p>
+The API is quite simple:
+</p>
+
+<table border="1">
+<col align="left" width="40%"/>
+<col align="left" />
+<tr>
+<td>
+<b>bitcask:open(DirectoryName, Opts)</b>
+<br> -> {ok, BitCaskHandle} | {error, any()}
+</td>
+<td>
+Open a new or existing bitcask datastore with additional options.
+<br>
+Valid options include <code>read_write</code> (if this process is going
+to be a writer and not just a reader) and <code>sync_on_put</code> (if
+this writer would prefer to sync the write file after every write
+operation).
+<br>
+The directory must be readable and writable by this process, and only
+one process may open a bitcask with <code>read_write</code> at a time.
+</td>
+</tr>
+<tr>
+<td>
+<b>bitcask:open(DirectoryName)</b>
+<br>
+ -> {ok, BitCaskHandle} | {error, any()}
+</td>
+<td>
+Open a new or existing bitcask datastore for read-only access.
+<br>
+The directory and all files in it must be readable by this process.
+</td>
+</tr>
+<tr>
+<td>
+<b>bitcask:get(BitCaskHandle, Key)</b>
+<br> -> not_found | {ok, Value, BitCaskHandle}
+</td>
+<td>
+Retrieve a value by key from a bitcask datastore.
+</td>
+</tr>
+<tr>
+<td>
+<b>bitcask:put(BitCaskHandle, Key, Value)</b>
+<br> -> {ok, BitCaskHandle} | {error, any()}
+</td>
+<td>
+Store a key and value in a bitcase datastore.
+</td>
+</tr>
+<tr>
+<td>
+<b>bitcask:delete(BitCaskHandle, Key)</b>
+<br> -> {ok, BitCaskHandle} | {error, any()}
+</td>
+<td>
+Delete a key from a bitcask datastore.
+</td>
+</tr>
+<tr>
+<td>
+<b>bitcask:list_keys(BitCaskHandle)</b>
+<br> -> [Key] | {error, any()}
+</td>
+<td>
+List all keys in a bitcask datastore.
+</td>
+</tr>
+<tr>
+<td>
+<b>bitcask:fold(BitCaskHandle,Fun,Acc0)</b>
+<br> -> Acc
+</td>
+<td>
+Fold over all K/V pairs in a bitcask datastore.
+<br>
+Fun is expected to be of the form: <code>F(K,V,Acc0) -> Acc</code>.
+</td>
+</tr>
+<tr>
+<td>
+<b>bitcask:merge(DirectoryName)</b>
+<br> -> ok | {error, any()}
+</td>
+<td>
+Merge several data files within a bitcask datastore into a more compact form.
+<br>
+Also, produce hintfiles for faster startup.
+</td>
+</tr>
+<tr>
+<td>
+<b>bitcask:sync(BitCaskHandle)</b>
+<br> -> ok
+</td>
+<td>
+Force any writes to sync to disk.
+</td>
+</tr>
+<tr>
+<td>
+<b>bitcask:close(BitCaskHandle)</b>
+<br> -> ok
+</td>
+<td>
+Close a bitcask data store and flush all pending writes (if any) to disk.
+</td>
+</tr>
+</table>
+
+</p>
+
+</body>
