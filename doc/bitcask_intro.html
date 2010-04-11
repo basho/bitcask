@@ -125,11 +125,12 @@ corresponding data file.
 </p><p>
 <img src="merge_silo.png">
 </p><p>
-When a bitcask process starts, it checks to see if there is already
-another process running for that bitcask.  If so, it will share the
-keydir with that process.  If not, it scans all of the data files in a
-directory in order to build a new keydir.  For any data file that has
-a hint file, that will be scanned instead for a much quicker startup time.
+When a bitcask is opened by an erlang process, it checks to see if
+there is already another erlang process in the same VM that is using
+that bitcask.  If so, it will share the keydir with that process.  If
+not, it scans all of the data files in a directory in order to build a
+new keydir.  For any data file that has a hint file, that will be
+scanned instead for a much quicker startup time.
 </p><p>
 That's basically the whole deal.  Obviously, we've not tried to expose
 every single detail of operations in this document but rather to help
