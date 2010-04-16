@@ -430,9 +430,9 @@ list_data_files(Dirname, WritingFile, Mergingfile) ->
                                fun(F, Acc) ->
                                     [{bitcask_fileops:file_tstamp(F), F} | Acc]
                                end, []),
-    [filename:join(Dirname, F) || {_Tstamp, F} <- reverse_sort(Files),
-                                  F /= WritingFile,
-                                  F /= Mergingfile].
+    [F || {_Tstamp, F} <- reverse_sort(Files),
+          F /= WritingFile,
+          F /= Mergingfile].
 
 merge_files(#mstate { input_files = [] } = State) ->
     State;
