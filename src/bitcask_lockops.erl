@@ -141,10 +141,10 @@ check_loop(Filename, Count) ->
             Contents = file_contents(File, <<>>),
             case re:run(Contents, "([0-9]+) (.*)\n",
                         [{capture, all_but_first, list}]) of
-                {match, [WritingPid, []]} ->
-                    {ok, File, WritingPid, undefined};
-                {match, [WritingPid, WritingFile]} ->
-                    {ok, eFile, WritingPid, WritingFile};
+                {match, [OsPid, []]} ->
+                    {ok, File, OsPid, undefined};
+                {match, [OsPid, LockedFilename]} ->
+                    {ok, eFile, OsPid, LockedFilename};
                 nomatch ->
                     %% A lock file exists, but is not complete.
                     file:close(File),
