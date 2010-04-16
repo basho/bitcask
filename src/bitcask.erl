@@ -247,7 +247,7 @@ list_keys(State) -> fold(State,fun(K,_V,Acc) -> [K|Acc] end,[]).
 %% Fun is expected to take F(K,V,Acc0) -> Acc
 -spec fold(#bc_state{},fun(),any()) -> any() | {error, any()}.
 fold(_State=#bc_state{keydir=KeyDir,dirname=Dirname},Fun,Acc0) ->
-    ReadFiles = readable_files(Dirname),
+    ReadFiles = list_data_files(Dirname,undefined,undefined),
     {_,_,Tseed} = now(),
     {ok, Bloom} = ebloom:new(1000000,0.00003,Tseed), % arbitrary large bloom
     SubFun = fun(K,V,_TStamp,{Offset,_Sz},Acc) ->
@@ -709,10 +709,8 @@ list_keys_test() ->
     {ok, <<"v3">>, B6} = bitcask:get(B5, <<"k">>),
     {ok, B7} = bitcask:delete(B6,<<"k">>),
     {ok, B8} = bitcask:put(B7, <<"k7">>,<<"v7">>),
+    true = ([<<"k7">>,<<"k2">>] =:= bitcask:list_keys(B8)),
     close(B8),
-    {ok, T} = bitcask:open("/tmp/bc.test.listkeys"),
-    true = ([<<"k7">>,<<"k2">>] =:= bitcask:list_keys(T)),
-    close(T),
     ok.
 
 -endif.
