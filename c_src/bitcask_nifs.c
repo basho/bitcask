@@ -25,6 +25,7 @@
 
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 static ErlNifResourceType* bitcask_keydir_RESOURCE;
 
