@@ -17,5 +17,9 @@
                   stdlib
                  ]},
   {mod, {bitcask_app, []}},
-  {env, []}
+  {env, [
+         {sync_interval, 30}, % Seconds between fsyncs
+
+         {merge_interval, 240} % Minutes between merge attempts
+        ]}
  ]}.
