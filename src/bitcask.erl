@@ -482,9 +482,9 @@ merge_single_entry(K, V, Tstamp, #mstate { dirname = Dirname } = State) ->
                     %% Update live keydir for the current out file. It's possible that
                     %% this is a noop, as someone else may have written a newer value
                     %% whilst we were processing.
-                    ok = bitcask_nifs:keydir_put(State#mstate.live_keydir, K,
-                                                 bitcask_fileops:file_tstamp(Outfile),
-                                                 Size, OffSet, Tstamp),
+                    bitcask_nifs:keydir_put(State#mstate.live_keydir, K,
+                                            bitcask_fileops:file_tstamp(Outfile),
+                                            Size, OffSet, Tstamp),
 
                     %% Update the keydir for the current out file
                     ok = bitcask_nifs:keydir_put(State#mstate.hint_keydir, K,

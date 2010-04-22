@@ -119,7 +119,7 @@ worker_loop(Parent) ->
                     error_logger:info_msg("Merged ~s in ~p seconds.\n",
                                           [Dir, ElapsedSecs]);
                 {Error, Reason} when Error == error; Error == 'EXIT' ->
-                    error_logger:error_msg("Failed to merge ~s: ~s\n",
+                    error_logger:error_msg("Failed to merge ~s: ~p\n",
                                            [Dir, Reason])
             end,
             worker_loop(Parent)
