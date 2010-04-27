@@ -73,6 +73,7 @@ acquire(Type, Dirname) ->
                     case os_pid_exists(OsPid) of
                         true ->
                             %% The lock IS NOT stale, so we can't acquire it
+                            file:close(LockFile),
                             false;
                         false ->
                             %% The lock IS stale, so let's unlink the lock file
@@ -144,7 +145,7 @@ check_loop(Filename, Count) ->
                 {match, [OsPid, []]} ->
                     {ok, File, OsPid, undefined};
                 {match, [OsPid, LockedFilename]} ->
-                    {ok, eFile, OsPid, LockedFilename};
+                    {ok, File, OsPid, LockedFilename};
                 nomatch ->
                     %% A lock file exists, but is not complete.
                     file:close(File),
