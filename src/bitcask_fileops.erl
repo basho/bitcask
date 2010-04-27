@@ -48,20 +48,7 @@
 %% Called on a Dirname, will open a fresh file in that directory.
 %% @spec create_file(Dirname :: string()) -> {ok, filestate()}
 create_file(DirName) ->
-    Filename = mk_filename(DirName, tstamp()),
-    ok = filelib:ensure_dir(Filename),
-    case bitcask_nifs:create_file(Filename) of
-        true ->
-            {ok, FD} = file:open(Filename, [read, write, raw, binary]),
-            {ok, #filestate{filename = Filename, tstamp = file_tstamp(Filename),
-                            fd = FD, ofs = 0}};
-        false ->
-            %% Couldn't create a new file with the requested name, so let's
-            %% delay 500 ms & try again. The working assumption is that this is
-            %% not a highly contentious code point. Latency lovers beware!
-            timer:sleep(500),
-            create_file(DirName)
-    end.
+    create_file_loop(DirName, tstamp()).
 
 
 %% @doc Open an existing file for reading.
@@ -231,5 +218,24 @@ fold(Fd, Header, Offset, Fun, Acc0) ->
             end;
         {error, Reason} ->
             {error, Reason}
+    end.
+
+
+create_file_loop(DirName, Tstamp) ->
+    Filename = mk_filename(DirName, Tstamp),
+    ok = filelib:ensure_dir(Filename),
+    case bitcask_nifs:create_file(Filename) of
+        true ->
+            {ok, FD} = file:open(Filename, [read, write, raw, binary]),
+            {ok, #filestate{filename = Filename, tstamp = file_tstamp(Filename),
+                            fd = FD, ofs = 0}};
+        false ->
+            %% Couldn't create a new file with the requested name, increment the
+            %% tstamp by 1 and try again. Conceptually, this introduces some drift
+            %% into the actual creation time, but given that we only have at most 2
+            %% writers (writer + merger) for a given bitcask, it shouldn't be more
+            %% than a few seconds. The alternative it to sleep until the next second
+            %% rolls around -- but this introduces lengthy, unnecessary delays.
+            create_file_loop(DirName, Tstamp + 1)
     end.
 
