@@ -66,12 +66,12 @@
 %% * A merge lock - bitcask.merge.lock (Optional)
 
 %% @doc Open a new or existing bitcask datastore for read-only access.
--spec open(Dirname::string()) -> {ok, #bc_state{}} | {error, any()}.
+-spec open(Dirname::string()) -> reference() | {error, any()}.
 open(Dirname) ->
     open(Dirname, []).
 
 %% @doc Open a new or existing bitcask datastore with additional options.
--spec open(Dirname::string(), Opts::[_]) -> {ok, #bc_state{}} | {error, any()}.
+-spec open(Dirname::string(), Opts::[_]) -> reference() | {error, any()}.
 open(Dirname, Opts) ->
     %% Make sure the directory exists
     ok = filelib:ensure_dir(filename:join(Dirname, "bitcask")),
@@ -145,109 +145,135 @@ open(Dirname, Opts) ->
             end
     end,
 
-    %% Setup basic state
-    {ok, #bc_state{dirname = Dirname,
-                   read_files = ReadFiles,
-                   write_file = WritingFile, % May be undefined
-                   max_file_size = MaxFileSize,
-                   sync_on_put = SyncOnPut,
-                   keydir = KeyDir}}.
+    Ref = make_ref(),
+    erlang:put(Ref, #bc_state {dirname = Dirname,
+                               read_files = ReadFiles,
+                               write_file = WritingFile, % May be undefined
+                               max_file_size = MaxFileSize,
+                               sync_on_put = SyncOnPut,
+                               keydir = KeyDir}),
+
+    Ref.
 
 %% @doc Close a bitcask data store and flush all pending writes (if any) to disk.
--spec close(#bc_state{}) -> ok.
-close(#bc_state { write_file = WriteFile, read_files = ReadFiles, dirname = Dirname }) ->
+-spec close(reference()) -> ok.
+close(Ref) ->
+    State = get_state(Ref),
+
     %% Clean up all the reading files
-    [ok = bitcask_fileops:close(F) || F <- ReadFiles],
+    [ok = bitcask_fileops:close(F) || F <- State#bc_state.read_files],
 
     %% If we have a write file, assume we also currently own the write lock
     %% and cleanup both of those
-    case WriteFile of
+    case State#bc_state.write_file of
         undefined ->
             ok;
         _ ->
-            ok = bitcask_fileops:close(WriteFile),
-            ok = bitcask_lockops:release(write, Dirname)
+            ok = bitcask_fileops:close(State#bc_state.write_file),
+            ok = bitcask_lockops:release(write, State#bc_state.dirname)
     end.
 
 %% @doc Retrieve a value by key from a bitcask datastore.
--spec get(#bc_state{}, binary()) -> not_found | {ok, Value::binary(), #bc_state{}}.
-get(#bc_state{keydir = KeyDir} = State, Key) ->
-    case bitcask_nifs:keydir_get(KeyDir, Key) of
+-spec get(reference(), binary()) -> not_found | {ok, Value::binary()}.
+get(Ref, Key) ->
+    State = get_state(Ref),
+
+    case bitcask_nifs:keydir_get(State#bc_state.keydir, Key) of
         not_found ->
-            {not_found, State};
+            not_found;
 
         E when is_record(E, bitcask_entry) ->
-            {Filestate, State2} = get_filestate(E#bitcask_entry.file_id, State),
+            {Filestate, S2} = get_filestate(E#bitcask_entry.file_id, State),
+            put_state(Ref, S2),
             case bitcask_fileops:read(Filestate, E#bitcask_entry.value_pos,
                                       E#bitcask_entry.value_sz) of
                 {ok, _Key, ?TOMBSTONE} ->
-                    {not_found, State2};
+                    not_found;
                 {ok, _Key, Value} ->
-                    {ok, Value, State2}
+                    {ok, Value}
             end;
+
         {error, Reason} ->
             {error, Reason}
     end.
 
 %% @doc Store a key and value in a bitcase datastore.
--spec put(#bc_state{}, Key::binary(), Value::binary()) -> {ok, #bc_state{}} | {error, any()}.
-put(#bc_state{ write_file = undefined }, _Key, _Value) ->
-    {error, read_only};
-put(#bc_state{ dirname = Dirname, keydir = KeyDir } = State, Key, Value) ->
-    case bitcask_fileops:check_write(State#bc_state.write_file,
-                                     Key, Value, State#bc_state.max_file_size) of
+-spec put(reference(), Key::binary(), Value::binary()) -> ok | {error, any()}.
+put(Ref, Key, Value) ->
+    #bc_state { write_file = WriteFile } = State = get_state(Ref),
+
+    %% Make sure we have a file open to write
+    case WriteFile of
+        undefined ->
+            throw({error, read_only});
+
+        _ ->
+            ok
+    end,
+
+    case bitcask_fileops:check_write(WriteFile, Key, Value,
+                                     State#bc_state.max_file_size) of
         wrap ->
-            %% Time to start a new write file. Note that we do not close the old one,
-            %% just transition it. The thinking is that closing/reopening for read only
-            %% access would flush the O/S cache for the file, which may be undesirable.
-            ok = bitcask_fileops:sync(State#bc_state.write_file),
-            {ok, WriteFile} = bitcask_fileops:create_file(Dirname),
-            State1 = State#bc_state{ write_file = WriteFile,
+            %% Time to start a new write file. Note that we do not close the old
+            %% one, just transition it. The thinking is that closing/reopening
+            %% for read only access would flush the O/S cache for the file,
+            %% which may be undesirable.
+            ok = bitcask_fileops:sync(WriteFile),
+            {ok, NewWriteFile} = bitcask_fileops:create_file(State#bc_state.dirname),
+            State2 = State#bc_state{ write_file = NewWriteFile,
                                      read_files = [State#bc_state.write_file |
                                                    State#bc_state.read_files]};
         ok ->
-            WriteFile = State#bc_state.write_file,
-            State1 = State
+            State2 = State
     end,
 
     Tstamp = bitcask_fileops:tstamp(),
-    {ok, NewWriteFile, OffSet, Size} = bitcask_fileops:write(WriteFile, Key, Value, Tstamp),
-    ok = bitcask_nifs:keydir_put(KeyDir, Key,
-                                 bitcask_fileops:file_tstamp(WriteFile),
+    {ok, WriteFile2, OffSet, Size} = bitcask_fileops:write(State2#bc_state.write_file,
+                                                           Key, Value, Tstamp),
+    ok = bitcask_nifs:keydir_put(State2#bc_state.keydir, Key,
+                                 bitcask_fileops:file_tstamp(WriteFile2),
                                  Size, OffSet, Tstamp),
 
     %% If necessary, sync
-    case State1#bc_state.sync_on_put of
+    case State2#bc_state.sync_on_put of
         true ->
-            ok = bitcask_fileops:sync(NewWriteFile);
+            ok = bitcask_fileops:sync(WriteFile2);
         false ->
             ok
     end,
 
-    {ok, State1#bc_state { write_file = NewWriteFile }}.
+    put_state(Ref, State2#bc_state { write_file = WriteFile2 }),
+    ok.
+
 
 %% @doc Delete a key from a bitcask datastore.
--spec delete(#bc_state{}, Key::binary()) -> {ok, #bc_state{}} | {error, any()}.
-delete(State, Key) ->
-    put(State, Key, ?TOMBSTONE).
+-spec delete(reference(), Key::binary()) -> ok | {error, any()}.
+delete(Ref, Key) ->
+    put(Ref, Key, ?TOMBSTONE).
 
 %% @doc Force any writes to sync to disk.
--spec sync(#bc_state{}) -> ok.
-sync(#bc_state { write_file = undefined}) ->
-    ok;
-sync(#bc_state { write_file = WriteFile}) ->
-    ok = bitcask_fileops:sync(WriteFile).
+-spec sync(reference()) -> ok.
+sync(Ref) ->
+    State = get_state(Ref),
+    case (State#bc_state.write_file) of
+        undefined ->
+            ok;
+        File ->
+            ok = bitcask_fileops:sync(File)
+    end.
 
 
 %% @doc List all keys in a bitcask datastore.
--spec list_keys(#bc_state{}) -> [Key::binary()] | {error, any()}.
-list_keys(State) -> fold(State,fun(K,_V,Acc) -> [K|Acc] end,[]).
+-spec list_keys(reference()) -> [Key::binary()] | {error, any()}.
+list_keys(Ref) -> fold(Ref, fun(K,_V,Acc) -> [K|Acc] end, []).
 
 %% @doc fold over all K/V pairs in a bitcask datastore.
 %% Fun is expected to take F(K,V,Acc0) -> Acc
--spec fold(#bc_state{},fun(),any()) -> any() | {error, any()}.
-fold(_State=#bc_state{keydir=KeyDir,dirname=Dirname},Fun,Acc0) ->
-    ReadFiles = list_data_files(Dirname,undefined,undefined),
+-spec fold(reference(), fun(), any()) -> any() | {error, any()}.
+fold(Ref, Fun, Acc0) ->
+    State = get_state(Ref),
+
+    ReadFiles = list_data_files(State#bc_state.dirname, undefined, undefined),
     {_,_,Tseed} = now(),
     {ok, Bloom} = ebloom:new(1000000,0.00003,Tseed), % arbitrary large bloom
     SubFun = fun(K,V,_TStamp,{Offset,_Sz},Acc) ->
@@ -258,8 +284,8 @@ fold(_State=#bc_state{keydir=KeyDir,dirname=Dirname},Fun,Acc0) ->
                     case ebloom:contains(Bloom,K) of
                         true ->
                             Acc;
-                false ->
-                            case bitcask_nifs:keydir_get(KeyDir, K) of
+                        false ->
+                            case bitcask_nifs:keydir_get(State#bc_state.keydir, K) of
                                 not_found ->
                                     Acc;
                                 E when is_record(E, bitcask_entry) ->
@@ -356,6 +382,17 @@ merge(Dirname) ->
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
+
+get_state(Ref) ->
+    case erlang:get(Ref) of
+        S when is_record(S, bc_state) ->
+            S;
+        undefined ->
+            throw({error, {invalid_ref, Ref}})
+    end.
+
+put_state(Ref, State) ->
+    erlang:put(Ref, State).
 
 reverse_sort(L) ->
     lists:reverse(lists:sort(L)).
@@ -558,11 +595,11 @@ init_dataset(Dirname, KVs) ->
 init_dataset(Dirname, Opts, KVs) ->
     os:cmd(?FMT("rm -rf ~s", [Dirname])),
 
-    {ok, B} = bitcask:open(Dirname, [read_write] ++ Opts),
-    lists:foldl(fun({K, V}, Bc0) ->
-                        {ok, Bc} = bitcask:put(Bc0, K, V),
-                        Bc
-                end, B, KVs).
+    B = bitcask:open(Dirname, [read_write] ++ Opts),
+    lists:foldl(fun({K, V}, _) ->
+                        ok = bitcask:put(B, K, V)
+                end, undefined, KVs),
+    B.
 
 
 default_dataset() ->
@@ -573,14 +610,14 @@ default_dataset() ->
 
 roundtrip_test() ->
     os:cmd("rm -rf /tmp/bc.test.roundtrip"),
-    {ok, B} = bitcask:open("/tmp/bc.test.roundtrip", [read_write]),
-    {ok, B1} = bitcask:put(B,<<"k">>,<<"v">>),
-    {ok, <<"v">>, B2} = bitcask:get(B1,<<"k">>),
-    {ok, B3} = bitcask:put(B2, <<"k2">>, <<"v2">>),
-    {ok, B4} = bitcask:put(B3, <<"k">>,<<"v3">>),
-    {ok, <<"v2">>, B5} = bitcask:get(B4, <<"k2">>),
-    {ok, <<"v3">>, B6} = bitcask:get(B5, <<"k">>),
-    close(B6).
+    B = bitcask:open("/tmp/bc.test.roundtrip", [read_write]),
+    ok = bitcask:put(B,<<"k">>,<<"v">>),
+    {ok, <<"v">>} = bitcask:get(B,<<"k">>),
+    ok = bitcask:put(B, <<"k2">>, <<"v2">>),
+    ok = bitcask:put(B, <<"k">>,<<"v3">>),
+    {ok, <<"v2">>} = bitcask:get(B, <<"k2">>),
+    {ok, <<"v3">>} = bitcask:get(B, <<"k">>),
+    close(B).
 
 list_data_files_test() ->
     os:cmd("rm -rf /tmp/bc.test.list; mkdir -p /tmp/bc.test.list"),
@@ -598,7 +635,7 @@ list_data_files_test() ->
 fold_test() ->
     B = init_dataset("/tmp/bc.test.fold", default_dataset()),
 
-    File = B#bc_state.write_file,
+    File = (get_state(B))#bc_state.write_file,
     L = bitcask_fileops:fold(File, fun(K, V, _Ts, _Pos, Acc) ->
                                            [{K, V} | Acc]
                                    end, []),
@@ -608,24 +645,22 @@ fold_test() ->
 open_test() ->
     close(init_dataset("/tmp/bc.test.open", default_dataset())),
 
-    {ok, B} = bitcask:open("/tmp/bc.test.open"),
-    lists:foldl(fun({K, V}, Bc0) ->
-                       {ok, V, Bc} = bitcask:get(Bc0, K),
-                       Bc
-               end, B, default_dataset()).
+    B = bitcask:open("/tmp/bc.test.open"),
+    lists:foldl(fun({K, V}, _) ->
+                        {ok, V} = bitcask:get(B, K)
+                end, undefined, default_dataset()).
 
 wrap_test() ->
     %% Initialize dataset with max_file_size set to 1 so that each file will
     %% only contain a single key.
     close(init_dataset("/tmp/bc.test.wrap", [{max_file_size, 1}], default_dataset())),
 
-    {ok, B} = bitcask:open("/tmp/bc.test.wrap"),
+    B = bitcask:open("/tmp/bc.test.wrap"),
 
     %% Check that all our data is available
-    lists:foldl(fun({K, V}, Bc0) ->
-                        {ok, V, Bc} = bitcask:get(Bc0, K),
-                        Bc
-                end, B, default_dataset()),
+    lists:foldl(fun({K, V}, _) ->
+                        {ok, V} = bitcask:get(B, K)
+                end, undefined, default_dataset()),
 
     %% Finally, verify that there are 4 files currently opened for read (one for each key
     %% and the initial writing one)
@@ -647,18 +682,17 @@ merge_test() ->
     1 = length(readable_files("/tmp/bc.test.merge")),
 
     %% Make sure all the data is present
-    {ok, B} = bitcask:open("/tmp/bc.test.merge"),
-    lists:foldl(fun({K, V}, Bc0) ->
-                        {ok, V, Bc} = bitcask:get(Bc0, K),
-                        Bc
-                end, B, default_dataset()).
+    B = bitcask:open("/tmp/bc.test.merge"),
+    lists:foldl(fun({K, V}, _) ->
+                        {ok, V} = bitcask:get(B, K)
+                end, undefined, default_dataset()).
 
 hint_test() ->
     %% Initialize dataset by basically doing the merge_test
     %% since merging is how hintfiles are made.
     B0 = init_dataset("/tmp/bc.test.hints",
                       [{max_file_size, 1}], default_dataset()),
-    3 = length(B0#bc_state.read_files),
+    3 = length((get_state(B0))#bc_state.read_files),
     close(B0),
     ok = merge("/tmp/bc.test.hints"),
 
@@ -682,35 +716,35 @@ hint_test() ->
 
 bitfold_test() ->
     os:cmd("rm -rf /tmp/bc.test.bitfold"),
-    {ok, B} = bitcask:open("/tmp/bc.test.bitfold", [read_write]),
-    {ok, B1} = bitcask:put(B,<<"k">>,<<"v">>),
-    {ok, <<"v">>, B2} = bitcask:get(B1,<<"k">>),
-    {ok, B3} = bitcask:put(B2, <<"k2">>, <<"v2">>),
-    {ok, B4} = bitcask:put(B3, <<"k">>,<<"v3">>),
-    {ok, <<"v2">>, B5} = bitcask:get(B4, <<"k2">>),
-    {ok, <<"v3">>, B6} = bitcask:get(B5, <<"k">>),
-    {ok, B7} = bitcask:delete(B6,<<"k">>),
-    {ok, B8} = bitcask:put(B7, <<"k7">>,<<"v7">>),
-    close(B8),
-    {ok, T} = bitcask:open("/tmp/bc.test.bitfold"),
-    true = ([{<<"k7">>,<<"v7">>},{<<"k2">>,<<"v2">>}] =:= 
-            bitcask:fold(T,fun(K,V,Acc) -> [{K,V}|Acc] end,[])),
-    close(T),
+    B = bitcask:open("/tmp/bc.test.bitfold", [read_write]),
+    ok = bitcask:put(B,<<"k">>,<<"v">>),
+    {ok, <<"v">>} = bitcask:get(B,<<"k">>),
+    ok = bitcask:put(B, <<"k2">>, <<"v2">>),
+    ok = bitcask:put(B, <<"k">>,<<"v3">>),
+    {ok, <<"v2">>} = bitcask:get(B, <<"k2">>),
+    {ok, <<"v3">>} = bitcask:get(B, <<"k">>),
+    ok = bitcask:delete(B,<<"k">>),
+    ok = bitcask:put(B, <<"k7">>,<<"v7">>),
+    close(B),
+    B2 = bitcask:open("/tmp/bc.test.bitfold"),
+    true = ([{<<"k7">>,<<"v7">>},{<<"k2">>,<<"v2">>}] =:=
+            bitcask:fold(B2,fun(K,V,Acc) -> [{K,V}|Acc] end,[])),
+    close(B2),
     ok.
 
 list_keys_test() ->
     os:cmd("rm -rf /tmp/bc.test.listkeys"),
-    {ok, B} = bitcask:open("/tmp/bc.test.listkeys", [read_write]),
-    {ok, B1} = bitcask:put(B,<<"k">>,<<"v">>),
-    {ok, <<"v">>, B2} = bitcask:get(B1,<<"k">>),
-    {ok, B3} = bitcask:put(B2, <<"k2">>, <<"v2">>),
-    {ok, B4} = bitcask:put(B3, <<"k">>,<<"v3">>),
-    {ok, <<"v2">>, B5} = bitcask:get(B4, <<"k2">>),
-    {ok, <<"v3">>, B6} = bitcask:get(B5, <<"k">>),
-    {ok, B7} = bitcask:delete(B6,<<"k">>),
-    {ok, B8} = bitcask:put(B7, <<"k7">>,<<"v7">>),
-    true = ([<<"k7">>,<<"k2">>] =:= bitcask:list_keys(B8)),
-    close(B8),
+    B = bitcask:open("/tmp/bc.test.listkeys", [read_write]),
+    ok = bitcask:put(B,<<"k">>,<<"v">>),
+    {ok, <<"v">>} = bitcask:get(B,<<"k">>),
+    ok = bitcask:put(B, <<"k2">>, <<"v2">>),
+    ok = bitcask:put(B, <<"k">>,<<"v3">>),
+    {ok, <<"v2">>} = bitcask:get(B, <<"k2">>),
+    {ok, <<"v3">>} = bitcask:get(B, <<"k">>),
+    ok = bitcask:delete(B,<<"k">>),
+    ok = bitcask:put(B, <<"k7">>,<<"v7">>),
+    true = ([<<"k7">>,<<"k2">>] =:= bitcask:list_keys(B)),
+    close(B),
     ok.
 
 -endif.
