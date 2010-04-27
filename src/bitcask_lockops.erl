@@ -128,7 +128,7 @@ update(Type, Dirname, ActiveFileName) ->
 %% ===================================================================
 
 lock_filename(Type, Dirname) ->
-    filename:join(Dirname, lists:concat(["bitcast.", Type, ".lock"])).
+    filename:join(Dirname, lists:concat(["bitcask.", Type, ".lock"])).
 
 %% @private
 check_loop(Filename, 0) ->
