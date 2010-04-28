@@ -42,7 +42,7 @@ initial_state_data() ->
     #state{}.
 
 closed(_S) ->
-    [{opened, {call, bitcask, open, [?TEST_DIR, [read_write]]}}].
+    [{opened, {call, bitcask, open, [?TEST_DIR, [read_write, {open_timeout, 0}]]}}].
 
 opened(S) ->
     [{closed, {call, bitcask, close, [S#state.bitcask]}},

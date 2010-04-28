@@ -159,6 +159,7 @@ open(Dirname, Opts) ->
 -spec close(reference()) -> ok.
 close(Ref) ->
     State = get_state(Ref),
+    erlang:erase(Ref),
 
     %% Clean up all the reading files
     [ok = bitcask_fileops:close(F) || F <- State#bc_state.read_files],
@@ -432,12 +433,12 @@ scan_key_files([Filename | Rest], KeyDir, Acc) ->
 %% extraneous polling.
 %%
 wait_for_keydir(Name, MillisToWait) ->
-    timer:sleep(100),
     case bitcask_nifs:keydir_new(Name) of
         {ready, KeyDir} ->
             {ok, KeyDir};
 
         {error, not_ready} ->
+            timer:sleep(100),
             case MillisToWait of
                 infinity ->
                     wait_for_keydir(Name, infinity);
