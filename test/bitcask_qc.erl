@@ -85,7 +85,7 @@ prop_bitcask() ->
     ?FORALL(Cmds,commands(?MODULE),
             begin
                 [] = os:cmd("rm -rf " ++ ?TEST_DIR),
-                {H,{State, StateData}, Res} = run_commands(?MODULE,Cmds),
+                {H,{_State, StateData}, Res} = run_commands(?MODULE,Cmds),
                 case (StateData#state.bitcask) of
                     undefined ->
                         ok;
