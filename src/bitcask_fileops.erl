@@ -26,7 +26,7 @@
 -author('Justin Sheehy <justin@basho.com>').
 -author('Andy Gross <andy@basho.com>').
 
--export([create_file/1,
+-export([create_file/2,
          open_file/1,
          close/1,
          write/4,
@@ -46,9 +46,9 @@
 
 %% @doc Open a new file for writing.
 %% Called on a Dirname, will open a fresh file in that directory.
-%% @spec create_file(Dirname :: string()) -> {ok, filestate()}
-create_file(DirName) ->
-    create_file_loop(DirName, tstamp()).
+%% @spec create_file(Dirname :: string(), Opts :: [any()]) -> {ok, filestate()}
+create_file(DirName, Opts) ->
+    create_file_loop(DirName, Opts, tstamp()).
 
 
 %% @doc Open an existing file for reading.
@@ -221,14 +221,31 @@ fold(Fd, Header, Offset, Fun, Acc0) ->
     end.
 
 
-create_file_loop(DirName, Tstamp) ->
+create_file_loop(DirName, Opts, Tstamp) ->
     Filename = mk_filename(DirName, Tstamp),
     ok = filelib:ensure_dir(Filename),
     case bitcask_nifs:create_file(Filename) of
         true ->
             {ok, FD} = file:open(Filename, [read, write, raw, binary]),
-            {ok, #filestate{filename = Filename, tstamp = file_tstamp(Filename),
-                            fd = FD, ofs = 0}};
+            %% If o_sync is specified in the options, try to set that flag on the underlying
+            %% file descriptor
+            case proplists:get_bool(o_sync, Opts) of
+                true ->
+                    %% Make a hacky assumption here that if we open a raw file, we get back
+                    %% a specific tuple from the Erlang VM. The tradeoff is that we can set the
+                    %% O_SYNC flag on the fd, thus improving performance rather dramatically.
+                    {file_descriptor, prim_file, {_Port, RealFd}} = FD,
+                    case bitcask_nifs:set_osync(RealFd) of
+                        ok ->
+                            {ok, #filestate{filename = Filename, tstamp = file_tstamp(Filename),
+                                            fd = FD, ofs = 0}};
+                        {error, Reason} ->
+                            {error, Reason}
+                    end;
+                false ->
+                    {ok, #filestate{filename = Filename, tstamp = file_tstamp(Filename),
+                                    fd = FD, ofs = 0}}
+            end;
         false ->
             %% Couldn't create a new file with the requested name, increment the
             %% tstamp by 1 and try again. Conceptually, this introduces some drift
@@ -236,6 +253,6 @@ create_file_loop(DirName, Tstamp) ->
             %% writers (writer + merger) for a given bitcask, it shouldn't be more
             %% than a few seconds. The alternative it to sleep until the next second
             %% rolls around -- but this introduces lengthy, unnecessary delays.
-            create_file_loop(DirName, Tstamp + 1)
+            create_file_loop(DirName, Opts, Tstamp + 1)
     end.
 

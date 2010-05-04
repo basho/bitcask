@@ -33,7 +33,8 @@
          keydir_itr_next/1,
          keydir_fold/3,
          keydir_info/1,
-         create_file/1]).
+         create_file/1,
+         set_osync/1]).
 
 -on_load(init/0).
 
@@ -93,6 +94,8 @@ keydir_info(_Ref) ->
 create_file(_Filename) ->
     "NIF library not loaded".
 
+set_osync(_Filehandle) ->
+    "NIF library not loaded".
 
 %% ===================================================================
 %% Internal functions

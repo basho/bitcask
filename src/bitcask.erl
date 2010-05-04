@@ -44,7 +44,7 @@
                    write_file,                  % File for writing
                    read_files,                  % Files opened for reading
                    max_file_size,               % Max. size of a written file
-                   sync_on_put,                 % Boolean flag controlling if we sync on each put
+                   opts,                        % Original options used to open the bitcask
                    keydir}).                    % Key directory
 
 -record(mstate, { dirname,
@@ -85,7 +85,7 @@ open(Dirname, Opts) ->
                 true ->
                     %% Open up the new file for writing
                     %% and update the write lock file
-                    {ok, WritingFile} = bitcask_fileops:create_file(Dirname),
+                    {ok, WritingFile} = bitcask_fileops:create_file(Dirname, Opts),
                     WritingFilename = bitcask_fileops:filename(WritingFile),
                     ok = bitcask_lockops:update(write, Dirname, WritingFilename);
 
@@ -104,9 +104,6 @@ open(Dirname, Opts) ->
         _ ->
             MaxFileSize = ?DEFAULT_MAX_FILE_SIZE
     end,
-
-    %% Determine if we need to sync on every put
-    SyncOnPut = proplists:get_bool(sync_on_put, Opts),
 
     %% Get the named keydir for this directory. If we get it and it's already
     %% marked as ready, that indicates another caller has already loaded
@@ -150,7 +147,7 @@ open(Dirname, Opts) ->
                                read_files = ReadFiles,
                                write_file = WritingFile, % May be undefined
                                max_file_size = MaxFileSize,
-                               sync_on_put = SyncOnPut,
+                               opts = Opts,
                                keydir = KeyDir}),
 
     Ref.
@@ -220,7 +217,8 @@ put(Ref, Key, Value) ->
             %% for read only access would flush the O/S cache for the file,
             %% which may be undesirable.
             ok = bitcask_fileops:sync(WriteFile),
-            {ok, NewWriteFile} = bitcask_fileops:create_file(State#bc_state.dirname),
+            {ok, NewWriteFile} = bitcask_fileops:create_file(State#bc_state.dirname,
+                                                             State#bc_state.opts),
             State2 = State#bc_state{ write_file = NewWriteFile,
                                      read_files = [State#bc_state.write_file |
                                                    State#bc_state.read_files]};
@@ -234,14 +232,6 @@ put(Ref, Key, Value) ->
     ok = bitcask_nifs:keydir_put(State2#bc_state.keydir, Key,
                                  bitcask_fileops:file_tstamp(WriteFile2),
                                  Size, OffSet, Tstamp),
-
-    %% If necessary, sync
-    case State2#bc_state.sync_on_put of
-        true ->
-            ok = bitcask_fileops:sync(WriteFile2);
-        false ->
-            ok
-    end,
 
     put_state(Ref, State2#bc_state { write_file = WriteFile2 }),
     ok.
@@ -344,7 +334,8 @@ merge(Dirname) ->
     end,
 
     %% Setup our first output merge file and update the merge lock accordingly
-    {ok, Outfile} = bitcask_fileops:create_file(Dirname),
+    %% TODO: Pass o_sync flags to create_file
+    {ok, Outfile} = bitcask_fileops:create_file(Dirname, []),
     ok = bitcask_lockops:update(merge, Dirname,
                                 bitcask_fileops:filename(Outfile)),
 
@@ -505,7 +496,8 @@ merge_single_entry(K, V, Tstamp, #mstate { dirname = Dirname } = State) ->
                                 close_outfile(State),
 
                                 %% Start our next file and update state
-                                {ok, NewFile} = bitcask_fileops:create_file(Dirname),
+                                %% TODO: Pass o_sync flags to create_file
+                                {ok, NewFile} = bitcask_fileops:create_file(Dirname, []),
                                 {ok, HintKeyDir} = bitcask_nifs:keydir_new(),
                                 State#mstate { out_file = NewFile,
                                                hint_keydir = HintKeyDir };

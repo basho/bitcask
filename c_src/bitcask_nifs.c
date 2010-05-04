@@ -21,8 +21,10 @@
 // -------------------------------------------------------------------
 
 #include "erl_nif.h"
+#include "erl_driver.h"
 #include "uthash.h"
 
+#include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -90,6 +92,8 @@ static ERL_NIF_TERM ATOM_NOT_READY;
 static ERL_NIF_TERM ATOM_OK;
 static ERL_NIF_TERM ATOM_READY;
 static ERL_NIF_TERM ATOM_TRUE;
+static ERL_NIF_TERM ATOM_GETFL_ERROR;
+static ERL_NIF_TERM ATOM_SETFL_ERROR;
 
 // Prototypes
 ERL_NIF_TERM bitcask_nifs_keydir_new0(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
@@ -105,6 +109,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_info(ErlNifEnv* env, int argc, const ERL_NIF_TE
 
 ERL_NIF_TERM bitcask_nifs_create_file(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
+ERL_NIF_TERM bitcask_nifs_set_osync(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+
 static ErlNifFunc nif_funcs[] =
 {
     {"keydir_new", 0, bitcask_nifs_keydir_new0},
@@ -118,7 +124,9 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_itr_next", 1, bitcask_nifs_keydir_itr_next},
     {"keydir_info", 1, bitcask_nifs_keydir_info},
 
-    {"create_file", 1, bitcask_nifs_create_file}
+    {"create_file", 1, bitcask_nifs_create_file},
+
+    {"set_osync", 1, bitcask_nifs_set_osync}
 };
 
 ERL_NIF_TERM bitcask_nifs_keydir_new0(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -535,6 +543,42 @@ ERL_NIF_TERM bitcask_nifs_create_file(ErlNifEnv* env, int argc, const ERL_NIF_TE
     }
 }
 
+
+ERL_NIF_TERM bitcask_nifs_set_osync(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    int fd;
+    if (enif_get_int(env, argv[0], &fd))
+    {
+        // Get the current flags for the file handle in question
+        int flags = fcntl(fd, F_GETFL, 0);
+        if (flags != -1)
+        {
+            if (fcntl(fd, F_SETFL, flags | O_SYNC) != -1)
+            {
+                return ATOM_OK;
+            }
+            else
+            {
+                ERL_NIF_TERM error = enif_make_tuple2(env, ATOM_SETFL_ERROR,
+                                                      enif_make_atom(env, erl_errno_id(errno)));
+                return enif_make_tuple2(env, ATOM_ERROR, error);
+            }
+        }
+        else
+        {
+            ERL_NIF_TERM error = enif_make_tuple2(env, ATOM_GETFL_ERROR,
+                                                  enif_make_atom(env, erl_errno_id(errno)));
+            return enif_make_tuple2(env, ATOM_ERROR, error);
+        }
+
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
+
 static void free_keydir(ErlNifEnv* env, bitcask_keydir* keydir)
 {
     // Delete all the entries in the hash table, which also has the effect of
@@ -616,6 +660,8 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
     ATOM_OK = enif_make_atom(env, "ok");
     ATOM_READY = enif_make_atom(env, "ready");
     ATOM_TRUE = enif_make_atom(env, "true");
+    ATOM_GETFL_ERROR = enif_make_atom(env, "getfl_error");
+    ATOM_SETFL_ERROR = enif_make_atom(env, "setfl_error");
 
     return 0;
 }
