@@ -34,7 +34,11 @@
          keydir_fold/3,
          keydir_info/1,
          create_file/1,
-         set_osync/1]).
+         set_osync/1,
+         lock_acquire/2,
+         lock_release/1,
+         lock_readdata/1,
+         lock_writedata/2]).
 
 -on_load(init/0).
 
@@ -95,6 +99,18 @@ create_file(_Filename) ->
     "NIF library not loaded".
 
 set_osync(_Filehandle) ->
+    "NIF library not loaded".
+
+lock_acquire(_Filename, _IsWriteLock) ->
+    "NIF library not loaded".
+
+lock_release(_Ref) ->
+    "NIF library not loaded".
+
+lock_readdata(_Ref) ->
+    "NIF library not loaded".
+
+lock_writedata(_Ref, _Data) ->
     "NIF library not loaded".
 
 %% ===================================================================

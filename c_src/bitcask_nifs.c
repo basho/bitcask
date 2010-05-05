@@ -31,6 +31,8 @@
 
 static ErlNifResourceType* bitcask_keydir_RESOURCE;
 
+static ErlNifResourceType* bitcask_lock_RESOURCE;
+
 typedef struct
 {
     UT_hash_handle hh;         /* Required for uthash */
@@ -62,6 +64,13 @@ typedef struct
 
 typedef struct
 {
+    int   fd;
+    int   is_write_lock;
+    char  filename[0];
+} bitcask_lock_handle;
+
+typedef struct
+{
     bitcask_keydir* global_keydirs;
     ErlNifMutex*    global_keydirs_lock;
 } bitcask_priv_data;
@@ -86,14 +95,19 @@ static ERL_NIF_TERM ATOM_ALREADY_EXISTS;
 static ERL_NIF_TERM ATOM_BITCASK_ENTRY;
 static ERL_NIF_TERM ATOM_ERROR;
 static ERL_NIF_TERM ATOM_FALSE;
+static ERL_NIF_TERM ATOM_FSTAT_ERROR;
+static ERL_NIF_TERM ATOM_FTRUNCATE_ERROR;
+static ERL_NIF_TERM ATOM_GETFL_ERROR;
 static ERL_NIF_TERM ATOM_ITERATION_NOT_PERMITTED;
+static ERL_NIF_TERM ATOM_LOCK_NOT_WRITABLE;
 static ERL_NIF_TERM ATOM_NOT_FOUND;
 static ERL_NIF_TERM ATOM_NOT_READY;
 static ERL_NIF_TERM ATOM_OK;
+static ERL_NIF_TERM ATOM_PREAD_ERROR;
+static ERL_NIF_TERM ATOM_PWRITE_ERROR;
 static ERL_NIF_TERM ATOM_READY;
-static ERL_NIF_TERM ATOM_TRUE;
-static ERL_NIF_TERM ATOM_GETFL_ERROR;
 static ERL_NIF_TERM ATOM_SETFL_ERROR;
+static ERL_NIF_TERM ATOM_TRUE;
 
 // Prototypes
 ERL_NIF_TERM bitcask_nifs_keydir_new0(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
@@ -111,6 +125,16 @@ ERL_NIF_TERM bitcask_nifs_create_file(ErlNifEnv* env, int argc, const ERL_NIF_TE
 
 ERL_NIF_TERM bitcask_nifs_set_osync(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
+ERL_NIF_TERM bitcask_nifs_lock_acquire(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_lock_release(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_lock_readdata(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_lock_writedata(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+
+ERL_NIF_TERM errno_atom(ErlNifEnv* env, int error);
+ERL_NIF_TERM errno_error_tuple(ErlNifEnv* env, ERL_NIF_TERM key, int error);
+
+static void lock_release(bitcask_lock_handle* handle);
+
 static ErlNifFunc nif_funcs[] =
 {
     {"keydir_new", 0, bitcask_nifs_keydir_new0},
@@ -126,7 +150,12 @@ static ErlNifFunc nif_funcs[] =
 
     {"create_file", 1, bitcask_nifs_create_file},
 
-    {"set_osync", 1, bitcask_nifs_set_osync}
+    {"set_osync", 1, bitcask_nifs_set_osync},
+
+    {"lock_acquire",   2, bitcask_nifs_lock_acquire},
+    {"lock_release",   1, bitcask_nifs_lock_release},
+    {"lock_readdata",  1, bitcask_nifs_lock_readdata},
+    {"lock_writedata", 2, bitcask_nifs_lock_writedata}
 };
 
 ERL_NIF_TERM bitcask_nifs_keydir_new0(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -579,6 +608,169 @@ ERL_NIF_TERM bitcask_nifs_set_osync(ErlNifEnv* env, int argc, const ERL_NIF_TERM
 }
 
 
+ERL_NIF_TERM bitcask_nifs_lock_acquire(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    char filename[4096];
+    int is_write_lock = 0;
+    if (enif_get_string(env, argv[0], filename, sizeof(filename), ERL_NIF_LATIN1) > 0 &&
+        enif_get_int(env, argv[1], &is_write_lock))
+    {
+        // Setup the flags for the lock file
+        int flags = O_RDONLY;
+        if (is_write_lock)
+        {
+            // Use O_SYNC (in addition to other flags) to ensure that when we write
+            // data to the lock file it is immediately (or nearly) available to any
+            // other reading processes
+            flags = O_CREAT | O_EXCL | O_RDWR | O_SYNC;
+        }
+
+        // Try to open the lock file -- allocate a resource if all goes well.
+        int fd = open(filename, flags);
+        if (fd > -1)
+        {
+            // Successfully opened the file -- setup a resource to track the FD.
+            unsigned int filename_sz = strlen(filename) + 1;
+            bitcask_lock_handle* handle = enif_alloc_resource(env, bitcask_lock_RESOURCE,
+                                                              sizeof(bitcask_lock_handle) +
+                                                              filename_sz);
+            handle->fd = fd;
+            handle->is_write_lock = is_write_lock;
+            strncpy(handle->filename, filename, filename_sz);
+            ERL_NIF_TERM result = enif_make_resource(env, handle);
+            enif_release_resource(env, handle);
+
+            return enif_make_tuple2(env, ATOM_OK, result);
+        }
+        else
+        {
+            return enif_make_tuple2(env, ATOM_ERROR, errno_atom(env, errno));
+        }
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
+ERL_NIF_TERM bitcask_nifs_lock_release(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_lock_handle* handle;
+
+    if (enif_get_resource(env, argv[0], bitcask_lock_RESOURCE, (void**)&handle))
+    {
+        lock_release(handle);
+        return ATOM_OK;
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
+ERL_NIF_TERM bitcask_nifs_lock_readdata(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_lock_handle* handle;
+
+    if (enif_get_resource(env, argv[0], bitcask_lock_RESOURCE, (void**)&handle))
+    {
+        // Stat the filehandle so we can read the entire contents into memory
+        struct stat sinfo;
+        if (fstat(handle->fd, &sinfo) != 0)
+        {
+            return errno_error_tuple(env, ATOM_FSTAT_ERROR, errno);
+        }
+
+        // Allocate a binary to hold the contents of the file
+        ErlNifBinary data;
+        if (!enif_alloc_binary(env, sinfo.st_size, &data))
+        {
+            return enif_make_tuple2(env, ATOM_ERROR, ATOM_ALLOCATION_ERROR);
+        }
+
+        // Read the whole file into our binary
+        if (pread(handle->fd, data.data, data.size, 0) == -1)
+        {
+            return errno_error_tuple(env, ATOM_PREAD_ERROR, errno);
+        }
+
+        return enif_make_tuple2(env, ATOM_OK, enif_make_binary(env, &data));
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
+ERL_NIF_TERM bitcask_nifs_lock_writedata(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_lock_handle* handle;
+    ErlNifBinary data;
+
+    if (enif_get_resource(env, argv[0], bitcask_lock_RESOURCE, (void**)&handle) &&
+        enif_inspect_binary(env, argv[1], &data))
+    {
+        if (handle->is_write_lock)
+        {
+            // Truncate the file first, to ensure that the lock file only contains what
+            // we're about to write
+            if (ftruncate(handle->fd, 0) == -1)
+            {
+                return errno_error_tuple(env, ATOM_FTRUNCATE_ERROR, errno);
+            }
+
+            // Write the new blob of data to the lock file. Note that we use O_SYNC to
+            // ensure that the data is available ASAP to reading processes.
+            if (pwrite(handle->fd, data.data, data.size, 0) == -1)
+            {
+                return errno_error_tuple(env, ATOM_PWRITE_ERROR, errno);
+            }
+
+            return ATOM_OK;
+        }
+        else
+        {
+            // Tried to write data to a read lock
+            return enif_make_tuple2(env, ATOM_ERROR, ATOM_LOCK_NOT_WRITABLE);
+        }
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
+ERL_NIF_TERM errno_atom(ErlNifEnv* env, int error)
+{
+    return enif_make_atom(env, erl_errno_id(error));
+}
+
+ERL_NIF_TERM errno_error_tuple(ErlNifEnv* env, ERL_NIF_TERM key, int error)
+{
+    // Construct a tuple of form: {error, {Key, ErrnoAtom}}
+    return enif_make_tuple2(env, ATOM_ERROR,
+                            enif_make_tuple2(env, key, errno_atom(env, error)));
+}
+
+static void lock_release(bitcask_lock_handle* handle)
+{
+    if (handle->fd > 0)
+    {
+        // If this is a write lock, we need to delete the file as part of cleanup. But be
+        // sure to do this BEFORE letting go of the file handle so as to ensure consistency
+        // with other readers.
+        if (handle->is_write_lock)
+        {
+            // TODO: Come up with some way to complain/error log if this unlink failed for some
+            // reason!!
+            unlink(handle->filename);
+        }
+
+        close(handle->fd);
+        handle->fd = -1;
+    }
+}
+
 static void free_keydir(ErlNifEnv* env, bitcask_keydir* keydir)
 {
     // Delete all the entries in the hash table, which also has the effect of
@@ -591,6 +783,7 @@ static void free_keydir(ErlNifEnv* env, bitcask_keydir* keydir)
         enif_free(env, current_entry);
     }
 }
+
 
 static void bitcask_nifs_keydir_resource_cleanup(ErlNifEnv* env, void* arg)
 {
@@ -636,12 +829,23 @@ static void bitcask_nifs_keydir_resource_cleanup(ErlNifEnv* env, void* arg)
     }
 }
 
+static void bitcask_nifs_lock_resource_cleanup(ErlNifEnv* env, void* arg)
+{
+    bitcask_lock_handle* handle = (bitcask_lock_handle*)arg;
+    lock_release(handle);
+}
+
 static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
 {
     bitcask_keydir_RESOURCE = enif_open_resource_type(env, "bitcask_keydir_resource",
                                                       &bitcask_nifs_keydir_resource_cleanup,
                                                       ERL_NIF_RT_CREATE | ERL_NIF_RT_TAKEOVER,
                                                       0);
+
+    bitcask_lock_RESOURCE = enif_open_resource_type(env, "bitcask_lock_resource",
+                                                    &bitcask_nifs_lock_resource_cleanup,
+                                                    ERL_NIF_RT_CREATE | ERL_NIF_RT_TAKEOVER,
+                                                    0);
     // Initialize shared keydir hashtable
     bitcask_priv_data* priv = enif_alloc(env, sizeof(bitcask_priv_data));
     priv->global_keydirs = 0;
@@ -654,14 +858,19 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
     ATOM_BITCASK_ENTRY = enif_make_atom(env, "bitcask_entry");
     ATOM_ERROR = enif_make_atom(env, "error");
     ATOM_FALSE = enif_make_atom(env, "false");
+    ATOM_FSTAT_ERROR = enif_make_atom(env, "fstat_error");
+    ATOM_FTRUNCATE_ERROR = enif_make_atom(env, "ftruncate_error");
+    ATOM_GETFL_ERROR = enif_make_atom(env, "getfl_error");
     ATOM_ITERATION_NOT_PERMITTED = enif_make_atom(env, "iteration_not_permitted");
+    ATOM_LOCK_NOT_WRITABLE = enif_make_atom(env, "lock_not_writable");
     ATOM_NOT_FOUND = enif_make_atom(env, "not_found");
     ATOM_NOT_READY = enif_make_atom(env, "not_ready");
     ATOM_OK = enif_make_atom(env, "ok");
+    ATOM_PREAD_ERROR = enif_make_atom(env, "pread_error");
+    ATOM_PWRITE_ERROR = enif_make_atom(env, "pwrite_error");
     ATOM_READY = enif_make_atom(env, "ready");
-    ATOM_TRUE = enif_make_atom(env, "true");
-    ATOM_GETFL_ERROR = enif_make_atom(env, "getfl_error");
     ATOM_SETFL_ERROR = enif_make_atom(env, "setfl_error");
+    ATOM_TRUE = enif_make_atom(env, "true");
 
     return 0;
 }

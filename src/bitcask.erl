@@ -42,6 +42,7 @@
 %% @type bc_state().
 -record(bc_state, {dirname,
                    write_file,                  % File for writing
+                   write_lock,                  % Reference to write lock
                    read_files,                  % Files opened for reading
                    max_file_size,               % Max. size of a written file
                    opts,                        % Original options used to open the bitcask
@@ -82,18 +83,20 @@ open(Dirname, Opts) ->
         true ->
             %% Try to acquire the write lock, or bail if unable to
             case bitcask_lockops:acquire(write, Dirname) of
-                true ->
+                {ok, WriteLock} ->
                     %% Open up the new file for writing
                     %% and update the write lock file
                     {ok, WritingFile} = bitcask_fileops:create_file(Dirname, Opts),
                     WritingFilename = bitcask_fileops:filename(WritingFile),
-                    ok = bitcask_lockops:update(write, Dirname, WritingFilename);
+                    ok = bitcask_lockops:write_activefile(WriteLock, WritingFilename);
 
-                false ->
+                {error, Reason} ->
+                    WriteLock = undefined,
                     WritingFile = undefined, % Make erlc happy w/ non-local exit
-                    throw({error, write_locked})
+                    throw({error, {write_locked, Reason}})
             end;
         false ->
+            WriteLock = undefined,
             WritingFile = undefined
     end,
 
@@ -135,8 +138,7 @@ open(Dirname, Opts) ->
                     ok;
                 timeout ->
                     %% Well, we timed out waiting around for the other process to load
-                    %% data from disk. Go ahead and release our write lock and bail.
-                    bitcask_lockops:release(write, Dirname),
+                    %% data from disk.
                     KeyDir = undefined, % Make erlc happy w/ non-local exit
                     throw({error, open_timeout})
             end
@@ -146,6 +148,7 @@ open(Dirname, Opts) ->
     erlang:put(Ref, #bc_state {dirname = Dirname,
                                read_files = ReadFiles,
                                write_file = WritingFile, % May be undefined
+                               write_lock = WriteLock,
                                max_file_size = MaxFileSize,
                                opts = Opts,
                                keydir = KeyDir}),
@@ -161,14 +164,13 @@ close(Ref) ->
     %% Clean up all the reading files
     [ok = bitcask_fileops:close(F) || F <- State#bc_state.read_files],
 
-    %% If we have a write file, assume we also currently own the write lock
-    %% and cleanup both of those
+    %% Cleanup the write file and associated lock
     case State#bc_state.write_file of
         undefined ->
             ok;
         _ ->
             ok = bitcask_fileops:close(State#bc_state.write_file),
-            ok = bitcask_lockops:release(write, State#bc_state.dirname)
+            ok = bitcask_lockops:release(State#bc_state.write_lock)
     end.
 
 %% @doc Retrieve a value by key from a bitcask datastore.
@@ -305,8 +307,11 @@ subfold(SubFun,[File|Rest],Acc) ->
 merge(Dirname) ->
     %% Try to lock for merging
     case bitcask_lockops:acquire(merge, Dirname) of
-        true -> ok;
-        false -> throw({error, merge_locked})
+        {ok, Lock} ->
+            ok;
+        {error, Reason} ->
+            Lock = undefined,
+            throw({error, {merge_locked, Reason}})
     end,
 
     %% Get the list of files we'll be merging
@@ -336,8 +341,7 @@ merge(Dirname) ->
     %% Setup our first output merge file and update the merge lock accordingly
     %% TODO: Pass o_sync flags to create_file
     {ok, Outfile} = bitcask_fileops:create_file(Dirname, []),
-    ok = bitcask_lockops:update(merge, Dirname,
-                                bitcask_fileops:filename(Outfile)),
+    ok = bitcask_lockops:write_activefile(Lock, bitcask_fileops:filename(Outfile)),
 
     %% Initialize the other keydirs we need. The hint keydir will get recreated
     %% each time we wrap a file, so that it only contains keys associated
@@ -368,8 +372,8 @@ merge(Dirname) ->
     %% Cleanup the original input files and release our lock
     [bitcask_fileops:close(F) || F <- State#mstate.input_files],
     [file:delete(F) || F <- ReadableFiles],
-    ok = bitcask_lockops:release(merge, Dirname),
-    ok.
+    ok = bitcask_lockops:release(Lock).
+
 
 %% ===================================================================
 %% Internal functions
@@ -571,8 +575,8 @@ out_of_date(Key, Tstamp, [KeyDir|Rest]) ->
 readable_files(Dirname) ->
     %% Check the write and/or merge locks to see what files are currently
     %% being written to. Generate our list excepting those.
-    {_, WritingFile} = bitcask_lockops:check(write, Dirname),
-    {_, MergingFile} = bitcask_lockops:check(merge, Dirname),
+    WritingFile = bitcask_lockops:read_activefile(write, Dirname),
+    MergingFile = bitcask_lockops:read_activefile(merge, Dirname),
     list_data_files(Dirname, WritingFile, MergingFile).
 
 

@@ -23,105 +23,64 @@
 -author('Dave Smith <dizzyd@basho.com>').
 -author('Justin Sheehy <justin@basho.com>').
 
--export([check/2,
-         acquire/2,
-         release/2,
-         update/3]).
+-export([acquire/2,
+         release/1,
+         read_activefile/2,
+         write_activefile/2]).
 
 -type lock_types() :: merge | write.
 
-%% @doc Check for the existence of lock in the specified directory. Returns a
-%% tuple containing the operating system PID and the file currently locked. If
-%% the lock file doesn't exist, the tuple will just be {undefined, undefined}.
--spec check(Type::lock_types(), Dirname::string()) -> { string() , string() }.
-check(Type, Dirname) ->
-    case check_loop(lock_filename(Type, Dirname), 3) of
-        {ok, File, OsPid, LockedFilename} ->
-            file:close(File),
-            {OsPid, LockedFilename};
-        error ->
-            {undefined, undefined}
-    end.
-
-
-%% @doc Attempt to lock the specified directory with a specific type of lock (merge or write). Returns
-%% true on success.
--spec acquire(Type::lock_types(), Dirname::string()) -> true | false.
+%% @doc Attempt to lock the specified directory with a specific type of lock
+%% (merge or write).
+-spec acquire(Type::lock_types(), Dirname::string()) -> {ok, binary()} | {error, any()}.
 acquire(Type, Dirname) ->
     LockFilename = lock_filename(Type, Dirname),
-    case bitcask_nifs:create_file(LockFilename) of
-        true ->
-            %% Write out our PID w/ empty place for file name
-            %% (since we don't know it yet)
-            ok = file:write_file(LockFilename, [os:getpid(), " \n"]),
-            true;
-        false ->
-            %% The lock file we want already exists. However, it is possible
-            %% that it is stale (i.e. owning PID is no longer running). In that
-            %% situation, we'll delete the stale file and try to acquire the
-            %% lock again.
-            %%
-            %% It is necessary to be very careful when deleting the stale file,
-            %% however, to avoid competing processes tromping on each other's
-            %% lock files. To accomplish this, we want to:
-            %% 1. Open the lock file and read contents -- DO NOT CLOSE
-            %% 2. If the OsPid does not exist, unlink the file
-            %% 3. Close the file handle from step 1
-            %% 4. Try again to acquire the lock
-            case check_loop(LockFilename, 3) of
-                {ok, LockFile, OsPid, _LockedFilename} ->
-                    case os_pid_exists(OsPid) of
-                        true ->
-                            %% The lock IS NOT stale, so we can't acquire it
-                            file:close(LockFile),
-                            false;
-                        false ->
-                            %% The lock IS stale, so let's unlink the lock file
-                            %% and try again
-                            file:delete(LockFilename),
-                            file:close(LockFile),
-                            acquire(Type, Dirname)
-                    end;
-                error ->
-                    %% We timed out or otherwise ran into problems trying to
-                    %% read the lock file. As such, simply give up.
-                    false
-            end
+    case bitcask_nifs:lock_acquire(LockFilename, 1) of
+        {ok, Lock} ->
+            %% Successfully acquired our lock. Update the file with our PID.
+            ok = bitcask_nifs:lock_writedata(Lock, iolist_to_binary([os:getpid(), " \n"])),
+            {ok, Lock};
+
+        {error, eexist} ->
+            %% Lock file already exists, but may be stale. Delete it if it's stale
+            %% and try to acquire again
+            case delete_stale_lock(LockFilename) of
+                ok ->
+                    acquire(Type, Dirname);
+                not_stale ->
+                    {error, locked}
+            end;
+
+        {error, Reason} ->
+            {error, Reason}
     end.
 
-%% @doc Attempt to remove a write or merge lock on a directory. Ownership by
-%% this O/S PID is verified; within the Erlang VM you must serialize calls for a
-%% given directory.
--spec release(Type::lock_types(), Dirname::string()) -> ok | {error, not_lock_owner}.
-release(Type, Dirname) ->
-    ThisOsPid = os:getpid(),
-    Filename = lock_filename(Type, Dirname),
-    case check_loop(Filename, 3) of
-        {ok, File, ThisOsPid, _} ->
-            ok = file:delete(Filename),
-            file:close(File),
-            ok;
-        {ok, File, _, _} ->
-            file:close(File),
-            {error, not_lock_owner};
-        _ ->
-            {error, not_lock_owner}
+%% @doc Release a previously acquired write/merge lock.
+-spec release(binary()) -> ok.
+release(Lock) ->
+    bitcask_nifs:lock_release(Lock).
+
+%% @doc Read the active filename stored in a given lockfile.
+-spec read_activefile(Type::lock_types(), Dirname::string()) -> string() | undefined.
+read_activefile(Type, Dirname) ->
+    LockFilename = lock_filename(Type, Dirname),
+    case bitcask_nifs:lock_acquire(LockFilename, 0) of
+        {ok, Lock} ->
+            case read_lock_data(Lock) of
+                {ok, _Pid, ActiveFile} ->
+                    ActiveFile;
+                _ ->
+                    undefined
+            end;
+        {error, _Reason} ->
+            undefined
     end.
 
-%% @doc Update the contents of a lock file within a directory. Ownership by this
-%% O/S PID is verified; within the Erlang VM you must serialize updates to avoid
-%% data loss.
--spec update(Type::lock_types(), Dirname::string(), ActiveFileName::string()) -> ok | {error, not_lock_owner}.
-update(Type, Dirname, ActiveFileName) ->
-    ThisOsPid = os:getpid(),
-    Filename = lock_filename(Type, Dirname),
-    case check(Type, Dirname) of
-        {ThisOsPid, _} ->
-            ok = file:write_file(Filename,
-                                 [os:getpid(), " ", ActiveFileName, "\n"]);
-        _ ->
-            {error, not_lock_owner}
-    end.
+%% @doc Write a new active filename to an open lockfile.
+-spec write_activefile(binary(), string()) -> ok | {error, any()}.
+write_activefile(Lock, ActiveFilename) ->
+    Contents = iolist_to_binary([os:getpid(), " ", ActiveFilename, "\n"]),
+    bitcask_nifs:lock_writedata(Lock, Contents).
 
 
 %% ===================================================================
@@ -131,45 +90,66 @@ update(Type, Dirname, ActiveFileName) ->
 lock_filename(Type, Dirname) ->
     filename:join(Dirname, lists:concat(["bitcask.", Type, ".lock"])).
 
-%% @private
-check_loop(Filename, 0) ->
-    error_logger:error_msg("Timed out waiting for partial write lock in ~s\n",
-                           [Filename]),
-    error;
-check_loop(Filename, Count) ->
-    case file:open(Filename, [read, raw, binary]) of
-        {ok, File} ->
-            Contents = file_contents(File, <<>>),
+read_lock_data(Lock) ->
+    case bitcask_nifs:lock_readdata(Lock) of
+        {ok, Contents} ->
             case re:run(Contents, "([0-9]+) (.*)\n",
                         [{capture, all_but_first, list}]) of
                 {match, [OsPid, []]} ->
-                    {ok, File, OsPid, undefined};
+                    {ok, OsPid, undefined};
                 {match, [OsPid, LockedFilename]} ->
-                    {ok, File, OsPid, LockedFilename};
+                    {ok, OsPid, LockedFilename};
                 nomatch ->
-                    %% A lock file exists, but is not complete.
-                    file:close(File),
-                    timer:sleep(10),
-                    check_loop(Filename, Count-1)
+                    {error, invalid_data}
             end;
-        {error, enoent} ->
-            %% Lock file doesn't exist
-            error;
         {error, Reason} ->
-            error_logger:error_msg("Failed to check write lock in ~s: ~p\n",
-                                   [Filename, Reason]),
-            error
-    end.
-
-file_contents(F, Acc) ->
-    case file:read(F, 4096) of
-        {ok, Data} ->
-            file_contents(F, <<Acc/binary, Data/binary>>);
-        _ ->
-            Acc
+            {error, Reason}
     end.
 
 os_pid_exists(Pid) ->
     %% Use kill -0 trick to determine if a process exists. This _should_ be
     %% portable across all unix variants we are interested in.
     [] == os:cmd(io_lib:format("kill -0 ~s", [Pid])).
+
+
+delete_stale_lock(Filename) ->
+    %% Open the lock for read-only access. We do this to avoid race-conditions
+    %% with other O/S processes that are attempting the same task. Opening a
+    %% fd and holding it open until AFTER the unlink ensures that the file we
+    %% initially read is the same one we are deleting.
+    case bitcask_nifs:lock_acquire(Filename, 0) of
+        {ok, Lock} ->
+            try
+                case read_lock_data(Lock) of
+                    {ok, OsPid, _LockedFilename} ->
+                        case os_pid_exists(OsPid) of
+                            true ->
+                                %% The lock IS NOT stale, so we can't delete it.
+                                false;
+                            false ->
+                                %% The lock IS stale; delete the file.
+                                file:delete(Filename),
+                                true
+                        end;
+
+                    {error, Reason} ->
+                        error_logger:error_msg("Failed to read lock data from ~s: ~p\n",
+                                               [Filename, Reason]),
+                        false
+                end
+            after
+                bitcask_nifs:lock_release(Lock)
+            end;
+
+        {error, enoent} ->
+            %% Failed to open the lock for reading, but only because it doesn't exist
+            %% any longer. Treat this as a successful delete; the lock file existed
+            %% when we started.
+            true;
+
+        {error, Reason} ->
+            %% Failed to open the lock for reading due to other errors.
+            error_logger:error_msg("Failed to open lock file ~s: ~p\n",
+                                   [Filename, Reason]),
+            false
+    end.
