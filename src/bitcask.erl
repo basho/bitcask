@@ -31,7 +31,9 @@
          sync/1,
          list_keys/1,
          fold/3,
-         merge/1]).
+         merge/1, merge/2]).
+
+-export([get_opt/2]).
 
 -include("bitcask.hrl").
 
@@ -56,10 +58,8 @@
                   live_keydir,
                   all_keydir,
                   hint_keydir,
-                  del_keydir }).
-
--define(DEFAULT_MAX_FILE_SIZE, 16#80000000). % 2GB default
--define(DEFAULT_WAIT_TIME, 4000).            % 4 seconds wait time for shared keydir
+                  del_keydir,
+                  opts }).
 
 %% A bitcask is a directory containing:
 %% * One or more data files - {integer_timestamp}.bitcask.data
@@ -74,6 +74,9 @@ open(Dirname) ->
 %% @doc Open a new or existing bitcask datastore with additional options.
 -spec open(Dirname::string(), Opts::[_]) -> reference() | {error, any()}.
 open(Dirname, Opts) ->
+    %% Make sure bitcask app is started so we can pull defaults from env
+    ok = start_app(),
+
     %% Make sure the directory exists
     ok = filelib:ensure_dir(filename:join(Dirname, "bitcask")),
 
@@ -101,12 +104,7 @@ open(Dirname, Opts) ->
     end,
 
     %% Get the max file size parameter from opts
-    case proplists:get_value(max_file_size, Opts, ?DEFAULT_MAX_FILE_SIZE) of
-        MaxFileSize when is_integer(MaxFileSize) ->
-            ok;
-        _ ->
-            MaxFileSize = ?DEFAULT_MAX_FILE_SIZE
-    end,
+    MaxFileSize = get_opt(max_file_size, Opts),
 
     %% Get the named keydir for this directory. If we get it and it's already
     %% marked as ready, that indicates another caller has already loaded
@@ -132,7 +130,7 @@ open(Dirname, Opts) ->
             %% Some other process is loading data into the keydir. Setup a blank ReadFiles
             %% (since we'll lazy load files) and wait for it to be ready.
             ReadFiles = [],
-            WaitTime = proplists:get_value(open_timeout, Opts, ?DEFAULT_WAIT_TIME),
+            WaitTime = timer:seconds(get_opt(open_timeout, Opts)),
             case wait_for_keydir(Dirname, WaitTime) of
                 {ok, KeyDir} ->
                     ok;
@@ -305,6 +303,14 @@ subfold(SubFun,[File|Rest],Acc) ->
 %% @doc Merge several data files within a bitcask datastore into a more compact form.
 -spec merge(Dirname::string()) -> ok | {error, any()}.
 merge(Dirname) ->
+    merge(Dirname, []).
+
+%% @doc Merge several data files within a bitcask datastore into a more compact form.
+-spec merge(Dirname::string(), Opts::[_]) -> ok | {error, any()}.
+merge(Dirname, Opts) ->
+    %% Make sure bitcask app is started so we can pull defaults from env
+    ok = start_app(),
+
     %% Try to lock for merging
     case bitcask_lockops:acquire(merge, Dirname) of
         {ok, Lock} ->
@@ -339,8 +345,7 @@ merge(Dirname) ->
     end,
 
     %% Setup our first output merge file and update the merge lock accordingly
-    %% TODO: Pass o_sync flags to create_file
-    {ok, Outfile} = bitcask_fileops:create_file(Dirname, []),
+    {ok, Outfile} = bitcask_fileops:create_file(Dirname, Opts),
     ok = bitcask_lockops:write_activefile(Lock, bitcask_fileops:filename(Outfile)),
 
     %% Initialize the other keydirs we need. The hint keydir will get recreated
@@ -350,18 +355,17 @@ merge(Dirname) ->
     {ok, HintKeyDir} = bitcask_nifs:keydir_new(),
     {ok, DelKeyDir} = bitcask_nifs:keydir_new(),
 
-    %% TODO: Pull max file size from config
-
     %% Initialize our state for the merge
     State = #mstate { dirname = Dirname,
-                      max_file_size = 16#80000000, % 2GB default
+                      max_file_size = get_opt(max_file_size, Opts),
                       input_files = ReadFiles,
                       out_file = Outfile,
                       merged_files = [],
                       live_keydir = LiveKeyDir,
                       all_keydir = AllKeyDir,
                       hint_keydir = HintKeyDir,
-                      del_keydir = DelKeyDir },
+                      del_keydir = DelKeyDir,
+                      opts = Opts },
 
     %% Finally, start the merge process
     State1 = merge_files(State),
@@ -381,12 +385,31 @@ merge(Dirname) ->
 %% Internal functions
 %% ===================================================================
 
+start_app() ->
+    case application:start(?MODULE) of
+        ok ->
+            ok;
+        {error, {already_started, ?MODULE}} ->
+            ok;
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
 get_state(Ref) ->
     case erlang:get(Ref) of
         S when is_record(S, bc_state) ->
             S;
         undefined ->
             throw({error, {invalid_ref, Ref}})
+    end.
+
+get_opt(Key, Opts) ->
+    case proplists:get_value(Key, Opts) of
+        undefined ->
+            {ok, Value} = application:get_env(?MODULE, Key),
+            Value;
+        Value ->
+            Value
     end.
 
 put_state(Ref, State) ->
@@ -502,8 +525,8 @@ merge_single_entry(K, V, Tstamp, #mstate { dirname = Dirname } = State) ->
                                 close_outfile(State),
 
                                 %% Start our next file and update state
-                                %% TODO: Pass o_sync flags to create_file
-                                {ok, NewFile} = bitcask_fileops:create_file(Dirname, []),
+                                {ok, NewFile} = bitcask_fileops:create_file(Dirname,
+                                                                            State#mstate.opts),
                                 {ok, HintKeyDir} = bitcask_nifs:keydir_new(),
                                 State#mstate { out_file = NewFile,
                                                hint_keydir = HintKeyDir };
@@ -606,6 +629,11 @@ default_dataset() ->
      {<<"k2">>, <<"v2">>},
      {<<"k3">>, <<"v3">>}].
 
+%% HACK: Terrible hack to ensure that the .app file for
+%% bitcask is available on the code path. Assumption here
+%% is that we're running in .eunit/ as part of rebar.
+a0_test() ->
+    code:add_pathz("../ebin").
 
 roundtrip_test() ->
     os:cmd("rm -rf /tmp/bc.test.roundtrip"),

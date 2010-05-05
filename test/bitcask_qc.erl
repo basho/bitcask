@@ -42,7 +42,7 @@ initial_state_data() ->
     #state{}.
 
 closed(_S) ->
-    [{opened, {call, bitcask, open, [?TEST_DIR, [read_write, {open_timeout, 0}]]}}].
+    [{opened, {call, bitcask, open, [?TEST_DIR, [read_write, {open_timeout, 0}, sync_strategy()]]}}].
 
 opened(S) ->
     [{closed, {call, bitcask, close, [S#state.bitcask]}},
@@ -105,6 +105,9 @@ keys() ->
 
 values() ->
     elements(vector(5, binary(5))).
+
+sync_strategy() ->
+    {sync_strategy, oneof([none, o_sync])}.
 
 -endif.
 

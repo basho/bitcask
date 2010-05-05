@@ -204,7 +204,8 @@ tstamp() ->
 
 
 fold(Fd, Header, Offset, Fun, Acc0) ->
-    <<_Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD, ValueSz:?VALSIZEFIELD>> = Header,
+    <<_Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
+     ValueSz:?VALSIZEFIELD>> = Header,
     ReadSz = KeySz + ValueSz + ?HEADER_SIZE,
     case file:read(Fd, ReadSz) of
         {ok, <<Key:KeySz/bytes, Value:ValueSz/bytes, Rest/binary>>} ->
@@ -229,8 +230,8 @@ create_file_loop(DirName, Opts, Tstamp) ->
             {ok, FD} = file:open(Filename, [read, write, raw, binary]),
             %% If o_sync is specified in the options, try to set that flag on the underlying
             %% file descriptor
-            case proplists:get_bool(o_sync, Opts) of
-                true ->
+            case bitcask:get_opt(sync_strategy, Opts) of
+                o_sync ->
                     %% Make a hacky assumption here that if we open a raw file, we get back
                     %% a specific tuple from the Erlang VM. The tradeoff is that we can set the
                     %% O_SYNC flag on the fd, thus improving performance rather dramatically.
@@ -242,7 +243,7 @@ create_file_loop(DirName, Opts, Tstamp) ->
                         {error, Reason} ->
                             {error, Reason}
                     end;
-                false ->
+                _ ->
                     {ok, #filestate{filename = Filename, tstamp = file_tstamp(Filename),
                                     fd = FD, ofs = 0}}
             end;
