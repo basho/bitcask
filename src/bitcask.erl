@@ -367,6 +367,8 @@ merge(Dirname) ->
 
     %% Cleanup the original input files and release our lock
     [bitcask_fileops:close(F) || F <- State#mstate.input_files],
+    [file:delete(bitcask_fileops:hintfile_name(F)) || 
+        F <- State#mstate.input_files],
     [file:delete(F) || F <- ReadableFiles],
     ok = bitcask_lockops:release(merge, Dirname),
     ok.
