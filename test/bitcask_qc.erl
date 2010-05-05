@@ -42,7 +42,8 @@ initial_state_data() ->
     #state{}.
 
 closed(_S) ->
-    [{opened, {call, bitcask, open, [?TEST_DIR, [read_write, {open_timeout, 0}, sync_strategy()]]}}].
+    [{opened, {call, bitcask, open, [?TEST_DIR, [read_write, {open_timeout, 0}, sync_strategy()]]}},
+     {closed, {call, ?MODULE, create_stale_lock, []}}].
 
 opened(S) ->
     [{closed, {call, bitcask, close, [S#state.bitcask]}},
@@ -52,10 +53,11 @@ opened(S) ->
      {opened, {call, bitcask, merge, [?TEST_DIR]}}
      ].
 
-
+next_state_data(closed, closed, S, _, {call, ?MODULE, create_stale_lock, _}) ->
+    S;
 next_state_data(closed, opened, S, Bcask, {call, bitcask, open, _}) ->
     S#state { bitcask = Bcask };
-next_state_data(opened, closed, S, _, {call, bitcask, close, _}) ->
+next_state_data(opened, closed, S, _, {call, _, close, _}) ->
     S#state { bitcask = undefined };
 next_state_data(opened, opened, S, _, {call, bitcask, put, [_, Key, Value]}) ->
     S#state { data = orddict:store(Key, Value, S#state.data) };
@@ -108,6 +110,11 @@ values() ->
 
 sync_strategy() ->
     {sync_strategy, oneof([none, o_sync])}.
+
+create_stale_lock() ->
+    Fname = filename:join(?TEST_DIR, "bitcask.write.lock"),
+    filelib:ensure_dir(Fname),
+    ok = file:write_file(Fname, "102349430239 abcdef\n").
 
 -endif.
 

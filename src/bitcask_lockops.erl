@@ -125,17 +125,17 @@ delete_stale_lock(Filename) ->
                         case os_pid_exists(OsPid) of
                             true ->
                                 %% The lock IS NOT stale, so we can't delete it.
-                                false;
+                                not_stale;
                             false ->
                                 %% The lock IS stale; delete the file.
                                 file:delete(Filename),
-                                true
+                                ok
                         end;
 
                     {error, Reason} ->
                         error_logger:error_msg("Failed to read lock data from ~s: ~p\n",
                                                [Filename, Reason]),
-                        false
+                        not_stale
                 end
             after
                 bitcask_nifs:lock_release(Lock)
@@ -145,11 +145,11 @@ delete_stale_lock(Filename) ->
             %% Failed to open the lock for reading, but only because it doesn't exist
             %% any longer. Treat this as a successful delete; the lock file existed
             %% when we started.
-            true;
+            ok;
 
         {error, Reason} ->
             %% Failed to open the lock for reading due to other errors.
             error_logger:error_msg("Failed to open lock file ~s: ~p\n",
                                    [Filename, Reason]),
-            false
+            not_stale
     end.
