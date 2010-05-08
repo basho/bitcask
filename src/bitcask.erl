@@ -143,13 +143,16 @@ open(Dirname, Opts) ->
             end
     end,
 
+    %% Ensure that expiry_secs is in Opts and not just application env
+    ExpOpts = [{expiry_secs,get_opt(expiry_secs,Opts)}|Opts],
+
     Ref = make_ref(),
     erlang:put(Ref, #bc_state {dirname = Dirname,
                                read_files = ReadFiles,
                                write_file = WritingFile, % May be undefined
                                write_lock = WriteLock,
                                max_file_size = MaxFileSize,
-                               opts = Opts,
+                               opts = ExpOpts,
                                keydir = KeyDir}),
 
     Ref.
