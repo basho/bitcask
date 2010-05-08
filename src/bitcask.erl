@@ -59,6 +59,7 @@
                   all_keydir,
                   hint_keydir,
                   del_keydir,
+                  expiry_time,
                   opts }).
 
 %% A bitcask is a directory containing:
@@ -179,18 +180,22 @@ get(Ref, Key) ->
     case bitcask_nifs:keydir_get(State#bc_state.keydir, Key) of
         not_found ->
             not_found;
-
         E when is_record(E, bitcask_entry) ->
-            {Filestate, S2} = get_filestate(E#bitcask_entry.file_id, State),
-            put_state(Ref, S2),
-            case bitcask_fileops:read(Filestate, E#bitcask_entry.value_pos,
-                                      E#bitcask_entry.value_sz) of
-                {ok, _Key, ?TOMBSTONE} ->
-                    not_found;
-                {ok, _Key, Value} ->
-                    {ok, Value}
+            case E#bitcask_entry.tstamp < expiry_time() of
+                true -> not_found;
+                false ->
+                    {Filestate, S2} = get_filestate(E#bitcask_entry.file_id,
+                                                    State),
+                    put_state(Ref, S2),
+                    case bitcask_fileops:read(Filestate,
+                                              E#bitcask_entry.value_pos,
+                                              E#bitcask_entry.value_sz) of
+                        {ok, _Key, ?TOMBSTONE} ->
+                            not_found;
+                        {ok, _Key, Value} ->
+                            {ok, Value}
+                    end
             end;
-
         {error, Reason} ->
             {error, Reason}
     end.
@@ -267,8 +272,9 @@ fold(Ref, Fun, Acc0) ->
     ReadFiles = list_data_files(State#bc_state.dirname, undefined, undefined),
     {_,_,Tseed} = now(),
     {ok, Bloom} = ebloom:new(1000000,0.00003,Tseed), % arbitrary large bloom
-    SubFun = fun(K,V,_TStamp,{Offset,_Sz},Acc) ->
-            case V =:= ?TOMBSTONE of
+    ExpiryTime = expiry_time(),
+    SubFun = fun(K,V,TStamp,{Offset,_Sz},Acc) ->
+            case (V =:= ?TOMBSTONE) orelse (TStamp < ExpiryTime) of
                 true ->
                     Acc;
                 false ->
@@ -285,7 +291,7 @@ fold(Ref, Fun, Acc0) ->
                                             Acc;
                                         true ->
                                             ebloom:insert(Bloom,K),
-                                    Fun(K,V,Acc)
+                                            Fun(K,V,Acc)
                                     end;
                                 {error,Reason} ->
                                     {error,Reason}
@@ -365,6 +371,7 @@ merge(Dirname, Opts) ->
                       all_keydir = AllKeyDir,
                       hint_keydir = HintKeyDir,
                       del_keydir = DelKeyDir,
+                      expiry_time = expiry_time(),
                       opts = Opts },
 
     %% Finally, start the merge process
@@ -384,6 +391,12 @@ merge(Dirname, Opts) ->
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
+
+expiry_time() ->
+    case application:get_env(?MODULE, expiry_secs) of
+        {ok, Value} -> bitcask_fileops:tstamp() - Value;
+        undefined -> 0
+    end.
 
 start_app() ->
     case application:start(?MODULE) of
@@ -503,8 +516,9 @@ merge_files(#mstate { input_files = [File | Rest]} = State) ->
     merge_files(State1#mstate { input_files = Rest }).
 
 merge_single_entry(K, V, Tstamp, #mstate { dirname = Dirname } = State) ->
-    case out_of_date(K, Tstamp, [State#mstate.all_keydir,
-                                 State#mstate.del_keydir]) of
+    case out_of_date(K, Tstamp, State#mstate.expiry_time,
+                     [State#mstate.all_keydir,
+                      State#mstate.del_keydir]) of
         true ->
             State;
         false ->
@@ -580,17 +594,19 @@ close_outfile(_State=#mstate{out_file=OutFile,hint_keydir=HintKeyDir}) ->
     ok = file:rename(HintFileName, filename:rootname(HintFileName, ".tmp")).
 
 
-out_of_date(_Key, _Tstamp, []) ->
+out_of_date(_Key, _Tstamp, _ExpiryTime, []) ->
     false;
-out_of_date(Key, Tstamp, [KeyDir|Rest]) ->
+out_of_date(_Key, Tstamp, ExpiryTime, _KeyDirs) when Tstamp < ExpiryTime ->
+    true;
+out_of_date(Key, Tstamp, ExpiryTime, [KeyDir|Rest]) ->
     case bitcask_nifs:keydir_get(KeyDir, Key) of
         not_found ->
-            out_of_date(Key, Tstamp, Rest);
+            out_of_date(Key, Tstamp, ExpiryTime, Rest);
 
         E when is_record(E, bitcask_entry) ->
             case Tstamp < E#bitcask_entry.tstamp of
                 true  -> true;
-                false -> out_of_date(Key, Tstamp, Rest)
+                false -> out_of_date(Key, Tstamp, ExpiryTime, Rest)
             end;
 
         {error, Reason} ->
@@ -773,5 +789,49 @@ list_keys_test() ->
     true = ([<<"k7">>,<<"k2">>] =:= bitcask:list_keys(B)),
     close(B),
     ok.
+
+expire_test() ->
+    application:set_env(bitcask,expiry_secs,2),
+    os:cmd("rm -rf /tmp/bc.test.expire"),
+    B = bitcask:open("/tmp/bc.test.expire", [read_write]),
+    ok = bitcask:put(B,<<"k">>,<<"v">>),
+    {ok, <<"v">>} = bitcask:get(B,<<"k">>),
+    ok = bitcask:put(B, <<"k2">>, <<"v2">>),
+    ok = bitcask:put(B, <<"k">>,<<"v3">>),
+    {ok, <<"v2">>} = bitcask:get(B, <<"k2">>),
+    {ok, <<"v3">>} = bitcask:get(B, <<"k">>),
+    timer:sleep(3000),
+    ok = bitcask:put(B, <<"k7">>,<<"v7">>),
+    true = ([<<"k7">>] =:= bitcask:list_keys(B)),
+    close(B),
+    application:unset_env(bitcask,expiry_secs),
+    ok.
+
+expire_merge_test() ->
+    application:set_env(bitcask,expiry_secs,2),
+    %% Initialize dataset with max_file_size set to 1 so that each file will
+    %% only contain a single key.
+    close(init_dataset("/tmp/bc.test.mergeexpire", [{max_file_size, 1}],
+                       default_dataset())),
+
+    %% Wait for it all to expire
+    timer:sleep(3000),
+
+    %% Merge everything
+    ok = merge("/tmp/bc.test.mergeexpire"),
+
+    %% Verify we've now only got one file
+    1 = length(readable_files("/tmp/bc.test.mergeexpire")),
+
+    %% Make sure all the data is present
+    B = bitcask:open("/tmp/bc.test.mergeexpire"),
+
+    %% It's gone!
+    true = ([] =:= bitcask:list_keys(B)),
+
+    close(B),
+    application:unset_env(bitcask,expiry_secs),
+    ok.
+    
 
 -endif.
