@@ -40,6 +40,12 @@
          %%
          %% Currently this config option is a placeholder for calling
          %% applications.
-         {merge_strategy, {hours, 24}}
+         {merge_strategy, {hours, 24}},
+
+         %% Data expiration can be caused by setting this to a
+         %% positive value.  If so, items older than the value
+         %% will be discarded.
+         {expiry_secs, -1}
+
         ]}
  ]}.
