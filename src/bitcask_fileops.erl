@@ -34,6 +34,7 @@
          sync/1,
          delete/1,
          fold/3,
+         fold_keys/3,
          hintfile_fold/3,
          mk_filename/2,
          filename/1,
@@ -131,12 +132,15 @@ fold(#filestate { fd = Fd }, Fun, Acc) ->
     case file:read(Fd, ?HEADER_SIZE) of
         {ok, <<_Crc:?CRCSIZEFIELD, _Tstamp:?TSTAMPFIELD, _KeySz:?KEYSIZEFIELD,
               _ValueSz:?VALSIZEFIELD>> = H} ->
-            fold(Fd, H, 0, Fun, Acc);
+            fold_loop(Fd, H, 0, Fun, Acc);
         eof ->
             Acc;
         {error, Reason} ->
             {error, Reason}
     end.
+
+fold_keys(#filestate { fd = Fd }, Fun, Acc) ->
+    fold_keys_loop(Fd, 0, Fun, Acc).
 
 hintfile_fold(Fd, Fun, Acc) ->
     {ok, _} = file:position(Fd, bof),
@@ -203,7 +207,7 @@ tstamp() ->
     (Mega * 1000000) + Sec.
 
 
-fold(Fd, Header, Offset, Fun, Acc0) ->
+fold_loop(Fd, Header, Offset, Fun, Acc0) ->
     <<_Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
      ValueSz:?VALSIZEFIELD>> = Header,
     ReadSz = KeySz + ValueSz + ?HEADER_SIZE,
@@ -213,10 +217,32 @@ fold(Fd, Header, Offset, Fun, Acc0) ->
             Acc = Fun(Key, Value, Tstamp, PosInfo, Acc0),
             case Rest of
                 <<NextHeader:?HEADER_SIZE/bytes>> ->
-                    fold(Fd, NextHeader, Offset + ReadSz, Fun, Acc);
+                    fold_loop(Fd, NextHeader, Offset + ReadSz, Fun, Acc);
                 <<>> ->
                     Acc
             end;
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+fold_keys_loop(Fd, Offset, Fun, Acc0) ->
+    case file:pread(Fd, Offset, ?HEADER_SIZE) of
+        {ok, Header} ->
+            <<_Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
+              ValueSz:?VALSIZEFIELD>> = Header,
+            ReadSz = KeySz + ValueSz + ?HEADER_SIZE,
+            PosInfo = {Offset, ReadSz},
+            case file:pread(Fd, Offset + ?HEADER_SIZE, KeySz) of
+                {ok, Key} ->
+                    Acc = Fun(Key, Tstamp, PosInfo, Acc0),
+                    fold_keys_loop(Fd, Offset + ReadSz, Fun, Acc);
+                eof ->
+                    Acc0;
+                {error, Reason} ->
+                    {error, Reason}
+            end;
+        eof ->
+            Acc0;
         {error, Reason} ->
             {error, Reason}
     end.
