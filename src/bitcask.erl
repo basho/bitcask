@@ -442,12 +442,12 @@ scan_key_files([], _KeyDir, Acc) ->
 scan_key_files([Filename | Rest], KeyDir, Acc) ->
     {ok, File} = bitcask_fileops:open_file(Filename),
     F = fun(K, Tstamp, {Offset, TotalSz}, _) ->
-                bitcask_nifs:keydir_put(KeyDir,
-                                        K,
-                                        bitcask_fileops:file_tstamp(File),
-                                        TotalSz,
-                                        Offset,
-                                        Tstamp)
+                ok = bitcask_nifs:keydir_put(KeyDir,
+                                             K,
+                                             bitcask_fileops:file_tstamp(File),
+                                             TotalSz,
+                                             Offset,
+                                             Tstamp)
         end,
     bitcask_fileops:fold_keys(File, F, undefined),
     scan_key_files(Rest, KeyDir, [File | Acc]).
