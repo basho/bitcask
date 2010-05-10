@@ -84,9 +84,14 @@ close(#filestate{ fd = FD }) ->
 
 %% @doc Use only after merging, to permanently delete a data file.
 %% @spec delete(filestate()) -> ok
-delete(#filestate{ filename = FN }) ->
+delete(#filestate{ filename = FN } = State) ->
     file:delete(FN),
-    ok.
+    case has_hintfile(State) of
+        true ->
+            file:delete(hintfile_name(State));
+        false ->
+            ok
+    end.
 
 %% @doc Write a Key-named binary data field ("Value") to the Filestate.
 %% @spec write(filestate(), Key :: binary(), Value :: binary(), Tstamp :: integer()) ->
