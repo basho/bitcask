@@ -191,8 +191,8 @@ get(Ref, Key) ->
                                                     State),
                     put_state(Ref, S2),
                     case bitcask_fileops:read(Filestate,
-                                              E#bitcask_entry.value_pos,
-                                              E#bitcask_entry.value_sz) of
+                                              E#bitcask_entry.offset,
+                                              E#bitcask_entry.total_sz) of
                         {ok, _Key, ?TOMBSTONE} ->
                             not_found;
                         {ok, _Key, Value} ->
@@ -289,7 +289,7 @@ fold(Ref, Fun, Acc0) ->
                                 not_found ->
                                     Acc;
                                 E when is_record(E, bitcask_entry) ->
-                                    case Offset =:= E#bitcask_entry.value_pos of
+                                    case Offset =:= E#bitcask_entry.offset of
                                         false ->
                                             Acc;
                                         true ->
@@ -449,12 +449,7 @@ scan_key_files([Filename | Rest], KeyDir, Acc) ->
                                         Offset,
                                         Tstamp)
         end,
-    case file:open(bitcask_fileops:hintfile_name(File),[read,raw,binary]) of
-        {error, enoent} ->
-            bitcask_fileops:fold_keys(File, F, undefined);
-        {ok, HintFD} ->
-            bitcask_fileops:hintfile_fold(HintFD, F, undefined)
-    end,
+    bitcask_fileops:fold_keys(File, F, undefined),
     scan_key_files(Rest, KeyDir, [File | Acc]).
 
 %%
@@ -575,21 +570,8 @@ close_outfile(_State=#mstate{out_file=OutFile,hint_keydir=HintKeyDir}) ->
     ok = bitcask_fileops:sync(OutFile),
     ok = bitcask_fileops:close(OutFile),
 
-    %% Now write the hints for faster keydir building
-    HintFileName = bitcask_fileops:hintfile_name(OutFile) ++ ".tmp",
-    {ok, FD} = file:open(HintFileName, [read, write, raw, binary]),
-    F = fun(_E=#bitcask_entry{key=Key,value_sz=VSZ,value_pos=POS,tstamp=TS},
-            {HFD,HOff}) ->
-                KeySz = size(Key),
-                Bytes = [<<TS:?TSTAMPFIELD>>, <<KeySz:?KEYSIZEFIELD>>,
-                          <<VSZ:?VALSIZEFIELD>>, <<POS:?OFFSETFIELD>>, Key],
-                ok = file:pwrite(HFD, HOff, Bytes),
-                WrittenSz = iolist_size(Bytes),
-                {HFD,HOff+WrittenSz}
-        end,
-    bitcask_nifs:keydir_fold(HintKeyDir, F, {FD,0}),
-    file:close(FD),
-    ok = file:rename(HintFileName, filename:rootname(HintFileName, ".tmp")).
+    %% Generate the hints file, using the keydir
+    bitcask_fileops:create_hintfile(OutFile, HintKeyDir).
 
 
 out_of_date(_Key, _Tstamp, _ExpiryTime, []) ->
@@ -728,32 +710,6 @@ merge_test() ->
                         {ok, V} = bitcask:get(B, K)
                 end, undefined, default_dataset()).
 
-hint_test() ->
-    %% Initialize dataset by basically doing the merge_test
-    %% since merging is how hintfiles are made.
-    B0 = init_dataset("/tmp/bc.test.hints",
-                      [{max_file_size, 1}], default_dataset()),
-    3 = length((get_state(B0))#bc_state.read_files),
-    close(B0),
-    ok = merge("/tmp/bc.test.hints"),
-
-    %% There should be exactly one of each type of file post-merge.
-    [DataFile] = filelib:wildcard("/tmp/bc.test.hints/*data"),
-    [HintFile] = filelib:wildcard("/tmp/bc.test.hints/*hint"),
-    {ok, DataHandle} = bitcask_fileops:open_file(DataFile),
-    {ok, HintHandle} = file:open(HintFile,[read,raw,binary]),
-
-    %% Hintfile should have the same data except for the Value
-    DF = fun(K,_V,TStamp,{Offset,Sz},Acc) ->
-                 [{K,TStamp,Offset,Sz}|Acc]
-         end,
-    HF = fun(K,TStamp,{Offset,Sz},Acc) ->
-                 [{K,TStamp,Offset,Sz}|Acc]
-         end,
-    
-    %% The real test.
-    true = (bitcask_fileops:fold(DataHandle,DF,[]) =:=
-            bitcask_fileops:hintfile_fold(HintHandle,HF,[])).
 
 bitfold_test() ->
     os:cmd("rm -rf /tmp/bc.test.bitfold"),

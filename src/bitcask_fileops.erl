@@ -34,8 +34,8 @@
          sync/1,
          delete/1,
          fold/3,
-         fold_keys/3,
-         hintfile_fold/3,
+         fold_keys/3, fold_keys/4,
+         create_hintfile/1, create_hintfile/2,
          mk_filename/2,
          filename/1,
          hintfile_name/1,
@@ -44,6 +44,17 @@
          check_write/4]).
 
 -include("bitcask.hrl").
+
+-define(HINT_RECORD_SZ, 18). % Tstamp(4) + KeySz(2) + TotalSz(4) + Offset(8)
+
+-ifdef(TEST).
+-ifdef(EQC).
+-include_lib("eqc/include/eqc.hrl").
+-include_lib("eqc/include/eqc_fsm.hrl").
+-compile(export_all).
+-endif.
+-include_lib("eunit/include/eunit.hrl").
+-endif.
 
 %% @doc Open a new file for writing.
 %% Called on a Dirname, will open a fresh file in that directory.
@@ -139,37 +150,63 @@ fold(#filestate { fd = Fd }, Fun, Acc) ->
             {error, Reason}
     end.
 
-fold_keys(#filestate { fd = Fd }, Fun, Acc) ->
-    fold_keys_loop(Fd, 0, Fun, Acc).
+fold_keys(State, Fun, Acc) ->
+    fold_keys(State, Fun, Acc, default).
 
-hintfile_fold(Fd, Fun, Acc) ->
-    {ok, _} = file:position(Fd, bof),
-    case file:read(Fd, 18) of
-        {ok, H = <<_TS:?TSTAMPFIELD, _KeySz:?KEYSIZEFIELD,
-                   _VSZ:?VALSIZEFIELD, _POS:?OFFSETFIELD>>} ->
-            hintfile_fold(Fd, H, Fun, Acc);
-        eof ->
-            Acc;
-        {error, Reason} ->
-            {error, Reason}
+fold_keys(#filestate { fd = Fd } = State, Fun, Acc, Mode) ->
+    case Mode of
+        datafile ->
+            fold_keys_loop(Fd, 0, Fun, Acc);
+        hintfile ->
+            fold_hintfile(State, Fun, Acc);
+        default ->
+            case has_hintfile(State) of
+                true ->
+                    fold_hintfile(State, Fun, Acc);
+                false ->
+                    fold_keys_loop(Fd, 0, Fun, Acc)
+            end
     end.
-hintfile_fold(Fd, Header, Fun, Acc0) ->
-    <<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
-      ValueSz:?VALSIZEFIELD, Offset:?OFFSETFIELD>> = Header,
-    ReadSz = KeySz + 18,
-    case file:read(Fd, ReadSz) of
-        {ok, <<Key:KeySz/bytes, Rest/binary>>} ->
-            PosInfo = {Offset, ValueSz},
-            Acc = Fun(Key, Tstamp, PosInfo, Acc0),
-            case Rest of
-                <<NextHeader:18/bytes>> ->
-                    hintfile_fold(Fd, NextHeader, Fun, Acc);
-                <<>> ->
-                    Acc
+
+create_hintfile(Filename) when is_list(Filename) ->
+    case open_file(Filename) of
+        {ok, Fstate} ->
+            try
+                create_hintfile(Fstate)
+            after
+                close(Fstate)
             end;
         {error, Reason} ->
             {error, Reason}
-    end.
+    end;
+create_hintfile(State) when is_record(State, filestate) ->
+    F = fun(K, Tstamp, {Offset, TotalSz}, HintFd) ->
+                Iolist = hintfile_entry(K, Tstamp, {Offset, TotalSz}),
+                case file:write(HintFd, Iolist) of
+                    ok ->
+                        HintFd;
+                    {error, Reason} ->
+                        throw({error, Reason})
+                end
+        end,
+    generate_hintfile(hintfile_name(State),
+                      {?MODULE, fold_keys_loop, [State#filestate.fd, 0, F]}).
+
+create_hintfile(State, KeyDir) when is_record(State, filestate) ->
+    F = fun(E, HintFd) ->
+                #bitcask_entry{ key = Key, total_sz = TotalSz,
+                                offset = Offset, tstamp = Tstamp } = E,
+                Iolist = hintfile_entry(Key, Tstamp, {Offset, TotalSz}),
+                case file:write(HintFd, Iolist) of
+                    ok ->
+                        HintFd;
+                    {error, Reason} ->
+                        throw({error, Reason})
+                end
+        end,
+    generate_hintfile(hintfile_name(State),
+                      {bitcask_nifs, keydir_fold, [KeyDir, F]}).
+
 
 mk_filename(Dirname, Tstamp) ->
     filename:join(Dirname,
@@ -178,9 +215,10 @@ mk_filename(Dirname, Tstamp) ->
 filename(#filestate { filename = Fname }) ->
     Fname.
 
-hintfile_name(Filestate) ->
-    lists:reverse(lists:nthtail(5, lists:reverse(filename(Filestate))))
-        ++ ".hint".
+hintfile_name(Filename) when is_list(Filename) ->
+    filename:rootname(Filename, ".data") ++ ".hint";
+hintfile_name(#filestate { filename = Fname }) ->
+    hintfile_name(Fname).
 
 file_tstamp(#filestate{tstamp=Tstamp}) ->
     Tstamp;
@@ -196,6 +234,9 @@ check_write(#filestate { ofs = Offset }, Key, Value, MaxSize) ->
             ok
     end.
 
+has_hintfile(#filestate { filename = Fname }) ->
+    filelib:is_file(hintfile_name(Fname)).
+
 
 %% ===================================================================
 %% Internal functions
@@ -210,14 +251,14 @@ tstamp() ->
 fold_loop(Fd, Header, Offset, Fun, Acc0) ->
     <<_Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
      ValueSz:?VALSIZEFIELD>> = Header,
-    ReadSz = KeySz + ValueSz + ?HEADER_SIZE,
-    case file:read(Fd, ReadSz) of
+    TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
+    case file:read(Fd, TotalSz) of
         {ok, <<Key:KeySz/bytes, Value:ValueSz/bytes, Rest/binary>>} ->
-            PosInfo = {Offset, ReadSz},
+            PosInfo = {Offset, TotalSz},
             Acc = Fun(Key, Value, Tstamp, PosInfo, Acc0),
             case Rest of
                 <<NextHeader:?HEADER_SIZE/bytes>> ->
-                    fold_loop(Fd, NextHeader, Offset + ReadSz, Fun, Acc);
+                    fold_loop(Fd, NextHeader, Offset + TotalSz, Fun, Acc);
                 <<>> ->
                     Acc
             end;
@@ -230,12 +271,12 @@ fold_keys_loop(Fd, Offset, Fun, Acc0) ->
         {ok, Header} ->
             <<_Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
               ValueSz:?VALSIZEFIELD>> = Header,
-            ReadSz = KeySz + ValueSz + ?HEADER_SIZE,
-            PosInfo = {Offset, ReadSz},
+            TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
+            PosInfo = {Offset, TotalSz},
             case file:pread(Fd, Offset + ?HEADER_SIZE, KeySz) of
                 {ok, Key} ->
                     Acc = Fun(Key, Tstamp, PosInfo, Acc0),
-                    fold_keys_loop(Fd, Offset + ReadSz, Fun, Acc);
+                    fold_keys_loop(Fd, Offset + TotalSz, Fun, Acc);
                 eof ->
                     Acc0;
                 {error, Reason} ->
@@ -243,6 +284,47 @@ fold_keys_loop(Fd, Offset, Fun, Acc0) ->
             end;
         eof ->
             Acc0;
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+
+fold_hintfile(State, Fun, Acc) ->
+    case file:open(hintfile_name(State), [read, raw, binary]) of
+        {ok, HintFd} ->
+            try
+                {ok, _} = file:position(HintFd, bof),
+                case file:read(HintFd, ?HINT_RECORD_SZ) of
+                    {ok, <<H:?HINT_RECORD_SZ/bytes>>} ->
+                        fold_hintfile_loop(HintFd, H, Fun, Acc);
+                    eof ->
+                        Acc;
+                    {error, Reason} ->
+                        {error, {fold_hintfile, Reason}}
+                end
+            after
+                file:close(HintFd)
+            end;
+        {error, Reason} ->
+            {error, {fold_hintfile, Reason}}
+    end.
+
+fold_hintfile_loop(Fd, HintRecord, Fun, Acc0) ->
+    <<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
+      TotalSz:?TOTALSIZEFIELD, Offset:?OFFSETFIELD>> = HintRecord,
+    ReadSz = KeySz + ?HINT_RECORD_SZ,
+    case file:read(Fd, ReadSz) of
+        {ok, <<Key:KeySz/bytes, Rest/binary>>} ->
+            PosInfo = {Offset, TotalSz},
+            Acc = Fun(Key, Tstamp, PosInfo, Acc0),
+            case Rest of
+                <<NextRecord:?HINT_RECORD_SZ/bytes>> ->
+                    fold_hintfile_loop(Fd, NextRecord, Fun, Acc);
+                <<>> ->
+                    Acc
+            end;
+        eof ->
+            {error, incomplete_key};
         {error, Reason} ->
             {error, Reason}
     end.
@@ -283,3 +365,82 @@ create_file_loop(DirName, Opts, Tstamp) ->
             create_file_loop(DirName, Opts, Tstamp + 1)
     end.
 
+generate_hintfile(Filename, {FolderMod, FolderFn, FolderArgs}) ->
+    %% Create the temp file that we will write records out to.
+    TmpFilename = temp_filename(Filename ++ ".~w"),
+    {ok, Fd} = file:open(TmpFilename, [read, write, raw, binary]),
+
+    %% Run the provided fold function over whatever the dataset is. The function
+    %% is passed the Fd as the accumulator argument, and must return the same
+    %% Fd on success. Otherwise, we expect an {error, Reason}.
+    try apply(FolderMod, FolderFn, FolderArgs ++ [Fd]) of
+        Fd ->
+            %% All done writing -- rename to the actual hintfile
+            ok = file:rename(TmpFilename, Filename);
+        {error, Reason} ->
+            {error, Reason}
+    after
+        file:delete(TmpFilename),
+        file:close(Fd)
+    end.
+
+hintfile_entry(Key, Tstamp, {Offset, TotalSz}) ->
+    KeySz = size(Key),
+    [<<Tstamp:?TSTAMPFIELD>>, <<KeySz:?KEYSIZEFIELD>>,
+     <<TotalSz:?TOTALSIZEFIELD>>, <<Offset:?OFFSETFIELD>>, Key].
+
+temp_filename(Template) ->
+    temp_filename(Template, now()).
+
+temp_filename(Template, Seed0) ->
+    {Int, Seed} = random:uniform_s(65536, Seed0),
+    Filename = ?FMT(Template, [Int]),
+    case bitcask_nifs:create_file(Filename) of
+        true ->
+            Filename;
+        false ->
+            temp_filename(Template, Seed)
+    end.
+
+%% ===================================================================
+%% EUnit tests
+%% ===================================================================
+-ifdef(TEST).
+
+-ifdef(EQC).
+
+-define(QC_OUT(P), eqc:on_output(fun(Str, Args) -> ?debugFmt(Str, Args) end, P)).
+
+init_file(Dirname, Kvs) ->
+    os:cmd(?FMT("rm -rf ~s", [Dirname])),
+    {ok, F} = create_file(Dirname, []),
+    {ok, _} = write_kvs(Kvs, F, 0).
+
+write_kvs([], F, Tstamp) ->
+    {ok, F};
+write_kvs([{K, V} | Rest], F, Tstamp) ->
+    {ok, F2, _, _} = write(F, K, V, Tstamp),
+    write_kvs(Rest, F2, Tstamp + 1).
+
+key_value() ->
+    {eqc_gen:non_empty(binary()), binary()}.
+
+prop_hintfile() ->
+    ?FORALL(Kvs, eqc_gen:non_empty(list(key_value())),
+            begin
+                 {ok, F} = init_file("/tmp/bc.fop.hintfile", Kvs),
+                 ok = create_hintfile(F),
+                 true = has_hintfile(F),
+                 AccFn = fun(K, Tstamp, Pos, Acc0) ->
+                                 [{K, Tstamp, Pos} | Acc0]
+                         end,
+                 fold_keys(F, AccFn, [], datafile) ==
+                     fold_keys(F, AccFn, [], hintfile)
+            end).
+
+prop_hintfile_test_() ->
+    {timeout, 60, fun() -> ?assert(eqc:quickcheck(prop_hintfile())) end}.
+
+-endif.
+
+-endif.
