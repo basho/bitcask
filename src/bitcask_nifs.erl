@@ -66,7 +66,7 @@ keydir_new(_Name) ->
 keydir_mark_ready(_Ref) ->
     "NIF library not loaded".
 
-keydir_put(_Ref, _Key, _FileId, _ValueSz, _ValuePos, _Tstamp) ->
+keydir_put(_Ref, _Key, _FileId, _TotalSz, _Offset, _Tstamp) ->
     "NIF library not loaded".
 
 keydir_get(_Ref, _Key) ->
@@ -136,8 +136,8 @@ keydir_basic_test() ->
 
     E = keydir_get(Ref, <<"abc">>),
     0 = E#bitcask_entry.file_id,
-    1234 = E#bitcask_entry.value_sz,
-    0 = E#bitcask_entry.value_pos,
+    1234 = E#bitcask_entry.total_sz,
+    0 = E#bitcask_entry.offset,
     1 = E#bitcask_entry.tstamp,
 
     already_exists = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 0),

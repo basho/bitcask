@@ -1,8 +1,8 @@
 
 -record(bitcask_entry, { key,
                          file_id,
-                         value_sz,
-                         value_pos,
+                         total_sz,
+                         offset,
                          tstamp }).
 
 
@@ -20,6 +20,7 @@
 -define(OFFSETFIELD,  64).
 -define(TSTAMPFIELD,  32).
 -define(KEYSIZEFIELD, 16).
+-define(TOTALSIZEFIELD, 32).
 -define(VALSIZEFIELD, 32).
 -define(CRCSIZEFIELD, 32).
 -define(HEADER_SIZE,  14). % 4 + 4 + 2 + 4 bytes

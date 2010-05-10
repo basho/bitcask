@@ -37,8 +37,8 @@ typedef struct
 {
     UT_hash_handle hh;         /* Required for uthash */
     uint32_t file_id;
-    uint32_t value_sz;
-    uint64_t value_pos;
+    uint32_t total_sz;
+    uint64_t offset;
     uint32_t tstamp;
     uint16_t key_sz;
     char     key[0];
@@ -122,6 +122,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
 ERL_NIF_TERM bitcask_nifs_keydir_info(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
 ERL_NIF_TERM bitcask_nifs_create_file(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_create_tmp_file(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
 ERL_NIF_TERM bitcask_nifs_set_osync(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
@@ -271,8 +272,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_put(ErlNifEnv* env, int argc, const ERL_NIF_TER
     if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle) &&
         enif_inspect_binary(env, argv[1], &key) &&
         enif_get_uint(env, argv[2], (unsigned int*)&(entry.file_id)) &&
-        enif_get_uint(env, argv[3], &(entry.value_sz)) &&
-        enif_get_ulong(env, argv[4], (unsigned long*)&(entry.value_pos)) &&
+        enif_get_uint(env, argv[3], &(entry.total_sz)) &&
+        enif_get_ulong(env, argv[4], (unsigned long*)&(entry.offset)) &&
         enif_get_uint(env, argv[5], &(entry.tstamp)))
     {
         bitcask_keydir* keydir = handle->keydir;
@@ -288,8 +289,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_put(ErlNifEnv* env, int argc, const ERL_NIF_TER
             bitcask_keydir_entry* new_entry = enif_alloc(env, sizeof(bitcask_keydir_entry) +
                                                          key.size);
             new_entry->file_id = entry.file_id;
-            new_entry->value_sz = entry.value_sz;
-            new_entry->value_pos = entry.value_pos;
+            new_entry->total_sz = entry.total_sz;
+            new_entry->offset = entry.offset;
             new_entry->tstamp = entry.tstamp;
             new_entry->key_sz = key.size;
             memcpy(new_entry->key, key.data, key.size);
@@ -312,8 +313,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_put(ErlNifEnv* env, int argc, const ERL_NIF_TER
             // do multiple updates in a second, the last one in wins!
             // TODO: Safe?
             old_entry->file_id = entry.file_id;
-            old_entry->value_sz = entry.value_sz;
-            old_entry->value_pos = entry.value_pos;
+            old_entry->total_sz = entry.total_sz;
+            old_entry->offset = entry.offset;
             old_entry->tstamp = entry.tstamp;
             RW_UNLOCK(keydir);
             return ATOM_OK;
@@ -349,8 +350,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_get(ErlNifEnv* env, int argc, const ERL_NIF_TER
                                                    ATOM_BITCASK_ENTRY,
                                                    argv[1], /* Key */
                                                    enif_make_uint(env, entry->file_id),
-                                                   enif_make_uint(env, entry->value_sz),
-                                                   enif_make_ulong(env, entry->value_pos),
+                                                   enif_make_uint(env, entry->total_sz),
+                                                   enif_make_ulong(env, entry->offset),
                                                    enif_make_uint(env, entry->tstamp));
             R_UNLOCK(keydir);
             return result;
@@ -507,8 +508,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
                                                  ATOM_BITCASK_ENTRY,
                                                  enif_make_binary(env, &key),
                                                  enif_make_uint(env, entry->file_id),
-                                                 enif_make_uint(env, entry->value_sz),
-                                                 enif_make_ulong(env, entry->value_pos),
+                                                 enif_make_uint(env, entry->total_sz),
+                                                 enif_make_ulong(env, entry->offset),
                                                  enif_make_uint(env, entry->tstamp));
 
             // Update the iterator to the next entry
