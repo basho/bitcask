@@ -421,7 +421,7 @@ init_file(Dirname, Kvs) ->
     {ok, F} = create_file(Dirname, []),
     {ok, _} = write_kvs(Kvs, F, 0).
 
-write_kvs([], F, Tstamp) ->
+write_kvs([], F, _Tstamp) ->
     {ok, F};
 write_kvs([{K, V} | Rest], F, Tstamp) ->
     {ok, F2, _, _} = write(F, K, V, Tstamp),
