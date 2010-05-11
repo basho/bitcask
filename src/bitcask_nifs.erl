@@ -132,7 +132,7 @@ keydir_basic_test() ->
     {ok, Ref} = keydir_new(),
     ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
 
-    {1, 3, [{0, 1, 1}]} = keydir_info(Ref),
+    {1, 3, [{0, 1, 1, 1234, 1234}]} = keydir_info(Ref),
 
     E = keydir_get(Ref, <<"abc">>),
     0 = E#bitcask_entry.file_id,
