@@ -88,6 +88,12 @@ prop_bitcask() ->
             begin
                 [] = os:cmd("rm -rf " ++ ?TEST_DIR),
                 {H,{_State, StateData}, Res} = run_commands(?MODULE,Cmds),
+                case Res of
+                    ok ->
+                        ok;
+                    _ ->
+                        io:format(user, "QC result: ~p\n", [Res])
+                end,
                 case (StateData#state.bitcask) of
                     undefined ->
                         ok;
