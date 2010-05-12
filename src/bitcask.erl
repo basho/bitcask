@@ -427,12 +427,16 @@ needs_merge(Ref) ->
 
     %% Convert fstats list into a list with details we're interested in,
     %% specifically:
-    %% [{FileId, % Fragmented, Dead Bytes, Total Bytes}]
+    %% [{FileName, % Fragmented, Dead Bytes, Total Bytes}]
     %%
     %% Note that we also, filter the WritingFileId from any further
     %% consideration.
-    Summary = [summarize(S) || S <- Fstats,
-                               element(1, S) /= WritingFileId],
+    Summary0 = [summarize(State#bc_state.dirname, S) ||
+                   S <- Fstats, element(1, S) /= WritingFileId],
+
+    %% Remove any files that don't exist from the initial summary
+    Summary = [S || S <- Summary0,
+                    filelib:is_file(element(1, S))],
 
     %% Triggers that would require a merge:
     %%
@@ -441,7 +445,7 @@ needs_merge(Ref) ->
     %%
     FragTrigger = get_opt(frag_merge_trigger, State#bc_state.opts),
     DeadBytesTrigger = get_opt(dead_bytes_merge_trigger, State#bc_state.opts),
-    NeedsMerge = lists:any(fun({_FileId, Frag, DeadBytes, _}) ->
+    NeedsMerge = lists:any(fun({_FileName, Frag, DeadBytes, _}) ->
                                    (Frag >= FragTrigger)
                                        or (DeadBytes >= DeadBytesTrigger)
                            end, Summary),
@@ -458,14 +462,11 @@ needs_merge(Ref) ->
             FragThreshold = get_opt(frag_threshold, State#bc_state.opts),
             DeadBytesThreshold = get_opt(dead_bytes_threshold, State#bc_state.opts),
             SmallFileThreshold = get_opt(small_file_threshold, State#bc_state.opts),
-            FileIds = [FileId || {FileId, Frag, DeadBytes, TotalBytes} <- Summary,
-                                 (Frag >= FragThreshold)
-                                     or (DeadBytes >= DeadBytesThreshold)
-                                     or (TotalBytes < SmallFileThreshold)],
-
-            %% Finally convert the file ids (which are just tstamps) to
-            %% a proper filename format
-            {true, [bitcask_fileops:mk_filename(State#bc_state.dirname, F) || F <- FileIds]};
+            FileNames = [FileName || {FileName, Frag, DeadBytes, TotalBytes} <- Summary,
+                                     (Frag >= FragThreshold)
+                                         or (DeadBytes >= DeadBytesThreshold)
+                                         or (TotalBytes < SmallFileThreshold)],
+            {true, FileNames};
 
         false ->
             false
@@ -474,17 +475,17 @@ needs_merge(Ref) ->
 status(Ref) ->
     State = get_state(Ref),
     {KeyCount, _KeyBytes, Fstats} = bitcask_nifs:keydir_info(State#bc_state.keydir),
-    {KeyCount, Fstats}.
+    {KeyCount, [summarize(State#bc_state.dirname, S) || S <- Fstats]}.
 
 
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
 
-summarize({FileId, LiveCount, TotalCount, LiveBytes, TotalBytes}) ->
+summarize(Dirname, {FileId, LiveCount, TotalCount, LiveBytes, TotalBytes}) ->
     Fragmented = trunc((1 - LiveCount/TotalCount) * 100),
     DeadBytes = TotalBytes - LiveBytes,
-    {FileId, Fragmented, DeadBytes, TotalBytes}.
+    {bitcask_fileops:mk_filename(Dirname, FileId), Fragmented, DeadBytes, TotalBytes}.
 
 expiry_time(Opts) ->
     ExpirySecs = get_opt(expiry_secs, Opts),
