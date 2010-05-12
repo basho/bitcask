@@ -322,7 +322,7 @@ merge(Dirname, Opts) ->
 
 %% @doc Merge several data files within a bitcask datastore into a more compact form.
 -spec merge(Dirname::string(), Opts::[_], FilesToMerge::[string()]) -> ok | {error, any()}.
-merge(Dirname, Opts, []) ->
+merge(_Dirname, _Opts, []) ->
     ok;
 merge(Dirname, Opts, FilesToMerge0) ->
     %% Make sure bitcask app is started so we can pull defaults from env
