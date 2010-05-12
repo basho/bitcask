@@ -31,7 +31,9 @@
          sync/1,
          list_keys/1,
          fold/3,
-         merge/1, merge/2]).
+         merge/1, merge/2, merge/3,
+         needs_merge/1,
+         status/1]).
 
 -export([get_opt/2]).
 
@@ -312,11 +314,15 @@ subfold(SubFun,[File|Rest],Acc) ->
 %% @doc Merge several data files within a bitcask datastore into a more compact form.
 -spec merge(Dirname::string()) -> ok | {error, any()}.
 merge(Dirname) ->
-    merge(Dirname, []).
+    merge(Dirname, [], readable_files(Dirname)).
 
 %% @doc Merge several data files within a bitcask datastore into a more compact form.
--spec merge(Dirname::string(), Opts::[_]) -> ok | {error, any()}.
 merge(Dirname, Opts) ->
+    merge(Dirname, Opts, readable_files(Dirname)).
+
+%% @doc Merge several data files within a bitcask datastore into a more compact form.
+-spec merge(Dirname::string(), Opts::[_], FilesToMerge::[string()]) -> ok | {error, any()}.
+merge(Dirname, Opts, FilesToMerge) ->
     %% Make sure bitcask app is started so we can pull defaults from env
     ok = start_app(),
 
@@ -329,27 +335,36 @@ merge(Dirname, Opts) ->
             throw({error, {merge_locked, Reason}})
     end,
 
-    %% Get the list of files we'll be merging
-    ReadableFiles = readable_files(Dirname),
-
     %% Get the live keydir
     case bitcask_nifs:keydir_new(Dirname) of
         {ready, LiveKeyDir} ->
             %% Simplest case; a key dir is already available and loaded. Go ahead and open
-            %% all the readable files
-            ReadFiles = [begin {ok, Fstate} = bitcask_fileops:open_file(F), Fstate end
-                         || F <- ReadableFiles];
+            %% just the files we wish to merge
+            InFiles = [begin {ok, Fstate} = bitcask_fileops:open_file(F), Fstate end
+                       || F <- FilesToMerge];
 
         {not_ready, LiveKeyDir} ->
-            %% Live keydir is newly created. We need to go ahead and load it
-            %% up in case a writer or reader comes along in this same VM.
-            ReadFiles = scan_key_files(ReadableFiles, LiveKeyDir, []),
+            %% Live keydir is newly created. We need to go ahead and load all available
+            %% data into the keydir in case another reader/writer comes along in the
+            %% same VM. Note that we won't necessarily merge all these files.
+            AllFiles = scan_key_files(readable_files(Dirname), LiveKeyDir, []),
+
+            %% Partition all files to files we'll merge and files we won't (so that
+            %% we can close those extra files once they've been loaded into the keydir)
+            P = fun(F) ->
+                        lists:member(bitcask_fileops:filename(F), FilesToMerge)
+                end,
+            {InFiles, UnusedFiles} = lists:partition(P, AllFiles),
+
+            %% Close the unused files
+            [bitcask_fileops:close(U) || U <- UnusedFiles],
+
             bitcask_nifs:keydir_mark_ready(LiveKeyDir);
 
         {error, not_ready} ->
             %% Someone else is loading the keydir. We'll bail here and try again
             %% later.
-            LiveKeyDir = undefined, ReadFiles = [], % Make erlc happy w/ non-local exit
+            LiveKeyDir = undefined, InFiles = [], % Make erlc happy w/ non-local exit
             throw({error, not_ready})
     end,
 
@@ -367,7 +382,7 @@ merge(Dirname, Opts) ->
     %% Initialize our state for the merge
     State = #mstate { dirname = Dirname,
                       max_file_size = get_opt(max_file_size, Opts),
-                      input_files = ReadFiles,
+                      input_files = InFiles,
                       out_file = Outfile,
                       merged_files = [],
                       live_keydir = LiveKeyDir,
@@ -390,10 +405,86 @@ merge(Dirname, Opts) ->
      end || F <- State#mstate.input_files],
     ok = bitcask_lockops:release(Lock).
 
+needs_merge(Ref) ->
+    State = get_state(Ref),
+
+    %% Pull current info for the bitcask. In particular, we want
+    %% the file stats so we can determine how much fragmentation
+    %% is present
+    %%
+    %% Fstat has form: [{FileId, LiveCount, TotalCount, LiveBytes, TotalBytes}]
+    %% and is only an estimate/snapshot.
+    {_KeyCount, _KeyBytes, Fstats} = bitcask_nifs:keydir_info(State#bc_state.keydir),
+
+    %% We want to ignore the file currently being written when
+    %% considering merge triggers!
+    case bitcask_lockops:read_activefile(write, State#bc_state.dirname) of
+        undefined ->
+            WritingFileId = undefined;
+        Filename ->
+            WritingFileId = bitcask_fileops:file_tstamp(Filename)
+    end,
+
+    %% Convert fstats list into a list with details we're interested in,
+    %% specifically:
+    %% [{FileId, % Fragmented, Dead Bytes, Total Bytes}]
+    %%
+    %% Note that we also, filter the WritingFileId from any further
+    %% consideration.
+    Summary = [summarize(S) || S <- Fstats,
+                               element(1, S) /= WritingFileId],
+
+    %% Triggers that would require a merge:
+    %%
+    %% frag_merge_trigger - Any file exceeds this % fragmentation
+    %% dead_bytes_merge_trigger - Any file has more than this # of dead bytes
+    %%
+    FragTrigger = get_opt(frag_merge_trigger, State#bc_state.opts),
+    DeadBytesTrigger = get_opt(dead_bytes_merge_trigger, State#bc_state.opts),
+    NeedsMerge = lists:any(fun({_FileId, Frag, DeadBytes, _}) ->
+                                   (Frag >= FragTrigger)
+                                       or (DeadBytes >= DeadBytesTrigger)
+                           end, Summary),
+
+    case NeedsMerge of
+        true ->
+            %% Identify those files which need merging. We merge any files
+            %% that meet ANY of the following conditions:
+            %%
+            %% frag_threshold - At least this % fragmented
+            %% dead_bytes_threshold - At least this # of dead bytes
+            %% small_file_threshold - Any file < this # of bytes
+            %%
+            FragThreshold = get_opt(frag_threshold, State#bc_state.opts),
+            DeadBytesThreshold = get_opt(dead_bytes_threshold, State#bc_state.opts),
+            SmallFileThreshold = get_opt(small_file_threshold, State#bc_state.opts),
+            FileIds = [FileId || {FileId, Frag, DeadBytes, TotalBytes} <- Summary,
+                                 (Frag >= FragThreshold)
+                                     or (DeadBytes >= DeadBytesThreshold)
+                                     or (TotalBytes < SmallFileThreshold)],
+
+            %% Finally convert the file ids (which are just tstamps) to
+            %% a proper filename format
+            {true, [bitcask_fileops:mk_filename(State#bc_state.dirname, F) || F <- FileIds]};
+
+        false ->
+            false
+    end.
+
+status(Ref) ->
+    State = get_state(Ref),
+    {KeyCount, _KeyBytes, Fstats} = bitcask_nifs:keydir_info(State#bc_state.keydir),
+    {KeyCount, Fstats}.
+
 
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
+
+summarize({FileId, LiveCount, TotalCount, LiveBytes, TotalBytes}) ->
+    Fragmented = trunc((1 - LiveCount/TotalCount) * 100),
+    DeadBytes = TotalBytes - LiveBytes,
+    {FileId, Fragmented, DeadBytes, TotalBytes}.
 
 expiry_time(Opts) ->
     ExpirySecs = get_opt(expiry_secs, Opts),
