@@ -322,9 +322,21 @@ merge(Dirname, Opts) ->
 
 %% @doc Merge several data files within a bitcask datastore into a more compact form.
 -spec merge(Dirname::string(), Opts::[_], FilesToMerge::[string()]) -> ok | {error, any()}.
-merge(Dirname, Opts, FilesToMerge) ->
+merge(Dirname, Opts, FilesToMerge0) ->
     %% Make sure bitcask app is started so we can pull defaults from env
     ok = start_app(),
+
+    %% Filter the files to merge and ensure that they all exist. It's possible in
+    %% some circumstances that we'll get an out-of-date list of files.
+    FilesToMerge = [F || F <- FilesToMerge0,
+                         filelib:is_file(F)],
+    case FilesToMerge of
+        [] ->
+            io:format("Files to merge is empty!\n"),
+            throw(ok);
+        _ ->
+            ok
+    end,
 
     %% Try to lock for merging
     case bitcask_lockops:acquire(merge, Dirname) of
@@ -407,36 +419,7 @@ merge(Dirname, Opts, FilesToMerge) ->
 
 needs_merge(Ref) ->
     State = get_state(Ref),
-
-    %% Pull current info for the bitcask. In particular, we want
-    %% the file stats so we can determine how much fragmentation
-    %% is present
-    %%
-    %% Fstat has form: [{FileId, LiveCount, TotalCount, LiveBytes, TotalBytes}]
-    %% and is only an estimate/snapshot.
-    {_KeyCount, _KeyBytes, Fstats} = bitcask_nifs:keydir_info(State#bc_state.keydir),
-
-    %% We want to ignore the file currently being written when
-    %% considering merge triggers!
-    case bitcask_lockops:read_activefile(write, State#bc_state.dirname) of
-        undefined ->
-            WritingFileId = undefined;
-        Filename ->
-            WritingFileId = bitcask_fileops:file_tstamp(Filename)
-    end,
-
-    %% Convert fstats list into a list with details we're interested in,
-    %% specifically:
-    %% [{FileName, % Fragmented, Dead Bytes, Total Bytes}]
-    %%
-    %% Note that we also, filter the WritingFileId from any further
-    %% consideration.
-    Summary0 = [summarize(State#bc_state.dirname, S) ||
-                   S <- Fstats, element(1, S) /= WritingFileId],
-
-    %% Remove any files that don't exist from the initial summary
-    Summary = [S || S <- Summary0,
-                    filelib:is_file(element(1, S))],
+    {_KeyCount, Summary} = status(Ref),
 
     %% Triggers that would require a merge:
     %%
@@ -474,8 +457,37 @@ needs_merge(Ref) ->
 
 status(Ref) ->
     State = get_state(Ref),
+
+    %% Pull current info for the bitcask. In particular, we want
+    %% the file stats so we can determine how much fragmentation
+    %% is present
+    %%
+    %% Fstat has form: [{FileId, LiveCount, TotalCount, LiveBytes, TotalBytes}]
+    %% and is only an estimate/snapshot.
     {KeyCount, _KeyBytes, Fstats} = bitcask_nifs:keydir_info(State#bc_state.keydir),
-    {KeyCount, [summarize(State#bc_state.dirname, S) || S <- Fstats]}.
+
+    %% We want to ignore the file currently being written when
+    %% considering status!
+    case bitcask_lockops:read_activefile(write, State#bc_state.dirname) of
+        undefined ->
+            WritingFileId = undefined;
+        Filename ->
+            WritingFileId = bitcask_fileops:file_tstamp(Filename)
+    end,
+
+    %% Convert fstats list into a list with details we're interested in,
+    %% specifically:
+    %% [{FileName, % Fragmented, Dead Bytes, Total Bytes}]
+    %%
+    %% Note that we also, filter the WritingFileId from any further
+    %% consideration.
+    Summary0 = [summarize(State#bc_state.dirname, S) ||
+                   S <- Fstats, element(1, S) /= WritingFileId],
+
+    %% Remove any files that don't exist from the initial summary
+    Summary = lists:keysort(1, [S || S <- Summary0,
+                                     filelib:is_file(element(1, S))]),
+    {KeyCount, Summary}.
 
 
 %% ===================================================================
@@ -534,12 +546,12 @@ scan_key_files([], _KeyDir, Acc) ->
 scan_key_files([Filename | Rest], KeyDir, Acc) ->
     {ok, File} = bitcask_fileops:open_file(Filename),
     F = fun(K, Tstamp, {Offset, TotalSz}, _) ->
-                ok = bitcask_nifs:keydir_put(KeyDir,
-                                             K,
-                                             bitcask_fileops:file_tstamp(File),
-                                             TotalSz,
-                                             Offset,
-                                             Tstamp)
+                bitcask_nifs:keydir_put(KeyDir,
+                                        K,
+                                        bitcask_fileops:file_tstamp(File),
+                                        TotalSz,
+                                        Offset,
+                                        Tstamp)
         end,
     bitcask_fileops:fold_keys(File, F, undefined),
     scan_key_files(Rest, KeyDir, [File | Acc]).
