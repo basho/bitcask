@@ -332,7 +332,7 @@ merge(Dirname, Opts, FilesToMerge0) ->
                          filelib:is_file(F)],
     case FilesToMerge of
         [] ->
-            io:format("Files to merge is empty!\n"),
+            %% No files to merge -- bail fast
             throw(ok);
         _ ->
             ok
