@@ -375,8 +375,17 @@ ERL_NIF_TERM bitcask_nifs_keydir_put(ErlNifEnv* env, int argc, const ERL_NIF_TER
         }
         else
         {
-            // We do not update fstats in this situation, as no actual change
-            // was made.
+            // If the keydir is in the process of being loaded, it's safe to update
+            // fstats on a failed put. Once the keydir is live, any attempts to put
+            // in old data would just be ignored to avoid double-counting problems.
+            if (!keydir->is_ready)
+            {
+                // Increment the total # of keys and total size for the entry that
+                // was NOT stored in the keydir.
+                update_fstats(env, keydir, entry.file_id, 0, 1,
+                              0, entry.total_sz);
+            }
+
             RW_UNLOCK(keydir);
             return ATOM_ALREADY_EXISTS;
         }
