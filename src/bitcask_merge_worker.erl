@@ -27,7 +27,7 @@
 
 %% API
 -export([start_link/0,
-         merge/1]).
+         merge/1, merge/2, merge/3]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -45,7 +45,13 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 merge(Dir) ->
-    gen_server:call(?MODULE, {merge, Dir}).
+    gen_server:call(?MODULE, {merge, [Dir]}).
+
+merge(Dir, Opts) ->
+    gen_server:call(?MODULE, {merge, [Dir, Opts]}).
+
+merge(Dir, Opts, Files) ->
+    gen_server:call(?MODULE, {merge, [Dir, Opts, Files]}).
 
 %% ====================================================================
 %% gen_server callbacks
@@ -64,17 +70,17 @@ init([]) ->
     {ok, #state{ queue = queue:new(),
                  worker = WorkerPid }}.
 
-handle_call({merge, Dir}, _From, #state { queue = Q } = State) ->
-    case queue:member(Dir, Q) of
+handle_call({merge, Args}, _From, #state { queue = Q } = State) ->
+    case queue:member(Args, Q) of
         true ->
             {reply, already_queued, State};
         false ->
             case State#state.worker_ready of
                 true ->
-                    State#state.worker ! {merge, Dir},
+                    State#state.worker ! {merge, Args},
                     {reply, ok, State};
                 false ->
-                    {reply, ok, State#state { queue = queue:in(Dir, Q) }}
+                    {reply, ok, State#state { queue = queue:in(Args, Q) }}
             end
     end.
 
@@ -86,8 +92,8 @@ handle_info(worker_ready, #state { queue = Q } = State) ->
         true ->
             {noreply, State#state { worker_ready = true }};
         false ->
-            {{value, Dir}, Q2} = queue:out(Q),
-            State#state.worker ! {merge, Dir},
+            {{value, Args}, Q2} = queue:out(Q),
+            State#state.worker ! {merge, Args},
             {noreply, State#state { queue = Q2,
                                     worker_ready = false }}
     end;
@@ -110,17 +116,17 @@ code_change(_OldVsn, State, _Extra) ->
 worker_loop(Parent) ->
     Parent ! worker_ready,
     receive
-        {merge, Dir} ->
+        {merge, Args} ->
             Start = now(),
-            Result = (catch bitcask:merge(Dir)),
+            Result = (catch apply(bitcask, merge, Args)),
             ElapsedSecs = timer:now_diff(now(), Start) / 1000000,
             case Result of
                 ok ->
-                    error_logger:info_msg("Merged ~s in ~p seconds.\n",
-                                          [Dir, ElapsedSecs]);
+                    error_logger:info_msg("Merged ~p in ~p seconds.\n",
+                                          [Args, ElapsedSecs]);
                 {Error, Reason} when Error == error; Error == 'EXIT' ->
-                    error_logger:error_msg("Failed to merge ~s: ~p\n",
-                                           [Dir, Reason])
+                    error_logger:error_msg("Failed to merge ~p: ~p\n",
+                                           [Args, Reason])
             end,
             worker_loop(Parent)
     end.
