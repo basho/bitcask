@@ -322,6 +322,8 @@ merge(Dirname, Opts) ->
 
 %% @doc Merge several data files within a bitcask datastore into a more compact form.
 -spec merge(Dirname::string(), Opts::[_], FilesToMerge::[string()]) -> ok | {error, any()}.
+merge(Dirname, Opts, []) ->
+    ok;
 merge(Dirname, Opts, FilesToMerge0) ->
     %% Make sure bitcask app is started so we can pull defaults from env
     ok = start_app(),
@@ -332,8 +334,9 @@ merge(Dirname, Opts, FilesToMerge0) ->
                          filelib:is_file(F)],
     case FilesToMerge of
         [] ->
-            %% No files to merge -- bail fast
-            throw(ok);
+            %% None of the files to merge actually exist!
+            throw({error, no_files_to_merge});
+
         _ ->
             ok
     end,
