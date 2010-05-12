@@ -341,13 +341,15 @@ create_file_loop(DirName, Opts, Tstamp) ->
     case bitcask_nifs:create_file(Filename) of
         true ->
             {ok, FD} = file:open(Filename, [read, write, raw, binary]),
-            %% If o_sync is specified in the options, try to set that flag on the underlying
-            %% file descriptor
+            %% If o_sync is specified in the options, try to set that
+            %% flag on the underlying file descriptor
             case bitcask:get_opt(sync_strategy, Opts) of
                 o_sync ->
-                    %% Make a hacky assumption here that if we open a raw file, we get back
-                    %% a specific tuple from the Erlang VM. The tradeoff is that we can set the
-                    %% O_SYNC flag on the fd, thus improving performance rather dramatically.
+                    %% Make a hacky assumption here that if we open a
+                    %% raw file, we get back a specific tuple from the
+                    %% Erlang VM. The tradeoff is that we can set the
+                    %% O_SYNC flag on the fd, thus improving
+                    %% performance rather dramatically.
                     {file_descriptor, prim_file, {_Port, RealFd}} = FD,
                     case bitcask_nifs:set_osync(RealFd) of
                         ok ->
@@ -361,12 +363,14 @@ create_file_loop(DirName, Opts, Tstamp) ->
                                     fd = FD, ofs = 0}}
             end;
         false ->
-            %% Couldn't create a new file with the requested name, increment the
-            %% tstamp by 1 and try again. Conceptually, this introduces some drift
-            %% into the actual creation time, but given that we only have at most 2
-            %% writers (writer + merger) for a given bitcask, it shouldn't be more
-            %% than a few seconds. The alternative it to sleep until the next second
-            %% rolls around -- but this introduces lengthy, unnecessary delays.
+            %% Couldn't create a new file with the requested name,
+            %% increment the tstamp by 1 and try again. Conceptually,
+            %% this introduces some drift into the actual creation
+            %% time, but given that we only have at most 2 writers
+            %% (writer + merger) for a given bitcask, it shouldn't be
+            %% more than a few seconds. The alternative it to sleep
+            %% until the next second rolls around -- but this
+            %% introduces lengthy, unnecessary delays.
             create_file_loop(DirName, Opts, Tstamp + 1)
     end.
 
