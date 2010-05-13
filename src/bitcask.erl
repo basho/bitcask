@@ -424,6 +424,21 @@ needs_merge(Ref) ->
     State = get_state(Ref),
     {_KeyCount, Summary} = status(Ref),
 
+    %% Review all the files we currently have open in read_files and
+    %% see if any no longer exist by name (i.e. have been deleted by
+    %% previous merges). Close these files so that we don't leak
+    %% file descriptors.
+    P = fun(F) ->
+                filelib:is_file(bitcask_fileops:filename(F))
+        end,
+    {LiveFiles, DeadFiles} = lists:partition(P, State#bc_state.read_files),
+
+    %% Close the dead files
+    [bitcask_fileops:close(F) || F <- DeadFiles],
+
+    %% Update state with live files
+    put_state(Ref, State#bc_state { read_files = LiveFiles }),
+
     %% Triggers that would require a merge:
     %%
     %% frag_merge_trigger - Any file exceeds this % fragmentation
