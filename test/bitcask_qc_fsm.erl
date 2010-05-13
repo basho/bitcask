@@ -19,7 +19,7 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
--module(bitcask_qc).
+-module(bitcask_qc_fsm).
 -author('Dave Smith <dizzyd@basho.com>').
 -author('Justin Sheehy <justin@basho.com>').
 
