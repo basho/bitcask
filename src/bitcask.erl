@@ -623,14 +623,15 @@ list_data_files(Dirname, WritingFile, Mergingfile) ->
 merge_files(#mstate { input_files = [] } = State) ->
     State;
 merge_files(#mstate { input_files = [File | Rest]} = State) ->
+    FileId = bitcask_fileops:file_tstamp(File),
     F = fun(K, V, Tstamp, _Pos, State0) ->
-                merge_single_entry(K, V, Tstamp, State0)
+                merge_single_entry(K, V, Tstamp, FileId, State0)
         end,
     State1 = bitcask_fileops:fold(File, F, State),
     ok = bitcask_fileops:close(File),
     merge_files(State1#mstate { input_files = Rest }).
 
-merge_single_entry(K, V, Tstamp, #mstate { dirname = Dirname } = State) ->
+merge_single_entry(K, V, Tstamp, FileId, #mstate { dirname = Dirname } = State) ->
     case out_of_date(K, Tstamp, State#mstate.expiry_time,
                      [State#mstate.all_keydir,
                       State#mstate.del_keydir]) of
@@ -641,6 +642,13 @@ merge_single_entry(K, V, Tstamp, #mstate { dirname = Dirname } = State) ->
                 true ->
                     ok = bitcask_nifs:keydir_put(State#mstate.del_keydir, K,
                                                  Tstamp, 0, 0, Tstamp),
+
+                    %% Use the conditional remove on the live keydir. We only want
+                    %% to actually remove whatever is in the live keydir IIF the
+                    %% tstamp/fileid we have matches the current entry.
+                    bitcask_nifs:keydir_remove(State#mstate.live_keydir, K,
+                                               Tstamp, FileId),
+
                     State;
                 false ->
                     ok = bitcask_nifs:keydir_remove(State#mstate.del_keydir, K),
