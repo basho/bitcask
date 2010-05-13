@@ -159,6 +159,7 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_put", 6, bitcask_nifs_keydir_put},
     {"keydir_get", 2, bitcask_nifs_keydir_get},
     {"keydir_remove", 2, bitcask_nifs_keydir_remove},
+    {"keydir_remove", 4, bitcask_nifs_keydir_remove},
     {"keydir_copy", 1, bitcask_nifs_keydir_copy},
     {"keydir_itr", 1, bitcask_nifs_keydir_itr},
     {"keydir_itr_next", 1, bitcask_nifs_keydir_itr_next},
@@ -449,6 +450,31 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
         KEYDIR_HASH_FIND(keydir->entries, key, entry);
         if (entry != 0)
         {
+            // If this call has 4 arguments, this is a conditional removal. We
+            // only want to actually remove the entry if the tstamp and fileid
+            // matches the one provided. A sort of poor-man's CAS.
+            if (argc == 4)
+            {
+                uint32_t tstamp;
+                uint32_t file_id;
+                if (enif_get_uint(env, argv[2], (unsigned int*)&tstamp) &&
+                    enif_get_uint(env, argv[3], (unsigned int*)&file_id))
+                {
+                    if (entry->tstamp != tstamp || entry->file_id != file_id)
+                    {
+                        // Either tstamp or file_id didn't match precisely. Ignore
+                        // this attempt to delete the record.
+                        RW_UNLOCK(keydir);
+                        return ATOM_OK;
+                    }
+                }
+                else
+                {
+                    RW_UNLOCK(keydir);
+                    return enif_make_badarg(env);
+                }
+            }
+
             // Update fstats for the current file id -- one less live
             // key is the assumption here.
             update_fstats(env, keydir, entry->file_id, -1, 0,

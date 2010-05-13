@@ -27,7 +27,7 @@
          keydir_mark_ready/1,
          keydir_put/6,
          keydir_get/2,
-         keydir_remove/2,
+         keydir_remove/2, keydir_remove/4,
          keydir_copy/1,
          keydir_itr/1,
          keydir_itr_next/1,
@@ -73,6 +73,9 @@ keydir_get(_Ref, _Key) ->
     "NIF library not loaded".
 
 keydir_remove(_Ref, _Key) ->
+    "NIF library not loaded".
+
+keydir_remove(_Ref, _Key, _Tstamp, _FileId) ->
     "NIF library not loaded".
 
 keydir_copy(_Ref) ->
