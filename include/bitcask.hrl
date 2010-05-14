@@ -10,6 +10,7 @@
 -record(filestate, {filename, % Filename
                     tstamp,   % Tstamp portion of filename
                     fd,       % File handle
+                    hintfd,   % File handle for hints
                     ofs }).   % Current offset for writing
 
 

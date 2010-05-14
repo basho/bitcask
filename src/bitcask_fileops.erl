@@ -69,8 +69,8 @@ create_file(DirName, Opts) ->
 open_file(Filename) ->
     case file:open(Filename, [read, raw, binary]) of
         {ok, FD} ->
-            {ok, #filestate{ filename = Filename, tstamp = file_tstamp(Filename),
-                             fd = FD, ofs = 0 }};
+            {ok, #filestate{filename = Filename, tstamp = file_tstamp(Filename),
+                            fd = FD, ofs = 0 }};
         {error, Reason} ->
             {error, Reason}
     end.
@@ -94,9 +94,11 @@ delete(#filestate{ filename = FN } = State) ->
     end.
 
 %% @doc Write a Key-named binary data field ("Value") to the Filestate.
-%% @spec write(filestate(), Key :: binary(), Value :: binary(), Tstamp :: integer()) ->
+%% @spec write(filestate(), 
+%%             Key :: binary(), Value :: binary(), Tstamp :: integer()) ->
 %%       {ok, filestate(), Offset :: integer(), Size :: integer()}
-write(Filestate=#filestate{fd = FD, ofs = Offset}, Key, Value, Tstamp) ->
+write(Filestate=#filestate{fd = FD, hintfd = HintFD, ofs = Offset},
+      Key, Value, Tstamp) ->
     KeySz = size(Key),
     true = (KeySz =< ?MAXKEYSIZE),
     ValueSz = size(Value),
@@ -106,7 +108,13 @@ write(Filestate=#filestate{fd = FD, ofs = Offset}, Key, Value, Tstamp) ->
     Bytes0 = [<<Tstamp:?TSTAMPFIELD>>, <<KeySz:?KEYSIZEFIELD>>,
               <<ValueSz:?VALSIZEFIELD>>, Key, Value],
     Bytes  = [<<(erlang:crc32(Bytes0)):?CRCSIZEFIELD>> | Bytes0],
+    %% Store the full entry in the data file
     ok = file:pwrite(FD, Offset, Bytes),
+    %% Create and store the corresponding hint entry
+    TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
+    Iolist = hintfile_entry(Key, Tstamp, {Offset, TotalSz}),
+    ok = file:write(HintFD, Iolist),
+    %% Record our final offset
     FinalSz = iolist_size(Bytes),
     {ok, Filestate#filestate{ofs = Offset + FinalSz}, Offset, FinalSz}.
 
@@ -341,6 +349,8 @@ create_file_loop(DirName, Opts, Tstamp) ->
     case bitcask_nifs:create_file(Filename) of
         true ->
             {ok, FD} = file:open(Filename, [read, write, raw, binary]),
+            {ok, HintFD} = file:open(hintfile_name(Filename),
+                                     [read, write, raw, binary]),
             %% If o_sync is specified in the options, try to set that
             %% flag on the underlying file descriptor
             case bitcask:get_opt(sync_strategy, Opts) of
@@ -353,14 +363,16 @@ create_file_loop(DirName, Opts, Tstamp) ->
                     {file_descriptor, prim_file, {_Port, RealFd}} = FD,
                     case bitcask_nifs:set_osync(RealFd) of
                         ok ->
-                            {ok, #filestate{filename = Filename, tstamp = file_tstamp(Filename),
-                                            fd = FD, ofs = 0}};
+                            {ok, #filestate{filename = Filename,
+                                            tstamp = file_tstamp(Filename),
+                                            hintfd = HintFD, fd = FD, ofs = 0}};
                         {error, Reason} ->
                             {error, Reason}
                     end;
                 _ ->
-                    {ok, #filestate{filename = Filename, tstamp = file_tstamp(Filename),
-                                    fd = FD, ofs = 0}}
+                    {ok, #filestate{filename = Filename,
+                                    tstamp = file_tstamp(Filename),
+                                    hintfd = HintFD, fd = FD, ofs = 0}}
             end;
         false ->
             %% Couldn't create a new file with the requested name,
