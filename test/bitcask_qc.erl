@@ -87,7 +87,16 @@ prop_merge() ->
 -define(QC_OUT(P), eqc:on_output(fun(Str, Args) -> ?debugFmt(Str, Args) end, P)).
 
 prop_merge_test_() ->
-    {timeout, 60, fun() -> ?assert(eqc:quickcheck(?QC_OUT(prop_merge()))) end}.
+    {timeout, 60, fun() ->
+                          P = ?QC_OUT(prop_merge()),
+                          case catch(eqc:current_counterexample()) of
+                              CE when is_list(CE) ->
+                                  ?assert(eqc:check(P, CE));
+                              _ ->
+                                  ?assert(eqc:quickcheck(P))
+
+                          end
+                  end}.
 
 
 -endif.
