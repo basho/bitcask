@@ -53,6 +53,7 @@
                    keydir}).                    % Key directory
 
 -record(mstate, { dirname,
+                  merge_lock,
                   max_file_size,
                   input_files,
                   out_file,
@@ -229,6 +230,8 @@ put(Ref, Key, Value) ->
             ok = bitcask_fileops:sync(WriteFile),
             {ok, NewWriteFile} = bitcask_fileops:create_file(State#bc_state.dirname,
                                                              State#bc_state.opts),
+            ok = bitcask_lockops:write_activefile(State#bc_state.write_lock,
+                                                  bitcask_fileops:filename(NewWriteFile)),
             State2 = State#bc_state{ write_file = NewWriteFile,
                                      read_files = [State#bc_state.write_file |
                                                    State#bc_state.read_files]};
@@ -396,6 +399,7 @@ merge(Dirname, Opts, FilesToMerge0) ->
 
     %% Initialize our state for the merge
     State = #mstate { dirname = Dirname,
+                      merge_lock = Lock,
                       max_file_size = get_opt(max_file_size, Opts),
                       input_files = InFiles,
                       out_file = Outfile,
@@ -664,6 +668,9 @@ merge_single_entry(K, V, Tstamp, FileId, #mstate { dirname = Dirname } = State) 
                                 %% Start our next file and update state
                                 {ok, NewFile} = bitcask_fileops:create_file(Dirname,
                                                                             State#mstate.opts),
+                                NewFileName = bitcask_fileops:filename(NewFile),
+                                ok = bitcask_lockops:write_activefile(State#mstate.merge_lock,
+                                                                      NewFileName),
                                 {ok, HintKeyDir} = bitcask_nifs:keydir_new(),
                                 State#mstate { out_file = NewFile,
                                                hint_keydir = HintKeyDir };
