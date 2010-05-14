@@ -59,7 +59,6 @@
                   out_file,
                   merged_files,
                   live_keydir,
-                  all_keydir,
                   hint_keydir,
                   del_keydir,
                   expiry_time,
@@ -393,7 +392,6 @@ merge(Dirname, Opts, FilesToMerge0) ->
     %% Initialize the other keydirs we need. The hint keydir will get recreated
     %% each time we wrap a file, so that it only contains keys associated
     %% with the current out_file
-    {ok, AllKeyDir} = bitcask_nifs:keydir_new(),
     {ok, HintKeyDir} = bitcask_nifs:keydir_new(),
     {ok, DelKeyDir} = bitcask_nifs:keydir_new(),
 
@@ -405,7 +403,6 @@ merge(Dirname, Opts, FilesToMerge0) ->
                       out_file = Outfile,
                       merged_files = [],
                       live_keydir = LiveKeyDir,
-                      all_keydir = AllKeyDir,
                       hint_keydir = HintKeyDir,
                       del_keydir = DelKeyDir,
                       expiry_time = expiry_time(Opts),
@@ -628,24 +625,24 @@ merge_files(#mstate { input_files = [] } = State) ->
     State;
 merge_files(#mstate { input_files = [File | Rest]} = State) ->
     FileId = bitcask_fileops:file_tstamp(File),
-    F = fun(K, V, Tstamp, _Pos, State0) ->
-                merge_single_entry(K, V, Tstamp, FileId, State0)
+    F = fun(K, V, Tstamp, Pos, State0) ->
+                merge_single_entry(K, V, Tstamp, FileId, Pos, State0)
         end,
     State1 = bitcask_fileops:fold(File, F, State),
     ok = bitcask_fileops:close(File),
     merge_files(State1#mstate { input_files = Rest }).
 
-merge_single_entry(K, V, Tstamp, FileId, #mstate { dirname = Dirname } = State) ->
-    case out_of_date(K, Tstamp, State#mstate.expiry_time,
-                     [State#mstate.all_keydir,
-                      State#mstate.del_keydir]) of
+merge_single_entry(K, V, Tstamp, FileId, {Offset, _} = Pos,
+                   #mstate { dirname = Dirname } = State) ->
+    case out_of_date(K, Tstamp, FileId, Pos, State#mstate.expiry_time,
+                     [State#mstate.live_keydir, State#mstate.del_keydir]) of
         true ->
             State;
         false ->
             case (V =:= ?TOMBSTONE) of
                 true ->
                     ok = bitcask_nifs:keydir_put(State#mstate.del_keydir, K,
-                                                 Tstamp, 0, 0, Tstamp),
+                                                 FileId, 0, Offset, Tstamp),
 
                     %% Use the conditional remove on the live keydir. We only want
                     %% to actually remove whatever is in the live keydir IIF the
@@ -694,10 +691,6 @@ merge_single_entry(K, V, Tstamp, FileId, #mstate { dirname = Dirname } = State) 
                                          bitcask_fileops:file_tstamp(Outfile),
                                                  Size, OffSet, Tstamp),
 
-                    %% Update the keydir of all keys we've seen over this merge
-                    ok = bitcask_nifs:keydir_put(State#mstate.all_keydir, K,
-                                         bitcask_fileops:file_tstamp(Outfile),
-                                                 Size, OffSet, Tstamp),
                     State1#mstate { out_file = Outfile }
             end
     end.
@@ -711,19 +704,58 @@ close_outfile(_State=#mstate{out_file=OutFile,hint_keydir=HintKeyDir}) ->
     bitcask_fileops:create_hintfile(OutFile, HintKeyDir).
 
 
-out_of_date(_Key, _Tstamp, _ExpiryTime, []) ->
+out_of_date(_Key, _Tstamp, _FileId, _Pos, _ExpiryTime, []) ->
     false;
-out_of_date(_Key, Tstamp, ExpiryTime, _KeyDirs) when Tstamp < ExpiryTime ->
+out_of_date(_Key, Tstamp, _FileId, _Pos, ExpiryTime, _KeyDirs) when Tstamp < ExpiryTime ->
     true;
-out_of_date(Key, Tstamp, ExpiryTime, [KeyDir|Rest]) ->
+out_of_date(Key, Tstamp, FileId, {Offset, _} = Pos, ExpiryTime, [KeyDir | Rest]) ->
     case bitcask_nifs:keydir_get(KeyDir, Key) of
         not_found ->
-            out_of_date(Key, Tstamp, ExpiryTime, Rest);
+            out_of_date(Key, Tstamp, FileId, Pos, ExpiryTime, Rest);
 
         E when is_record(E, bitcask_entry) ->
-            case Tstamp < E#bitcask_entry.tstamp of
-                true  -> true;
-                false -> out_of_date(Key, Tstamp, ExpiryTime, Rest)
+            if
+                E#bitcask_entry.tstamp == Tstamp ->
+                    %% Exact match. In this situation, we use the file id and offset
+                    %% as a tie breaker. The assumption is that the merge
+                    %% starts with the newest files first, thus we want data from
+                    %% the highest file_id and the highest offset in that file.
+                    if
+                        E#bitcask_entry.file_id > FileId ->
+                            true;
+
+                        E#bitcask_entry.file_id == FileId ->
+                            case E#bitcask_entry.offset > Offset of
+                                true ->
+                                    true;
+                                false ->
+                                    out_of_date(Key, Tstamp, FileId, Pos, ExpiryTime, Rest)
+                            end;
+
+                        true ->
+                            %% At this point the following conditions are true:
+                            %% The file_id in the keydir is older (<) the file
+                            %% id we're currently merging...
+                            %%
+                            %% OR:
+                            %%
+                            %% The file_id in the keydir is the same (==) as the
+                            %% file we're merging BUT the offset the keydir has
+                            %% is older (<=) the offset we are currently
+                            %% processing.
+                            %%
+                            %% Thus, we are NOT out of date. Check the rest of the keydirs
+                            %% to ensure this holds true.
+                            out_of_date(Key, Tstamp, FileId, Pos, ExpiryTime, Rest)
+                    end;
+
+                E#bitcask_entry.tstamp < Tstamp ->
+                    %% Not out of date -- check rest of the keydirs
+                    out_of_date(Key, Tstamp, FileId, Pos, ExpiryTime, Rest);
+
+                true ->
+                    %% Out of date!
+                    true
             end;
 
         {error, Reason} ->
