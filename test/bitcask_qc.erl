@@ -88,7 +88,7 @@ prop_merge() ->
 
 prop_merge_test_() ->
     {timeout, 60, fun() ->
-                          P = ?QC_OUT(prop_merge()),
+                          P = prop_merge(),
                           case catch(eqc:current_counterexample()) of
                               CE when is_list(CE) ->
                                   ?debugFmt("Using counter example: ~p\n", [CE]),
@@ -100,15 +100,15 @@ prop_merge_test_() ->
                   end}.
 
 merge1_test() ->
-    ?assert(eqc:check(?QC_OUT(prop_merge()),
+    ?assert(eqc:check(prop_merge(),
                       [{[{put,<<0>>,<<>>},{delete,<<0>>,<<>>}],1,1}])).
 
 merge2_test() ->
-    ?assert(eqc:check(?QC_OUT(prop_merge()),
+    ?assert(eqc:check(prop_merge(),
                       [{[{put,<<1>>,<<>>},{delete,<<0>>,<<>>}],1,1}])).
 
 merge3_test() ->
-    ?assert(eqc:check(?QC_OUT(prop_merge()),
+    ?assert(eqc:check(prop_merge(),
                       [{[{put,<<0>>,<<>>},{delete,<<0>>,<<>>},{delete,<<1>>,<<>>}],1,1}])).
 
 -endif.
