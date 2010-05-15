@@ -84,9 +84,43 @@ prop_merge() ->
                      true
                  end)).
 
+
+prop_fold() ->
+    ?LET({Keys, Values}, {keys(), values()},
+         ?FORALL({Ops, M1, M2}, {eqc_gen:non_empty(list(ops(Keys, Values))),
+                                 choose(1,128), choose(1,128)},
+                 begin
+                     ?cmd("rm -rf /tmp/bc.prop.fold"),
+
+                     %% Open a bitcask, dump the ops into it and build a model of what SHOULD
+                     %% be in the data.
+                     Ref = bitcask:open("/tmp/bc.prop.fold", [read_write, {max_file_size, M1}]),
+                     Model = apply_kv_ops(Ops, Ref, []),
+
+                     %% Build a list of the K/V pairs available to fold
+                     Actual = bitcask:fold(Ref, fun(K, V, Acc0) -> [{K, V} | Acc0] end, []),
+
+                     %% Traverse the model and verify that retrieving each key
+                     %% returns the expected value. It's important to note that the
+                     %% model keeps tombstones on deleted values so we can attempt to
+                     %% retrieve those deleted values and check the corresponding
+                     %% tombstone path in bitcask.  Verify that the bitcask contains
+                     %% exactly what we expect
+                     F = fun({K, deleted}) ->
+                                 ?assert(false == lists:keymember(K, 1, Actual));
+                            ({K, V}) ->
+                                 ?assertEqual({K, V}, lists:keyfind(K, 1, Actual))
+                         end,
+                     lists:map(F, Model),
+
+                     bitcask:close(Ref),
+                     true
+                 end)).
+
+
 -define(QC_OUT(P), eqc:on_output(fun(Str, Args) -> ?debugFmt(Str, Args) end, P)).
 
-prop_merge_test_() ->
+prop_merge_notest_() ->
     {timeout, 60, fun() ->
                           P = prop_merge(),
                           case catch(eqc:current_counterexample()) of
@@ -110,6 +144,21 @@ merge2_test() ->
 merge3_test() ->
     ?assert(eqc:check(prop_merge(),
                       [{[{put,<<0>>,<<>>},{delete,<<0>>,<<>>},{delete,<<1>>,<<>>}],1,1}])).
+
+
+prop_fold_test_() ->
+    {timeout, 60, fun() ->
+                          P = prop_fold(),
+                          case catch(eqc:current_counterexample()) of
+                              CE when is_list(CE) ->
+                                  ?debugFmt("Using counter example: ~p\n", [CE]),
+                                  ?assert(eqc:check(P, CE));
+                              _ ->
+                                  ?assert(eqc:quickcheck(P))
+
+                          end
+                  end}.
+
 
 -endif.
 
