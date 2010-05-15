@@ -281,28 +281,29 @@ fold(Ref, Fun, Acc0) ->
     {ok, Bloom} = ebloom:new(1000000,0.00003,Tseed), % arbitrary large bloom
     ExpiryTime = expiry_time(State#bc_state.opts),
     SubFun = fun(K,V,TStamp,{Offset,_Sz},Acc) ->
-            case (V =:= ?TOMBSTONE) orelse (TStamp < ExpiryTime) of
+            case ebloom:contains(Bloom,K) orelse (TStamp < ExpiryTime) of
                 true ->
                     Acc;
                 false ->
-                    case ebloom:contains(Bloom,K) of
-                        true ->
+                    case bitcask_nifs:keydir_get(
+                           State#bc_state.keydir, K) of
+                        not_found ->
                             Acc;
-                        false ->
-                            case bitcask_nifs:keydir_get(State#bc_state.keydir, K) of
-                                not_found ->
+                        E when is_record(E, bitcask_entry) ->
+                            case Offset =:= E#bitcask_entry.offset of
+                                false ->
                                     Acc;
-                                E when is_record(E, bitcask_entry) ->
-                                    case Offset =:= E#bitcask_entry.offset of
-                                        false ->
-                                            Acc;
+                                true ->
+                                    ebloom:insert(Bloom,K),
+                                    case V =:= ?TOMBSTONE of
                                         true ->
-                                            ebloom:insert(Bloom,K),
+                                            Acc;
+                                        false ->
                                             Fun(K,V,Acc)
-                                    end;
-                                {error,Reason} ->
-                                    {error,Reason}
-                            end
+                                    end
+                            end;
+                        {error,Reason} ->
+                            {error,Reason}
                     end
             end
     end,
@@ -951,6 +952,15 @@ expire_merge_test() ->
 
     close(B),
     ok.
-    
+
+fold_deleted_test() ->    
+    os:cmd("rm -rf /tmp/bc.test.fold_delete"),
+    B = bitcask:open("/tmp/bc.test.fold_delete",
+                     [read_write,{max_file_size, 1}]),
+    ok = bitcask:put(B,<<"k">>,<<"v">>),
+    ok = bitcask:delete(B,<<"k">>),
+    true = ([] =:= bitcask:fold(B, fun(K, V, Acc0) -> [{K,V}|Acc0] end, [])),
+    close(B),
+    ok.
 
 -endif.
