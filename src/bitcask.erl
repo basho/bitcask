@@ -310,9 +310,11 @@ fold(Ref, Fun, Acc0) ->
     subfold(SubFun,ReadFiles,Acc0).
 subfold(_SubFun,[],Acc) ->
     Acc;
-subfold(SubFun,[File|Rest],Acc) ->
+subfold(SubFun,[File|Rest],Acc0) ->
     {ok,FD} = bitcask_fileops:open_file(File),
-    subfold(SubFun,Rest,bitcask_fileops:fold(FD,SubFun,Acc)).
+    Acc = bitcask_fileops:fold(FD, SubFun, Acc0),
+    bitcask_fileops:close(FD),
+    subfold(SubFun,Rest,Acc).
 
 %% @doc Merge several data files within a bitcask datastore into a more compact form.
 -spec merge(Dirname::string()) -> ok | {error, any()}.
