@@ -30,6 +30,18 @@
 
 -compile(export_all).
 
+-define(QC_OUT(P),
+        eqc:on_output(fun(Str, Args) -> ?debugFmt(Str, Args) end, P)).
+
+qc(P) ->
+    case catch(eqc:current_counterexample()) of
+        CE when is_list(CE) ->
+            ?debugFmt("Using counter example: ~p\n", [CE]),
+            ?assert(eqc:check(P, CE));
+        _ ->
+            ?assert(eqc:quickcheck(P))
+    end.
+
 keys() ->
     eqc_gen:non_empty(list(eqc_gen:non_empty(binary()))).
 
@@ -92,8 +104,8 @@ prop_merge() ->
 
 prop_fold() ->
     ?LET({Keys, Values}, {keys(), values()},
-         ?FORALL({Ops, M1, _M2}, {eqc_gen:non_empty(list(ops(Keys, Values))),
-                                 choose(1,128), choose(1,128)},
+         ?FORALL({Ops, M1}, {eqc_gen:non_empty(list(ops(Keys, Values))),
+                             choose(1,128)},
                  begin
                      ?cmd("rm -rf /tmp/bc.prop.fold"),
 
@@ -130,21 +142,8 @@ prop_fold() ->
                  end)).
 
 
--define(QC_OUT(P),
-        eqc:on_output(fun(Str, Args) -> ?debugFmt(Str, Args) end, P)).
-
 prop_merge_notest_() ->
-    {timeout, 60, fun() ->
-                          P = prop_merge(),
-                          case catch(eqc:current_counterexample()) of
-                              CE when is_list(CE) ->
-                                  ?debugFmt("Using counter example: ~p\n", [CE]),
-                                  ?assert(eqc:check(P, CE));
-                              _ ->
-                                  ?assert(eqc:quickcheck(P))
-
-                          end
-                  end}.
+    {timeout, 60, fun() -> qc(prop_merge()) end}.
 
 merge1_test() ->
     ?assert(eqc:check(prop_merge(),
@@ -161,19 +160,8 @@ merge3_test() ->
                          {delete,<<1>>,<<>>}],
                         1,1}])).
 
-
 prop_fold_test_() ->
-    {timeout, 60, fun() ->
-                          P = prop_fold(),
-                          case catch(eqc:current_counterexample()) of
-                              CE when is_list(CE) ->
-                                  ?debugFmt("Using counter example: ~p\n", [CE]),
-                                  ?assert(eqc:check(P, CE));
-                              _ ->
-                                  ?assert(eqc:quickcheck(P))
-
-                          end
-                  end}.
+    {timeout, 60, fun() -> qc(prop_fold()) end}.
 
 
 -endif.
