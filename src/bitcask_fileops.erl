@@ -29,6 +29,7 @@
 -export([create_file/2,
          open_file/1,
          close/1,
+         close_for_writing/1,
          write/4,
          read/3,
          sync/1,
@@ -69,7 +70,8 @@ create_file(DirName, Opts) ->
 open_file(Filename) ->
     case file:open(Filename, [read, raw, binary]) of
         {ok, FD} ->
-            {ok, #filestate{filename = Filename, tstamp = file_tstamp(Filename),
+            {ok, #filestate{mode = read_only,
+                            filename = Filename, tstamp = file_tstamp(Filename),
                             fd = FD, ofs = 0 }};
         {error, Reason} ->
             {error, Reason}
@@ -78,9 +80,23 @@ open_file(Filename) ->
 
 %% @doc Use when done writing a file.  (never open for writing again)
 %% @spec close(filestate()) -> ok
-close(#filestate{ fd = FD }) ->
+close(#filestate{ fd = FD, hintfd = HintFd }) ->
     file:close(FD),
+    case HintFd of
+        undefined ->
+            ok;
+        _ ->
+            file:close(HintFd)
+    end,
     ok.
+
+%% @doc Close a file for writing, but leave it open for reads.
+%% @spec close_for_writing(filestate()) -> filestate().
+close_for_writing(#filestate { mode = read_write, fd = Fd, hintfd = HintFd } = State) ->
+    file:sync(Fd),
+    file:sync(HintFd),
+    file:close(HintFd),
+    State#filestate { mode = read_only, hintfd = undefined }.
 
 %% @doc Use only after merging, to permanently delete a data file.
 %% @spec delete(filestate()) -> ok
@@ -97,6 +113,8 @@ delete(#filestate{ filename = FN } = State) ->
 %% @spec write(filestate(), 
 %%             Key :: binary(), Value :: binary(), Tstamp :: integer()) ->
 %%       {ok, filestate(), Offset :: integer(), Size :: integer()}
+write(#filestate { mode = read_only }, _K, _V, _Tstamp) ->
+    {error, read_only};
 write(Filestate=#filestate{fd = FD, hintfd = HintFD, ofs = Offset},
       Key, Value, Tstamp) ->
     KeySz = size(Key),
@@ -147,8 +165,9 @@ read(#filestate { fd = FD }, Offset, Size) ->
             {error, Reason}
     end.
 
-sync(#filestate { fd = Fd }) ->
-    ok = file:sync(Fd).
+sync(#filestate { mode = read_write, fd = Fd, hintfd = HintFd }) ->
+    ok = file:sync(Fd),
+    ok = file:sync(HintFd).
 
 fold(#filestate { fd = Fd }, Fun, Acc) ->
     %% TODO: Add some sort of check that this is a read-only file
@@ -363,14 +382,16 @@ create_file_loop(DirName, Opts, Tstamp) ->
                     {file_descriptor, prim_file, {_Port, RealFd}} = FD,
                     case bitcask_nifs:set_osync(RealFd) of
                         ok ->
-                            {ok, #filestate{filename = Filename,
+                            {ok, #filestate{mode = read_write,
+                                            filename = Filename,
                                             tstamp = file_tstamp(Filename),
                                             hintfd = HintFD, fd = FD, ofs = 0}};
                         {error, Reason} ->
                             {error, Reason}
                     end;
                 _ ->
-                    {ok, #filestate{filename = Filename,
+                    {ok, #filestate{mode = read_write,
+                                    filename = Filename,
                                     tstamp = file_tstamp(Filename),
                                     hintfd = HintFD, fd = FD, ofs = 0}}
             end;

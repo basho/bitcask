@@ -226,13 +226,13 @@ put(Ref, Key, Value) ->
             %% one, just transition it. The thinking is that closing/reopening
             %% for read only access would flush the O/S cache for the file,
             %% which may be undesirable.
-            ok = bitcask_fileops:sync(WriteFile),
+            LastWriteFile = bitcask_fileops:close_for_writing(WriteFile),
             {ok, NewWriteFile} = bitcask_fileops:create_file(State#bc_state.dirname,
                                                              State#bc_state.opts),
             ok = bitcask_lockops:write_activefile(State#bc_state.write_lock,
                                                   bitcask_fileops:filename(NewWriteFile)),
             State2 = State#bc_state{ write_file = NewWriteFile,
-                                     read_files = [State#bc_state.write_file |
+                                     read_files = [LastWriteFile | 
                                                    State#bc_state.read_files]};
         ok ->
             State2 = State

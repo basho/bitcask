@@ -7,7 +7,8 @@
 
 
 %% @type filestate().
--record(filestate, {filename, % Filename
+-record(filestate, {mode,     % File mode: read_only, read_write
+                    filename, % Filename
                     tstamp,   % Tstamp portion of filename
                     fd,       % File handle
                     hintfd,   % File handle for hints
