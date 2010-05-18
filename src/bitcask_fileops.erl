@@ -36,7 +36,7 @@
          delete/1,
          fold/3,
          fold_keys/3, fold_keys/4,
-         create_hintfile/1, create_hintfile/2,
+         create_hintfile/1,
          mk_filename/2,
          filename/1,
          hintfile_name/1,
@@ -223,21 +223,6 @@ create_hintfile(State) when is_record(State, filestate) ->
         end,
     generate_hintfile(hintfile_name(State),
                       {?MODULE, fold_keys_loop, [State#filestate.fd, 0, F]}).
-
-create_hintfile(State, KeyDir) when is_record(State, filestate) ->
-    F = fun(E, HintFd) ->
-                #bitcask_entry{ key = Key, total_sz = TotalSz,
-                                offset = Offset, tstamp = Tstamp } = E,
-                Iolist = hintfile_entry(Key, Tstamp, {Offset, TotalSz}),
-                case file:write(HintFd, Iolist) of
-                    ok ->
-                        HintFd;
-                    {error, Reason} ->
-                        throw({error, Reason})
-                end
-        end,
-    generate_hintfile(hintfile_name(State),
-                      {bitcask_nifs, keydir_fold, [KeyDir, F]}).
 
 
 mk_filename(Dirname, Tstamp) ->

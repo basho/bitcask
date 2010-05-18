@@ -392,10 +392,7 @@ merge(Dirname, Opts, FilesToMerge0) ->
     {ok, Outfile} = bitcask_fileops:create_file(Dirname, Opts),
     ok = bitcask_lockops:write_activefile(Lock, bitcask_fileops:filename(Outfile)),
 
-    %% Initialize the other keydirs we need. The hint keydir will get recreated
-    %% each time we wrap a file, so that it only contains keys associated
-    %% with the current out_file
-    {ok, HintKeyDir} = bitcask_nifs:keydir_new(),
+    %% Initialize the other keydirs we need.
     {ok, DelKeyDir} = bitcask_nifs:keydir_new(),
 
     %% Initialize our state for the merge
@@ -406,7 +403,6 @@ merge(Dirname, Opts, FilesToMerge0) ->
                       out_file = Outfile,
                       merged_files = [],
                       live_keydir = LiveKeyDir,
-                      hint_keydir = HintKeyDir,
                       del_keydir = DelKeyDir,
                       expiry_time = expiry_time(Opts),
                       opts = Opts },
@@ -415,7 +411,8 @@ merge(Dirname, Opts, FilesToMerge0) ->
     State1 = merge_files(State),
 
     %% Make sure to close the final output file
-    close_outfile(State1),
+    ok = bitcask_fileops:sync(State1#mstate.out_file),
+    ok = bitcask_fileops:close(State1#mstate.out_file),
 
     %% Cleanup the original input files and release our lock
     [begin
@@ -663,7 +660,8 @@ merge_single_entry(K, V, Tstamp, FileId, {Offset, _} = Pos,
                                             K, V, State#mstate.max_file_size) of
                             wrap ->
                                 %% Close the current output file
-                                close_outfile(State),
+                                ok = bitcask_fileops:sync(State#mstate.out_file),
+                                ok = bitcask_fileops:close(State#mstate.out_file),
 
                                 %% Start our next file and update state
                                 {ok, NewFile} = bitcask_fileops:create_file(Dirname,
@@ -671,9 +669,7 @@ merge_single_entry(K, V, Tstamp, FileId, {Offset, _} = Pos,
                                 NewFileName = bitcask_fileops:filename(NewFile),
                                 ok = bitcask_lockops:write_activefile(State#mstate.merge_lock,
                                                                       NewFileName),
-                                {ok, HintKeyDir} = bitcask_nifs:keydir_new(),
-                                State#mstate { out_file = NewFile,
-                                               hint_keydir = HintKeyDir };
+                                State#mstate { out_file = NewFile };
                             ok ->
                                 State
                         end,
@@ -689,22 +685,9 @@ merge_single_entry(K, V, Tstamp, FileId, {Offset, _} = Pos,
                                             bitcask_fileops:file_tstamp(Outfile),
                                             Size, OffSet, Tstamp),
 
-                    %% Update the keydir for the current out file
-                    ok = bitcask_nifs:keydir_put(State#mstate.hint_keydir, K,
-                                         bitcask_fileops:file_tstamp(Outfile),
-                                                 Size, OffSet, Tstamp),
-
                     State1#mstate { out_file = Outfile }
             end
     end.
-
-close_outfile(_State=#mstate{out_file=OutFile,hint_keydir=HintKeyDir}) ->
-    %% Close the current output file
-    ok = bitcask_fileops:sync(OutFile),
-    ok = bitcask_fileops:close(OutFile),
-
-    %% Generate the hints file, using the keydir
-    bitcask_fileops:create_hintfile(OutFile, HintKeyDir).
 
 
 out_of_date(_Key, _Tstamp, _FileId, _Pos, _ExpiryTime, []) ->
