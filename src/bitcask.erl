@@ -85,26 +85,9 @@ open(Dirname, Opts) ->
 
     %% If the read_write option is set, attempt to acquire the write lock file.
     %% Do this first to avoid unnecessary processing of files for reading.
-    case proplists:get_bool(read_write, Opts) of
-        true ->
-            %% Try to acquire the write lock, or bail if unable to
-            case bitcask_lockops:acquire(write, Dirname) of
-                {ok, WriteLock} ->
-                    %% Open up the new file for writing
-                    %% and update the write lock file
-                    {ok, WritingFile} = bitcask_fileops:create_file(
-                                          Dirname, Opts),
-                    WritingFilename = bitcask_fileops:filename(WritingFile),
-                    ok = bitcask_lockops:write_activefile(
-                           WriteLock, WritingFilename);
-                {error, Reason} ->
-                    WriteLock = undefined,
-                    WritingFile = undefined, % Make erlc happy w/ non-local exit
-                    throw({error, {write_locked, Reason}})
-            end;
-        false ->
-            WriteLock = undefined,
-            WritingFile = undefined
+    WritingFile = case proplists:get_bool(read_write, Opts) of
+        true -> fresh;
+        false -> undefined
     end,
 
     %% Get the max file size parameter from opts
@@ -154,7 +137,7 @@ open(Dirname, Opts) ->
     erlang:put(Ref, #bc_state {dirname = Dirname,
                                read_files = ReadFiles,
                                write_file = WritingFile, % <fd>|undefined|fresh
-                               write_lock = WriteLock,
+                               write_lock = undefined,
                                max_file_size = MaxFileSize,
                                opts = ExpOpts,
                                keydir = KeyDir}),
@@ -173,6 +156,8 @@ close(Ref) ->
     %% Cleanup the write file and associated lock
     case State#bc_state.write_file of
         undefined ->
+            ok;
+        fresh ->
             ok;
         _ ->
             ok = bitcask_fileops:close(State#bc_state.write_file),
@@ -238,6 +223,23 @@ put(Ref, Key, Value) ->
             State2 = State#bc_state{ write_file = NewWriteFile,
                                      read_files = [LastWriteFile | 
                                                    State#bc_state.read_files]};
+        fresh ->
+            %% Time to start our first write file.
+            case bitcask_lockops:acquire(write, State#bc_state.dirname) of
+                {ok, WriteLock} ->
+                    {ok, NewWriteFile} = bitcask_fileops:create_file(
+                                           State#bc_state.dirname,
+                                           State#bc_state.opts),
+                    ok = bitcask_lockops:write_activefile(
+                           WriteLock,
+                           bitcask_fileops:filename(NewWriteFile)),
+                    State2 = State#bc_state{ write_file = NewWriteFile,
+                                             write_lock = WriteLock };
+                {error, Reason} ->
+                    State2 = undefined,
+                    throw({error, {write_locked, Reason}})
+            end;
+
         ok ->
             State2 = State
     end,
@@ -265,6 +267,8 @@ sync(Ref) ->
     State = get_state(Ref),
     case (State#bc_state.write_file) of
         undefined ->
+            ok;
+        fresh ->
             ok;
         File ->
             ok = bitcask_fileops:sync(File)
@@ -878,9 +882,9 @@ wrap_test() ->
                         {ok, V} = bitcask:get(B, K)
                 end, undefined, default_dataset()),
 
-    %% Finally, verify that there are 4 files currently opened for
-    %% read (one for each key and the initial writing one)
-    4 = length(readable_files("/tmp/bc.test.wrap")).
+    %% Finally, verify that there are 3 files currently opened for read
+    %% (one for each key)
+    3 = length(readable_files("/tmp/bc.test.wrap")).
 
 
 merge_test() ->
@@ -890,7 +894,7 @@ merge_test() ->
                        [{max_file_size, 1}], default_dataset())),
 
     %% Verify number of files in directory
-    4 = length(readable_files("/tmp/bc.test.merge")),
+    3 = length(readable_files("/tmp/bc.test.merge")),
 
     %% Merge everything
     ok = merge("/tmp/bc.test.merge"),
@@ -986,5 +990,22 @@ fold_deleted_test() ->
     true = ([] =:= bitcask:fold(B, fun(K, V, Acc0) -> [{K,V}|Acc0] end, [])),
     close(B),
     ok.
+
+lazy_open_test() ->
+    os:cmd("rm -rf /tmp/bc.test.opp_open"),
+
+    %% Just opening/closing should not create any files.
+    B1 = bitcask:open("/tmp/bc.test.opp_open", [read_write]),
+    bitcask:close(B1),
+    0 = length(readable_files("/tmp/bc.test.opp_open")),
+
+    B2 = bitcask:open("/tmp/bc.test.opp_open", [read_write]),
+    ok = bitcask:put(B2,<<"k">>,<<"v">>),
+    bitcask:close(B2),
+    B3 = bitcask:open("/tmp/bc.test.opp_open", [read_write]),
+    bitcask:close(B3),
+    1 = length(readable_files("/tmp/bc.test.opp_open")),
+    ok.
+    
 
 -endif.

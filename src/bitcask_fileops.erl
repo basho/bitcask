@@ -63,7 +63,6 @@
 create_file(DirName, Opts) ->
     create_file_loop(DirName, Opts, tstamp()).
 
-
 %% @doc Open an existing file for reading.
 %% Called with fully-qualified filename.
 %% @spec open_file(Filename :: string()) -> {ok, filestate()} | {error, any()}
@@ -77,9 +76,10 @@ open_file(Filename) ->
             {error, Reason}
     end.
 
-
 %% @doc Use when done writing a file.  (never open for writing again)
 %% @spec close(filestate()) -> ok
+close(fresh) -> ok;
+close(undefined) -> ok;
 close(#filestate{ fd = FD, hintfd = HintFd }) ->
     file:close(FD),
     case HintFd of
@@ -92,7 +92,10 @@ close(#filestate{ fd = FD, hintfd = HintFd }) ->
 
 %% @doc Close a file for writing, but leave it open for reads.
 %% @spec close_for_writing(filestate()) -> filestate().
-close_for_writing(#filestate { mode = read_write, fd = Fd, hintfd = HintFd } = State) ->
+close_for_writing(fresh) -> ok;
+close_for_writing(undefined) -> ok;
+close_for_writing(State = 
+                  #filestate{ mode = read_write, fd = Fd, hintfd = HintFd }) ->
     file:sync(Fd),
     file:sync(HintFd),
     file:close(HintFd),
@@ -169,6 +172,7 @@ sync(#filestate { mode = read_write, fd = Fd, hintfd = HintFd }) ->
     ok = file:sync(Fd),
     ok = file:sync(HintFd).
 
+fold(fresh, _Fun, Acc) -> Acc;
 fold(#filestate { fd = Fd }, Fun, Acc) ->
     %% TODO: Add some sort of check that this is a read-only file
     {ok, _} = file:position(Fd, bof),
@@ -182,6 +186,7 @@ fold(#filestate { fd = Fd }, Fun, Acc) ->
             {error, Reason}
     end.
 
+fold_keys(fresh, _Fun, Acc) -> Acc;
 fold_keys(State, Fun, Acc) ->
     fold_keys(State, Fun, Acc, default).
 
@@ -242,6 +247,9 @@ file_tstamp(#filestate{tstamp=Tstamp}) ->
 file_tstamp(Filename) when is_list(Filename) ->
     list_to_integer(filename:basename(Filename, ".bitcask.data")).
 
+check_write(fresh, _Key, _Value, _MaxSize) ->
+    %% for the very first write, special-case
+    fresh;
 check_write(#filestate { ofs = Offset }, Key, Value, MaxSize) ->
     Size = ?HEADER_SIZE + size(Key) + size(Value),
     case (Offset + Size) > MaxSize of
