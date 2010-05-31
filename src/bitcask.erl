@@ -150,6 +150,10 @@ close(Ref) ->
     State = get_state(Ref),
     erlang:erase(Ref),
 
+    %% Manually release the keydir. If, for some reason, this failed GC would
+    %% still get the job done.
+    bitcask_nifs:keydir_release(State#bc_state.keydir),
+
     %% Clean up all the reading files
     [ok = bitcask_fileops:close(F) || F <- State#bc_state.read_files],
 
@@ -1006,6 +1010,16 @@ lazy_open_test() ->
     bitcask:close(B3),
     1 = length(readable_files("/tmp/bc.test.opp_open")),
     ok.
-    
+
+open_reset_open_test() ->
+    os:cmd("rm -rf /tmp/bc.test.twice"),
+    B1 = bitcask:open("/tmp/bc.test.twice", [read_write]),
+    ok = bitcask:put(B1,<<"k">>,<<"v">>),
+    bitcask:close(B1),
+    os:cmd("rm -rf /tmp/bc.test.twice"),
+    B2 = bitcask:open("/tmp/bc.test.twice", [read_write]),
+    ok = bitcask:put(B2,<<"x">>,<<"q">>),
+    not_found = bitcask:get(B2,<<"k">>),
+    bitcask:close(B2).
 
 -endif.

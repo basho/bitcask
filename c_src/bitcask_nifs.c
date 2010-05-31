@@ -135,6 +135,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_copy(ErlNifEnv* env, int argc, const ERL_NIF_TE
 ERL_NIF_TERM bitcask_nifs_keydir_itr(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_info(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_keydir_release(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
 ERL_NIF_TERM bitcask_nifs_create_file(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_create_tmp_file(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
@@ -151,6 +152,8 @@ ERL_NIF_TERM errno_error_tuple(ErlNifEnv* env, ERL_NIF_TERM key, int error);
 
 static void lock_release(bitcask_lock_handle* handle);
 
+static void bitcask_nifs_keydir_resource_cleanup(ErlNifEnv* env, void* arg);
+
 static ErlNifFunc nif_funcs[] =
 {
     {"keydir_new", 0, bitcask_nifs_keydir_new0},
@@ -164,6 +167,7 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_itr", 1, bitcask_nifs_keydir_itr},
     {"keydir_itr_next", 1, bitcask_nifs_keydir_itr_next},
     {"keydir_info", 1, bitcask_nifs_keydir_info},
+    {"keydir_release", 1, bitcask_nifs_keydir_release},
 
     {"create_file", 1, bitcask_nifs_create_file},
 
@@ -672,6 +676,20 @@ ERL_NIF_TERM bitcask_nifs_keydir_info(ErlNifEnv* env, int argc, const ERL_NIF_TE
     }
 }
 
+ERL_NIF_TERM bitcask_nifs_keydir_release(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_keydir_handle* handle;
+
+    if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle))
+    {
+        bitcask_nifs_keydir_resource_cleanup(env, handle);
+        return ATOM_OK;
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
 
 ERL_NIF_TERM bitcask_nifs_create_file(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
@@ -921,6 +939,19 @@ static void bitcask_nifs_keydir_resource_cleanup(ErlNifEnv* env, void* arg)
 {
     bitcask_keydir_handle* handle = (bitcask_keydir_handle*)arg;
     bitcask_keydir* keydir = handle->keydir;
+
+    // First, check that there is even a keydir available. If keydir_release
+    // was invoked manually, we might have already cleaned up the keydir
+    // and this round of cleanup can noop. Otherwise, clear out the handle's
+    // reference to the keydir so that repeat calls function as expected
+    if (!handle->keydir)
+    {
+        return;
+    }
+    else
+    {
+        handle->keydir = 0;
+    }
 
     // If the keydir has a lock, we need to decrement the refcount and
     // potentially release it

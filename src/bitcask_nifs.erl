@@ -33,6 +33,7 @@
          keydir_itr_next/1,
          keydir_fold/3,
          keydir_info/1,
+         keydir_release/1,
          create_file/1,
          set_osync/1,
          lock_acquire/2,
@@ -96,6 +97,9 @@ keydir_fold(Ref, Fun, Acc0) ->
     end.
 
 keydir_info(_Ref) ->
+    "NIF library not loaded".
+
+keydir_release(_Ref) ->
     "NIF library not loaded".
 
 create_file(_Filename) ->
