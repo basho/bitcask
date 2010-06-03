@@ -142,7 +142,7 @@ prop_fold() ->
                  end)).
 
 
-prop_merge_notest_() ->
+prop_merge_test_() ->
     {timeout, 60, fun() -> qc(prop_merge()) end}.
 
 merge1_test() ->
