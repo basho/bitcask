@@ -25,6 +25,7 @@
 
 -export([acquire/2,
          release/1,
+         delete_stale_lock/2,
          read_activefile/2,
          write_activefile/2]).
 
@@ -82,6 +83,8 @@ write_activefile(Lock, ActiveFilename) ->
     Contents = iolist_to_binary([os:getpid(), " ", ActiveFilename, "\n"]),
     bitcask_nifs:lock_writedata(Lock, Contents).
 
+delete_stale_lock(Type, Dirname) ->
+    delete_stale_lock(lock_filename(Type,Dirname)).
 
 %% ===================================================================
 %% Internal functions

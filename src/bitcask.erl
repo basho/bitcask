@@ -83,10 +83,12 @@ open(Dirname, Opts) ->
     %% Make sure the directory exists
     ok = filelib:ensure_dir(filename:join(Dirname, "bitcask")),
 
-    %% If the read_write option is set, attempt to acquire the write lock file.
+    %% If the read_write option is set, attempt to release any stale write lock.
     %% Do this first to avoid unnecessary processing of files for reading.
     WritingFile = case proplists:get_bool(read_write, Opts) of
-        true -> fresh;
+        true ->
+          bitcask_lockops:delete_stale_lock(write, Dirname),
+          fresh;
         false -> undefined
     end,
 
