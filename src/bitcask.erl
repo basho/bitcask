@@ -41,6 +41,7 @@
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("kernel/include/file.hrl").
 -endif.
 
 %% @type bc_state().
@@ -843,6 +844,13 @@ roundtrip_test() ->
     {ok, <<"v2">>} = bitcask:get(B, <<"k2">>),
     {ok, <<"v3">>} = bitcask:get(B, <<"k">>),
     close(B).
+
+write_lock_perms_test() ->
+    os:cmd("rm -rf /tmp/bc.test.writelockperms"),
+    B = bitcask:open("/tmp/bc.test.writelockperms", [read_write]),
+    ok = bitcask:put(B, <<"k">>, <<"v">>),
+    {ok, Info} = file:read_file_info("/tmp/bc.test.writelockperms/bitcask.write.lock"),
+    ?assertEqual(8#00600, Info#file_info.mode band 8#00600).
 
 list_data_files_test() ->
     os:cmd("rm -rf /tmp/bc.test.list; mkdir -p /tmp/bc.test.list"),

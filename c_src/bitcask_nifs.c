@@ -768,7 +768,7 @@ ERL_NIF_TERM bitcask_nifs_lock_acquire(ErlNifEnv* env, int argc, const ERL_NIF_T
         }
 
         // Try to open the lock file -- allocate a resource if all goes well.
-        int fd = open(filename, flags);
+        int fd = open(filename, flags, 0600);
         if (fd > -1)
         {
             // Successfully opened the file -- setup a resource to track the FD.
