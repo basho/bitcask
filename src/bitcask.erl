@@ -678,8 +678,7 @@ merge_files(#mstate { input_files = [File | Rest]} = State) ->
     ok = bitcask_fileops:close(File),
     merge_files(State1#mstate { input_files = Rest }).
 
-merge_single_entry(K, V, Tstamp, FileId, {Offset, _} = Pos,
-                   #mstate { dirname = Dirname } = State) ->
+merge_single_entry(K, V, Tstamp, FileId, {Offset, _} = Pos, State) ->
     case out_of_date(K, Tstamp, FileId, Pos, State#mstate.expiry_time,
                      [State#mstate.live_keydir, State#mstate.del_keydir]) of
         true ->
@@ -701,45 +700,49 @@ merge_single_entry(K, V, Tstamp, FileId, {Offset, _} = Pos,
                     State;
                 false ->
                     ok = bitcask_nifs:keydir_remove(State#mstate.del_keydir, K),
-
-                    %% See if it's time to rotate to the next file
-                    State1 =
-                        case bitcask_fileops:check_write(State#mstate.out_file,
-                                            K, V, State#mstate.max_file_size) of
-                            wrap ->
-                                %% Close the current output file
-                                ok = bitcask_fileops:sync(State#mstate.out_file),
-                                ok = bitcask_fileops:close(State#mstate.out_file),
-
-                                %% Start our next file and update state
-                                {ok, NewFile} = bitcask_fileops:create_file(
-                                                  Dirname,
-                                                  State#mstate.opts),
-                                NewFileName = bitcask_fileops:filename(NewFile),
-                                ok = bitcask_lockops:write_activefile(
-                                       State#mstate.merge_lock,
-                                       NewFileName),
-                                State#mstate { out_file = NewFile };
-                            ok ->
-                                State
-                        end,
-
-                    {ok, Outfile, OffSet, Size} =
-                        bitcask_fileops:write(State1#mstate.out_file,
-                                              K, V, Tstamp),
-
-                    %% Update live keydir for the current out
-                    %% file. It's possible that this is a noop, as
-                    %% someone else may have written a newer value
-                    %% whilst we were processing.
-                    bitcask_nifs:keydir_put(
-                      State#mstate.live_keydir, K,
-                      bitcask_fileops:file_tstamp(Outfile),
-                      Size, OffSet, Tstamp),
-
-                    State1#mstate { out_file = Outfile }
+                    inner_merge_write(K, V, Tstamp, State)
             end
     end.
+
+inner_merge_write(K, V, Tstamp, State) ->
+    %% write a single item while inside the merge process
+
+    %% See if it's time to rotate to the next file
+    State1 =
+        case bitcask_fileops:check_write(State#mstate.out_file,
+                                         K, V, State#mstate.max_file_size) of
+            wrap ->
+                %% Close the current output file
+                ok = bitcask_fileops:sync(State#mstate.out_file),
+                ok = bitcask_fileops:close(State#mstate.out_file),
+                
+                %% Start our next file and update state
+                {ok, NewFile} = bitcask_fileops:create_file(
+                                  State#mstate.dirname,
+                                  State#mstate.opts),
+                NewFileName = bitcask_fileops:filename(NewFile),
+                ok = bitcask_lockops:write_activefile(
+                       State#mstate.merge_lock,
+                       NewFileName),
+                State#mstate { out_file = NewFile };
+            ok ->
+                State
+        end,
+    
+    {ok, Outfile, OffSet, Size} =
+        bitcask_fileops:write(State1#mstate.out_file,
+                              K, V, Tstamp),
+    
+    %% Update live keydir for the current out
+    %% file. It's possible that this is a noop, as
+    %% someone else may have written a newer value
+    %% whilst we were processing.
+    bitcask_nifs:keydir_put(
+      State#mstate.live_keydir, K,
+      bitcask_fileops:file_tstamp(Outfile),
+      Size, OffSet, Tstamp),
+    
+    State1#mstate { out_file = Outfile }.
 
 
 out_of_date(_Key, _Tstamp, _FileId, _Pos, _ExpiryTime, []) ->
