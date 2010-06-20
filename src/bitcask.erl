@@ -1032,4 +1032,29 @@ open_reset_open_test() ->
     not_found = bitcask:get(B2,<<"k">>),
     bitcask:close(B2).
 
+delete_merge_test() ->
+    %% Initialize dataset with max_file_size set to 1 so that each file will
+    %% only contain a single key.
+    close(init_dataset("/tmp/bc.test.delmerge", [{max_file_size, 1}],
+                       default_dataset())),
+
+    %% perform some deletes, tombstones should go in their own files
+    B1 = bitcask:open("/tmp/bc.test.delmerge", [read_write,{max_file_size, 1}]),
+    ok = bitcask:delete(B1,<<"k2">>),
+    ok = bitcask:delete(B1,<<"k3">>),
+    A1 = [<<"k">>],
+    A1 = bitcask:list_keys(B1),
+    close(B1),
+
+    ok = merge("/tmp/bc.test.delmerge",[]),
+
+    %% Verify we've now only got one item left
+    B2 = bitcask:open("/tmp/bc.test.delmerge"),
+    A = [<<"k">>],
+    A = bitcask:list_keys(B2),
+%    true = ([<<"k">>] =:= bitcask:list_keys(B2)),
+    close(B2),
+
+    ok.
+
 -endif.
