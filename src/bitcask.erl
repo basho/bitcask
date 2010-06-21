@@ -1056,7 +1056,34 @@ delete_merge_test() ->
     B2 = bitcask:open("/tmp/bc.test.delmerge"),
     A = [<<"k">>],
     A = bitcask:list_keys(B2),
-%    true = ([<<"k">>] =:= bitcask:list_keys(B2)),
+    close(B2),
+
+    ok.
+
+delete_partial_merge_test() ->
+    %% Initialize dataset with max_file_size set to 1 so that each file will
+    %% only contain a single key.
+    close(init_dataset("/tmp/bc.test.pardel", [{max_file_size, 1}],
+                       default_dataset())),
+
+    %% perform some deletes, tombstones should go in their own files
+    B1 = bitcask:open("/tmp/bc.test.pardel", [read_write,{max_file_size, 1}]),
+    ok = bitcask:delete(B1,<<"k2">>),
+    ok = bitcask:delete(B1,<<"k3">>),
+    A1 = [<<"k">>],
+    A1 = bitcask:list_keys(B1),
+    close(B1),
+
+    %% selective merge, hit all of the files with deletes but not
+    %%  all of the ones with deleted data
+    ok = merge("/tmp/bc.test.pardel",[],lists:reverse(lists:nthtail(2,
+                                           lists:reverse(readable_files(
+                                               "/tmp/bc.test.pardel"))))),
+
+    %% Verify we've now only got one item left
+    B2 = bitcask:open("/tmp/bc.test.pardel"),
+    A = [<<"k">>],
+    A = bitcask:list_keys(B2),
     close(B2),
 
     ok.
