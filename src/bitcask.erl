@@ -443,6 +443,10 @@ merge(Dirname, Opts, FilesToMerge0) ->
     ok = bitcask_fileops:sync(State1#mstate.out_file),
     ok = bitcask_fileops:close(State1#mstate.out_file),
 
+    %% Explicitly release our keydirs instead of waiting for GC
+    bitcask_nifs:keydir_release(LiveKeyDir),
+    bitcask_nifs:keydir_release(DelKeyDir),    
+
     %% Cleanup the original input files and release our lock
     [begin
          bitcask_fileops:delete(F),
