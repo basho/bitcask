@@ -697,7 +697,10 @@ merge_single_entry(K, V, Tstamp, FileId, {Offset, _} = Pos, State) ->
                     bitcask_nifs:keydir_remove(State#mstate.live_keydir, K,
                                                Tstamp, FileId),
 
-                    State;
+                    case State#mstate.partial of
+                        true -> inner_merge_write(K, V, Tstamp, State);
+                        false -> State
+                    end;
                 false ->
                     ok = bitcask_nifs:keydir_remove(State#mstate.del_keydir, K),
                     inner_merge_write(K, V, Tstamp, State)
