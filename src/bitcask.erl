@@ -59,6 +59,7 @@
                   input_files,
                   out_file,
                   merged_files,
+                  partial,
                   live_keydir,
                   hint_keydir,
                   del_keydir,
@@ -366,6 +367,10 @@ merge(Dirname, Opts, FilesToMerge0) ->
             ok
     end,
 
+    %% Test to see if this is a complete or partial merge
+    Partial = not(lists:usort(readable_files(Dirname)) == 
+                  lists:usort(FilesToMerge)),
+    
     %% Try to lock for merging
     case bitcask_lockops:acquire(merge, Dirname) of
         {ok, Lock} ->
@@ -431,6 +436,7 @@ merge(Dirname, Opts, FilesToMerge0) ->
                       input_files = InFiles,
                       out_file = Outfile,
                       merged_files = [],
+                      partial = Partial,
                       live_keydir = LiveKeyDir,
                       del_keydir = DelKeyDir,
                       expiry_time = expiry_time(Opts),
