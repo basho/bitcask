@@ -19,7 +19,7 @@ clean:
 distdir:
 	$(if $(findstring tip,$(BITCASK_TAG)),$(error "You can't generate a release tarball from tip"))
 	mkdir distdir
-	hg clone . distdir/bitcask-clone
+	hg clone -u $(BITCASK_TAG) . distdir/bitcask-clone
 	cd distdir/bitcask-clone; \
 	hg archive ../$(BITCASK_TAG)
 
