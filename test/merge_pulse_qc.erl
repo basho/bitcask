@@ -105,9 +105,9 @@ prop_merge_pulse() ->
                  end)).
 
 prop_merge_pulse_test_() ->
-    {timeout, 60, fun() ->
-                          ?assert(eqc:quickcheck(?QC_OUT(prop_merge_pulse())))
-                  end}.
+    {timeout, 120, fun() ->
+                           ?assert(eqc:quickcheck(?QC_OUT(prop_merge_pulse())))
+                   end}.
 
 
 -endif. % PULSE
