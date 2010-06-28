@@ -23,7 +23,8 @@
 -author('Dave Smith <dizzyd@basho.com>').
 -author('Justin Sheehy <justin@basho.com>').
 
--export([keydir_new/0, keydir_new/1,
+-export([init/0,
+         keydir_new/0, keydir_new/1,
          keydir_mark_ready/1,
          keydir_put/6,
          keydir_get/2,
@@ -44,6 +45,10 @@
 -on_load(init/0).
 
 -include("bitcask.hrl").
+
+-ifdef(PULSE).
+-compile({parse_transform, pulse_instrument}).
+-endif.
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
