@@ -35,9 +35,16 @@
          needs_merge/1,
          status/1]).
 
--export([get_opt/2]).
+-export([get_opt/2,
+         get_filestate/2]).
 
 -include("bitcask.hrl").
+
+
+-ifdef(PULSE).
+-compile({parse_transform, pulse_instrument}).
+-compile(export_all).
+-endif.
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -188,7 +195,9 @@ get(Ref, Key, TryNum) ->
             case E#bitcask_entry.tstamp < expiry_time(State#bc_state.opts) of
                 true -> not_found;
                 false ->
-                    case get_filestate(E#bitcask_entry.file_id, State) of
+                    %% HACK: Use a fully-qualified call to get_filestate/2 so that
+                    %% we can intercept calls w/ Pulse tests.
+                    case ?MODULE:get_filestate(E#bitcask_entry.file_id, State) of
                         {error, enoent} ->
                             %% merging deleted file between keydir_get and here
                             get(Ref, Key, TryNum-1);
