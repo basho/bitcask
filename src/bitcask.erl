@@ -173,10 +173,14 @@ close(Ref) ->
     end.
 
 %% @doc Retrieve a value by key from a bitcask datastore.
--spec get(reference(), binary()) -> not_found | {ok, Value::binary()}.
+-spec get(reference(), binary()) ->
+                 not_found | {ok, Value::binary()} | {error, Err::term()}.
 get(Ref, Key) ->
-    State = get_state(Ref),
+    get(Ref, Key, 2).
 
+get(_Ref, _Key, 0) -> {error, nofile};
+get(Ref, Key, TryNum) ->
+    State = get_state(Ref),
     case bitcask_nifs:keydir_get(State#bc_state.keydir, Key) of
         not_found ->
             not_found;
@@ -184,16 +188,20 @@ get(Ref, Key) ->
             case E#bitcask_entry.tstamp < expiry_time(State#bc_state.opts) of
                 true -> not_found;
                 false ->
-                    {Filestate, S2} = get_filestate(E#bitcask_entry.file_id,
-                                                    State),
-                    put_state(Ref, S2),
-                    case bitcask_fileops:read(Filestate,
-                                              E#bitcask_entry.offset,
-                                              E#bitcask_entry.total_sz) of
-                        {ok, _Key, ?TOMBSTONE} ->
-                            not_found;
-                        {ok, _Key, Value} ->
-                            {ok, Value}
+                    case get_filestate(E#bitcask_entry.file_id, State) of
+                        {error, enoent} ->
+                            %% merging deleted file between keydir_get and here
+                            get(Ref, Key, TryNum-1);
+                        {Filestate, S2} ->
+                            put_state(Ref, S2),
+                            case bitcask_fileops:read(Filestate,
+                                                    E#bitcask_entry.offset,
+                                                    E#bitcask_entry.total_sz) of
+                                {ok, _Key, ?TOMBSTONE} ->
+                                    not_found;
+                                {ok, _Key, Value} ->
+                                    {ok, Value}
+                            end
                     end
             end;
         {error, Reason} ->
@@ -650,9 +658,14 @@ get_filestate(FileId,
         {value, Filestate} ->
             {Filestate, State};
         false ->
-            {ok, Filestate} = bitcask_fileops:open_file(Fname),
-            {Filestate, State#bc_state{read_files =
-                              [Filestate | State#bc_state.read_files]}}
+            case bitcask_fileops:open_file(Fname) of
+                {error,enoent} ->
+                    %% merge removed the file since the keydir_get
+                    {error, enoent};
+                {ok, Filestate} ->
+                    {Filestate, State#bc_state{read_files =
+                                      [Filestate | State#bc_state.read_files]}}
+            end
     end.
 
 list_data_files(Dirname, WritingFile, Mergingfile) ->
