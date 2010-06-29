@@ -354,7 +354,14 @@ ERL_NIF_TERM bitcask_nifs_keydir_put(ErlNifEnv* env, int argc, const ERL_NIF_TER
             RW_UNLOCK(keydir);
             return ATOM_OK;
         }
-        else if (old_entry->tstamp <= entry.tstamp)
+        else if ((old_entry->tstamp < entry.tstamp) ||
+
+                 ((old_entry->tstamp == entry.tstamp) &&
+                  (old_entry->file_id < entry.file_id)) ||
+
+                 ((old_entry->tstamp == entry.tstamp) &&
+                  ((old_entry->file_id == entry.file_id) &&
+                   (old_entry->offset < entry.offset))))
         {
             // Entry already exists. Decrement live counter on the fstats entry
             // for the old file ID and update both counters for new file. Note

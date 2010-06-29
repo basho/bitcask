@@ -35,9 +35,16 @@
          needs_merge/1,
          status/1]).
 
--export([get_opt/2]).
+-export([get_opt/2,
+         get_filestate/2]).
 
 -include("bitcask.hrl").
+
+
+-ifdef(PULSE).
+-compile({parse_transform, pulse_instrument}).
+-compile(export_all).
+-endif.
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -59,6 +66,7 @@
                   input_files,
                   out_file,
                   merged_files,
+                  partial,
                   live_keydir,
                   hint_keydir,
                   del_keydir,
@@ -172,10 +180,14 @@ close(Ref) ->
     end.
 
 %% @doc Retrieve a value by key from a bitcask datastore.
--spec get(reference(), binary()) -> not_found | {ok, Value::binary()}.
+-spec get(reference(), binary()) ->
+                 not_found | {ok, Value::binary()} | {error, Err::term()}.
 get(Ref, Key) ->
-    State = get_state(Ref),
+    get(Ref, Key, 2).
 
+get(_Ref, _Key, 0) -> {error, nofile};
+get(Ref, Key, TryNum) ->
+    State = get_state(Ref),
     case bitcask_nifs:keydir_get(State#bc_state.keydir, Key) of
         not_found ->
             not_found;
@@ -183,16 +195,22 @@ get(Ref, Key) ->
             case E#bitcask_entry.tstamp < expiry_time(State#bc_state.opts) of
                 true -> not_found;
                 false ->
-                    {Filestate, S2} = get_filestate(E#bitcask_entry.file_id,
-                                                    State),
-                    put_state(Ref, S2),
-                    case bitcask_fileops:read(Filestate,
-                                              E#bitcask_entry.offset,
-                                              E#bitcask_entry.total_sz) of
-                        {ok, _Key, ?TOMBSTONE} ->
-                            not_found;
-                        {ok, _Key, Value} ->
-                            {ok, Value}
+                    %% HACK: Use a fully-qualified call to get_filestate/2 so that
+                    %% we can intercept calls w/ Pulse tests.
+                    case ?MODULE:get_filestate(E#bitcask_entry.file_id, State) of
+                        {error, enoent} ->
+                            %% merging deleted file between keydir_get and here
+                            get(Ref, Key, TryNum-1);
+                        {Filestate, S2} ->
+                            put_state(Ref, S2),
+                            case bitcask_fileops:read(Filestate,
+                                                    E#bitcask_entry.offset,
+                                                    E#bitcask_entry.total_sz) of
+                                {ok, _Key, ?TOMBSTONE} ->
+                                    not_found;
+                                {ok, _Key, Value} ->
+                                    {ok, Value}
+                            end
                     end
             end;
         {error, Reason} ->
@@ -366,6 +384,10 @@ merge(Dirname, Opts, FilesToMerge0) ->
             ok
     end,
 
+    %% Test to see if this is a complete or partial merge
+    Partial = not(lists:usort(readable_files(Dirname)) == 
+                  lists:usort(FilesToMerge)),
+    
     %% Try to lock for merging
     case bitcask_lockops:acquire(merge, Dirname) of
         {ok, Lock} ->
@@ -431,6 +453,7 @@ merge(Dirname, Opts, FilesToMerge0) ->
                       input_files = InFiles,
                       out_file = Outfile,
                       merged_files = [],
+                      partial = Partial,
                       live_keydir = LiveKeyDir,
                       del_keydir = DelKeyDir,
                       expiry_time = expiry_time(Opts),
@@ -442,6 +465,10 @@ merge(Dirname, Opts, FilesToMerge0) ->
     %% Make sure to close the final output file
     ok = bitcask_fileops:sync(State1#mstate.out_file),
     ok = bitcask_fileops:close(State1#mstate.out_file),
+
+    %% Explicitly release our keydirs instead of waiting for GC
+    bitcask_nifs:keydir_release(LiveKeyDir),
+    bitcask_nifs:keydir_release(DelKeyDir),    
 
     %% Cleanup the original input files and release our lock
     [begin
@@ -640,9 +667,14 @@ get_filestate(FileId,
         {value, Filestate} ->
             {Filestate, State};
         false ->
-            {ok, Filestate} = bitcask_fileops:open_file(Fname),
-            {Filestate, State#bc_state{read_files =
-                              [Filestate | State#bc_state.read_files]}}
+            case bitcask_fileops:open_file(Fname) of
+                {error,enoent} ->
+                    %% merge removed the file since the keydir_get
+                    {error, enoent};
+                {ok, Filestate} ->
+                    {Filestate, State#bc_state{read_files =
+                                      [Filestate | State#bc_state.read_files]}}
+            end
     end.
 
 list_data_files(Dirname, WritingFile, Mergingfile) ->
@@ -668,8 +700,7 @@ merge_files(#mstate { input_files = [File | Rest]} = State) ->
     ok = bitcask_fileops:close(File),
     merge_files(State1#mstate { input_files = Rest }).
 
-merge_single_entry(K, V, Tstamp, FileId, {Offset, _} = Pos,
-                   #mstate { dirname = Dirname } = State) ->
+merge_single_entry(K, V, Tstamp, FileId, {Offset, _} = Pos, State) ->
     case out_of_date(K, Tstamp, FileId, Pos, State#mstate.expiry_time,
                      [State#mstate.live_keydir, State#mstate.del_keydir]) of
         true ->
@@ -688,48 +719,55 @@ merge_single_entry(K, V, Tstamp, FileId, {Offset, _} = Pos,
                     bitcask_nifs:keydir_remove(State#mstate.live_keydir, K,
                                                Tstamp, FileId),
 
-                    State;
+                    case State#mstate.partial of
+                        true -> inner_merge_write(K, V, Tstamp, State);
+                        false -> State
+                    end;
                 false ->
                     ok = bitcask_nifs:keydir_remove(State#mstate.del_keydir, K),
-
-                    %% See if it's time to rotate to the next file
-                    State1 =
-                        case bitcask_fileops:check_write(State#mstate.out_file,
-                                            K, V, State#mstate.max_file_size) of
-                            wrap ->
-                                %% Close the current output file
-                                ok = bitcask_fileops:sync(State#mstate.out_file),
-                                ok = bitcask_fileops:close(State#mstate.out_file),
-
-                                %% Start our next file and update state
-                                {ok, NewFile} = bitcask_fileops:create_file(
-                                                  Dirname,
-                                                  State#mstate.opts),
-                                NewFileName = bitcask_fileops:filename(NewFile),
-                                ok = bitcask_lockops:write_activefile(
-                                       State#mstate.merge_lock,
-                                       NewFileName),
-                                State#mstate { out_file = NewFile };
-                            ok ->
-                                State
-                        end,
-
-                    {ok, Outfile, OffSet, Size} =
-                        bitcask_fileops:write(State1#mstate.out_file,
-                                              K, V, Tstamp),
-
-                    %% Update live keydir for the current out
-                    %% file. It's possible that this is a noop, as
-                    %% someone else may have written a newer value
-                    %% whilst we were processing.
-                    bitcask_nifs:keydir_put(
-                      State#mstate.live_keydir, K,
-                      bitcask_fileops:file_tstamp(Outfile),
-                      Size, OffSet, Tstamp),
-
-                    State1#mstate { out_file = Outfile }
+                    inner_merge_write(K, V, Tstamp, State)
             end
     end.
+
+inner_merge_write(K, V, Tstamp, State) ->
+    %% write a single item while inside the merge process
+
+    %% See if it's time to rotate to the next file
+    State1 =
+        case bitcask_fileops:check_write(State#mstate.out_file,
+                                         K, V, State#mstate.max_file_size) of
+            wrap ->
+                %% Close the current output file
+                ok = bitcask_fileops:sync(State#mstate.out_file),
+                ok = bitcask_fileops:close(State#mstate.out_file),
+                
+                %% Start our next file and update state
+                {ok, NewFile} = bitcask_fileops:create_file(
+                                  State#mstate.dirname,
+                                  State#mstate.opts),
+                NewFileName = bitcask_fileops:filename(NewFile),
+                ok = bitcask_lockops:write_activefile(
+                       State#mstate.merge_lock,
+                       NewFileName),
+                State#mstate { out_file = NewFile };
+            ok ->
+                State
+        end,
+    
+    {ok, Outfile, OffSet, Size} =
+        bitcask_fileops:write(State1#mstate.out_file,
+                              K, V, Tstamp),
+    
+    %% Update live keydir for the current out
+    %% file. It's possible that this is a noop, as
+    %% someone else may have written a newer value
+    %% whilst we were processing.
+    bitcask_nifs:keydir_put(
+      State#mstate.live_keydir, K,
+      bitcask_fileops:file_tstamp(Outfile),
+      Size, OffSet, Tstamp),
+    
+    State1#mstate { out_file = Outfile }.
 
 
 out_of_date(_Key, _Tstamp, _FileId, _Pos, _ExpiryTime, []) ->
@@ -1031,5 +1069,57 @@ open_reset_open_test() ->
     ok = bitcask:put(B2,<<"x">>,<<"q">>),
     not_found = bitcask:get(B2,<<"k">>),
     bitcask:close(B2).
+
+delete_merge_test() ->
+    %% Initialize dataset with max_file_size set to 1 so that each file will
+    %% only contain a single key.
+    close(init_dataset("/tmp/bc.test.delmerge", [{max_file_size, 1}],
+                       default_dataset())),
+
+    %% perform some deletes, tombstones should go in their own files
+    B1 = bitcask:open("/tmp/bc.test.delmerge", [read_write,{max_file_size, 1}]),
+    ok = bitcask:delete(B1,<<"k2">>),
+    ok = bitcask:delete(B1,<<"k3">>),
+    A1 = [<<"k">>],
+    A1 = bitcask:list_keys(B1),
+    close(B1),
+
+    ok = merge("/tmp/bc.test.delmerge",[]),
+
+    %% Verify we've now only got one item left
+    B2 = bitcask:open("/tmp/bc.test.delmerge"),
+    A = [<<"k">>],
+    A = bitcask:list_keys(B2),
+    close(B2),
+
+    ok.
+
+delete_partial_merge_test() ->
+    %% Initialize dataset with max_file_size set to 1 so that each file will
+    %% only contain a single key.
+    close(init_dataset("/tmp/bc.test.pardel", [{max_file_size, 1}],
+                       default_dataset())),
+
+    %% perform some deletes, tombstones should go in their own files
+    B1 = bitcask:open("/tmp/bc.test.pardel", [read_write,{max_file_size, 1}]),
+    ok = bitcask:delete(B1,<<"k2">>),
+    ok = bitcask:delete(B1,<<"k3">>),
+    A1 = [<<"k">>],
+    A1 = bitcask:list_keys(B1),
+    close(B1),
+
+    %% selective merge, hit all of the files with deletes but not
+    %%  all of the ones with deleted data
+    ok = merge("/tmp/bc.test.pardel",[],lists:reverse(lists:nthtail(2,
+                                           lists:reverse(readable_files(
+                                               "/tmp/bc.test.pardel"))))),
+
+    %% Verify we've now only got one item left
+    B2 = bitcask:open("/tmp/bc.test.pardel"),
+    A = [<<"k">>],
+    A = bitcask:list_keys(B2),
+    close(B2),
+
+    ok.
 
 -endif.
