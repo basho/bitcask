@@ -42,6 +42,9 @@
          lock_readdata/1,
          lock_writedata/2]).
 
+%% Internal use/debugging use only
+-export([keydir_put_int/6, keydir_get_int/2]).
+
 -on_load(init/0).
 
 -include("bitcask.hrl").
@@ -72,10 +75,25 @@ keydir_new(_Name) ->
 keydir_mark_ready(_Ref) ->
     "NIF library not loaded".
 
-keydir_put(_Ref, _Key, _FileId, _TotalSz, _Offset, _Tstamp) ->
+keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp)
+  when is_integer(Offset)->
+    keydir_put_int(Ref, Key, FileId, TotalSz, ext_to_int_offset(Offset),
+                   Tstamp);
+keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp) ->
+    keydir_put_int(Ref, Key, FileId, TotalSz, Offset, Tstamp).    
+
+keydir_put_int(_Ref, _Key, _FileId, _TotalSz, _Offset, _Tstamp) ->
     "NIF library not loaded".
 
-keydir_get(_Ref, _Key) ->
+keydir_get(Ref, Key) ->
+    case keydir_get_int(Ref, Key) of
+        E when is_record(E, bitcask_entry) ->
+            E#bitcask_entry{offset = int_to_ext_offset(E#bitcask_entry.offset)};
+        Else ->
+            Else
+    end.
+
+keydir_get_int(_Ref, _Key) ->
     "NIF library not loaded".
 
 keydir_remove(_Ref, _Key) ->
@@ -134,6 +152,15 @@ keydir_fold_cont(not_found, _Ref, _Fun, Acc0) ->
 keydir_fold_cont(Curr, Ref, Fun, Acc0) ->
     Acc = Fun(Curr, Acc0),
     keydir_fold_cont(keydir_itr_next(Ref), Ref, Fun, Acc).
+
+%% Note: 18446744073709551616 = 2^64
+
+ext_to_int_offset(Offset) when Offset <  18446744073709551616,
+                               Offset >= 0 ->
+    {(Offset band 16#FFFFFFFF00000000) bsr 32, Offset band 16#00000000FFFFFFFF}.
+
+int_to_ext_offset({High32, Low32}) ->
+    (High32 bsl 32) bor Low32.
 
 %% ===================================================================
 %% EUnit tests

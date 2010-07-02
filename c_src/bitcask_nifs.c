@@ -105,6 +105,9 @@ typedef struct
 #define RW_LOCK(handle)   { if (keydir->lock) enif_rwlock_rwlock(keydir->lock); }
 #define RW_UNLOCK(handle) { if (keydir->lock) enif_rwlock_rwunlock(keydir->lock); }
 
+// Utterly bogus int initializer
+#define INIT_INT_BOGUS          0xFFBADBAD
+
 // Atoms (initialized in on_load)
 static ERL_NIF_TERM ATOM_ALLOCATION_ERROR;
 static ERL_NIF_TERM ATOM_ALREADY_EXISTS;
@@ -129,8 +132,8 @@ static ERL_NIF_TERM ATOM_TRUE;
 ERL_NIF_TERM bitcask_nifs_keydir_new0(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_new1(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_mark_ready(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
-ERL_NIF_TERM bitcask_nifs_keydir_get(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
-ERL_NIF_TERM bitcask_nifs_keydir_put(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_keydir_get_int(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_copy(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_itr(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
@@ -160,8 +163,8 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_new", 0, bitcask_nifs_keydir_new0},
     {"keydir_new", 1, bitcask_nifs_keydir_new1},
     {"keydir_mark_ready", 1, bitcask_nifs_keydir_mark_ready},
-    {"keydir_put", 6, bitcask_nifs_keydir_put},
-    {"keydir_get", 2, bitcask_nifs_keydir_get},
+    {"keydir_put_int", 6, bitcask_nifs_keydir_put_int},
+    {"keydir_get_int", 2, bitcask_nifs_keydir_get_int},
     {"keydir_remove", 2, bitcask_nifs_keydir_remove},
     {"keydir_remove", 4, bitcask_nifs_keydir_remove},
     {"keydir_copy", 1, bitcask_nifs_keydir_copy},
@@ -306,19 +309,26 @@ static void update_fstats(ErlNifEnv* env, bitcask_keydir* keydir,
     entry->total_bytes += total_bytes_increment;
 }
 
-ERL_NIF_TERM bitcask_nifs_keydir_put(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     bitcask_keydir_handle* handle;
     bitcask_keydir_entry entry;
     ErlNifBinary key;
+    int offset_tuple_arity = -1;
+    const ERL_NIF_TERM *offset_tuple = NULL;
+    uint32_t high32 = INIT_INT_BOGUS, low32 = INIT_INT_BOGUS;
 
     if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle) &&
         enif_inspect_binary(env, argv[1], &key) &&
         enif_get_uint(env, argv[2], (unsigned int*)&(entry.file_id)) &&
         enif_get_uint(env, argv[3], &(entry.total_sz)) &&
-        enif_get_ulong(env, argv[4], (unsigned long*)&(entry.offset)) &&
+        enif_get_tuple(env, argv[4], &offset_tuple_arity, &offset_tuple) &&
+        offset_tuple_arity == 2 &&
+        enif_get_uint(env, offset_tuple[0], &high32) &&
+        enif_get_uint(env, offset_tuple[1], &low32) &&
         enif_get_uint(env, argv[5], &(entry.tstamp)))
     {
+        entry.offset = ((uint64_t) high32 << 32) | (uint64_t) low32;
         bitcask_keydir* keydir = handle->keydir;
         RW_LOCK(keydir);
 
@@ -409,7 +419,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put(ErlNifEnv* env, int argc, const ERL_NIF_TER
     }
 }
 
-ERL_NIF_TERM bitcask_nifs_keydir_get(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+ERL_NIF_TERM bitcask_nifs_keydir_get_int(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     bitcask_keydir_handle* handle;
     ErlNifBinary key;
@@ -424,12 +434,14 @@ ERL_NIF_TERM bitcask_nifs_keydir_get(ErlNifEnv* env, int argc, const ERL_NIF_TER
         KEYDIR_HASH_FIND(keydir->entries, key, entry);
         if (entry != 0)
         {
+            uint32_t high32 = (uint32_t) ((entry->offset & 0xFFFFFFFF00000000LL) >> 32);
+            uint32_t low32 = (uint32_t) (entry->offset & 0x00000000FFFFFFFFLL);
             ERL_NIF_TERM result = enif_make_tuple6(env,
                                                    ATOM_BITCASK_ENTRY,
                                                    argv[1], /* Key */
                                                    enif_make_uint(env, entry->file_id),
                                                    enif_make_uint(env, entry->total_sz),
-                                                   enif_make_ulong(env, entry->offset),
+                                                   enif_make_tuple2(env, enif_make_uint(env, high32), enif_make_uint(env, low32)),
                                                    enif_make_uint(env, entry->tstamp));
             R_UNLOCK(keydir);
             return result;
