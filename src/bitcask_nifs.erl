@@ -51,6 +51,10 @@
 -endif.
 
 -ifdef(TEST).
+-ifdef(EQC).
+-include_lib("eqc/include/eqc.hrl").
+-endif.
+-compile(export_all).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
@@ -204,5 +208,45 @@ create_file_test() ->
     file:delete(Fname),
     true = create_file(Fname),
     false = create_file(Fname).
+
+-ifdef(EQC).
+
+-define(POW_2(N), trunc(math:pow(2, N))).
+
+-define(QC_OUT(P),
+        eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
+
+g_uint32() ->
+    choose(0, ?POW_2(31)).
+
+g_uint64() ->
+    choose(0, ?POW_2(62)).
+
+g_entry() ->
+    #bitcask_entry{ key = non_empty(binary()),
+                    file_id = g_uint32(),
+                    total_sz = g_uint32(),
+                    offset = g_uint64(),
+                    tstamp = g_uint32() }.
+
+keydir_get_put_prop() ->
+    ?FORALL(E, g_entry(),
+            begin
+                {ok, Ref} = keydir_new(),
+
+                ok = keydir_put(Ref, E#bitcask_entry.key, E#bitcask_entry.file_id,
+                                E#bitcask_entry.total_sz, E#bitcask_entry.offset,
+                                E#bitcask_entry.tstamp),
+
+                E2 = keydir_get(Ref, E#bitcask_entry.key),
+                keydir_release(Ref),
+                ?assertEqual(E, E2),
+                true
+            end).
+
+keydir_get_put_test_() ->
+    {timeout, 60, fun() -> eqc:quickcheck(?QC_OUT(keydir_get_put_prop())) end}.
+
+-endif.
 
 -endif.
