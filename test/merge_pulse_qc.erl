@@ -67,19 +67,33 @@ do_read(Model) ->
     check_model(Model, Ref),
     bitcask:close(Ref).
 
+do_listkeys(Model) ->
+    Ref = bitcask:open("/tmp/bc.prop.merge.pulse"),
+    L = bitcask:list_keys(Ref),
+    ?assert(is_list(L)),
+    bitcask:close(Ref).
+
+
+do_spawn([], Acc) ->
+    wait_for(Acc);
+do_spawn([F | Rest], Acc) ->
+    Spawner = self(),
+    Pid = spawn(fun() -> F(), Spawner ! {self(), done} end),
+    do_spawn(Rest, [Pid | Acc]).
+
+wait_for([]) ->
+    ok;
+wait_for(Pids) ->
+    receive
+        {Pid, done} ->
+            wait_for(lists:delete(Pid, Pids))
+    end.
+
 
 merge_pulse(Model) ->
-    Self = self(),
-    spawn(fun() -> bitcask:merge("/tmp/bc.prop.merge.pulse"), Self ! done end),
-    spawn(fun() -> do_read(Model), Self ! done2 end),
-    receive
-        done ->
-            receive
-                done2 ->
-                    ok
-            end,
-            ok
-    end.
+    do_spawn([fun() -> bitcask:merge("/tmp/bc.prop.merge.pulse") end,
+              fun() -> do_listkeys(Model) end,
+              fun() -> do_read(Model) end], []).
 
 
 prop_merge_pulse() ->

@@ -310,42 +310,80 @@ list_keys(Ref) -> fold(Ref, fun(K,_V,Acc) -> [K|Acc] end, []).
 fold(Ref, Fun, Acc0) ->
     State = get_state(Ref),
 
-    ReadFiles = list_data_files(State#bc_state.dirname, undefined, undefined),
-    {_,_,Tseed} = now(),
-    {ok, Bloom} = ebloom:new(1000000,0.00003,Tseed), % arbitrary large bloom
-    ExpiryTime = expiry_time(State#bc_state.opts),
-    SubFun = fun(K,V,TStamp,{Offset,_Sz},Acc) ->
-            case ebloom:contains(Bloom,K) orelse (TStamp < ExpiryTime) of
-                true ->
-                    Acc;
-                false ->
-                    case bitcask_nifs:keydir_get(
-                           State#bc_state.keydir, K) of
-                        not_found ->
-                            Acc;
-                        E when is_record(E, bitcask_entry) ->
-                            case Offset =:= E#bitcask_entry.offset of
-                                false ->
-                                    Acc;
-                                true ->
-                                    ebloom:insert(Bloom,K),
-                                    case V =:= ?TOMBSTONE of
-                                        true ->
-                                            Acc;
-                                        false ->
-                                            Fun(K,V,Acc)
-                                    end
-                            end;
-                        {error,Reason} ->
-                            {error,Reason}
-                    end
-            end
-    end,
-    subfold(SubFun,ReadFiles,Acc0).
+    case open_fold_files(State#bc_state.dirname, 3) of
+        {ok, Files} ->
+            {_,_,Tseed} = now(),
+            {ok, Bloom} = ebloom:new(1000000,0.00003,Tseed), % arbitrary large bloom
+            ExpiryTime = expiry_time(State#bc_state.opts),
+            SubFun = fun(K,V,TStamp,{Offset,_Sz},Acc) ->
+                             case ebloom:contains(Bloom,K) orelse (TStamp < ExpiryTime) of
+                                 true ->
+                                     Acc;
+                                 false ->
+                                     case bitcask_nifs:keydir_get(
+                                            State#bc_state.keydir, K) of
+                                         not_found ->
+                                             Acc;
+                                         E when is_record(E, bitcask_entry) ->
+                                             case Offset =:= E#bitcask_entry.offset of
+                                                 false ->
+                                                     Acc;
+                                                 true ->
+                                                     ebloom:insert(Bloom,K),
+                                                     case V =:= ?TOMBSTONE of
+                                                         true ->
+                                                             Acc;
+                                                         false ->
+                                                             Fun(K,V,Acc)
+                                                     end
+                                             end;
+                                         {error,Reason} ->
+                                             {error,Reason}
+                                     end
+                             end
+                     end,
+            subfold(SubFun,Files,Acc0);
+
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+%%
+%% Get a list of readable files and attempt to open them for a fold. If we can't
+%% open any one of the files, get a fresh list of files and try again.
+%%
+open_fold_files(_Dirname, 0) ->
+    {error, max_retries_exceeded_for_fold};
+open_fold_files(Dirname, Count) ->
+    Filenames = list_data_files(Dirname, undefined, undefined),
+    case open_files(Filenames, []) of
+        {ok, Files} ->
+            {ok, Files};
+        error ->
+            open_fold_files(Dirname, Count-1)
+    end.
+
+%%
+%% Open a list of filenames; if any one of them fails to open, error out.
+%%
+open_files([], Acc) ->
+    {ok, lists:reverse(Acc)};
+open_files([Filename | Rest], Acc) ->
+    case bitcask_fileops:open_file(Filename) of
+        {ok, Fd} ->
+            open_files(Rest, [Fd | Acc]);
+        {error, _} ->
+            [bitcask_fileops:close(Fd) || Fd <- Acc],
+            error
+    end.
+
+%%
+%% Apply fold function to a single bitcask file; results are accumulated in
+%% Acc
+%%
 subfold(_SubFun,[],Acc) ->
     Acc;
-subfold(SubFun,[File|Rest],Acc0) ->
-    {ok,FD} = bitcask_fileops:open_file(File),
+subfold(SubFun,[FD | Rest],Acc0) ->
     Acc = bitcask_fileops:fold(FD, SubFun, Acc0),
     bitcask_fileops:close(FD),
     subfold(SubFun,Rest,Acc).
