@@ -270,12 +270,12 @@ put(Ref, Key, Value) ->
     end,
 
     Tstamp = bitcask_fileops:tstamp(),
-    {ok, WriteFile2, OffSet, Size} = bitcask_fileops:write(
+    {ok, WriteFile2, Offset, Size} = bitcask_fileops:write(
                                        State2#bc_state.write_file,
                                        Key, Value, Tstamp),
     ok = bitcask_nifs:keydir_put(State2#bc_state.keydir, Key,
                                  bitcask_fileops:file_tstamp(WriteFile2),
-                                 Size, OffSet, Tstamp),
+                                 Size, Offset, Tstamp),
 
     put_state(Ref, State2#bc_state { write_file = WriteFile2 }),
     ok.
@@ -754,7 +754,7 @@ inner_merge_write(K, V, Tstamp, State) ->
                 State
         end,
     
-    {ok, Outfile, OffSet, Size} =
+    {ok, Outfile, Offset, Size} =
         bitcask_fileops:write(State1#mstate.out_file,
                               K, V, Tstamp),
     
@@ -765,7 +765,7 @@ inner_merge_write(K, V, Tstamp, State) ->
     bitcask_nifs:keydir_put(
       State#mstate.live_keydir, K,
       bitcask_fileops:file_tstamp(Outfile),
-      Size, OffSet, Tstamp),
+      Size, Offset, Tstamp),
     
     State1#mstate { out_file = Outfile }.
 
