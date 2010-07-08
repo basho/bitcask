@@ -1,9 +1,9 @@
 
--record(bitcask_entry, { key,
-                         file_id,
-                         total_sz,
-                         offset,
-                         tstamp }).
+-record(bitcask_entry, { key :: binary(),
+                         file_id :: integer(),
+                         total_sz :: integer(),
+                         offset :: integer() | {integer(), integer()}, % ext or int
+                         tstamp :: integer() }).
 
 
 %% @type filestate().

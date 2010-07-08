@@ -242,6 +242,8 @@ hintfile_name(Filename) when is_list(Filename) ->
 hintfile_name(#filestate { filename = Fname }) ->
     hintfile_name(Fname).
 
+-spec file_tstamp(#filestate{} | string()) -> integer().
+
 file_tstamp(#filestate{tstamp=Tstamp}) ->
     Tstamp;
 file_tstamp(Filename) when is_list(Filename) ->

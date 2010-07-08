@@ -33,7 +33,7 @@
 
 %% @doc Attempt to lock the specified directory with a specific type of lock
 %% (merge or write).
--spec acquire(Type::lock_types(), Dirname::string()) -> {ok, binary()} | {error, any()}.
+-spec acquire(Type::lock_types(), Dirname::string()) -> {ok, reference()} | {error, any()}.
 acquire(Type, Dirname) ->
     LockFilename = lock_filename(Type, Dirname),
     case bitcask_nifs:lock_acquire(LockFilename, 1) of
@@ -57,7 +57,7 @@ acquire(Type, Dirname) ->
     end.
 
 %% @doc Release a previously acquired write/merge lock.
--spec release(binary()) -> ok.
+-spec release(reference()) -> ok.
 release(Lock) ->
     bitcask_nifs:lock_release(Lock).
 
@@ -78,7 +78,7 @@ read_activefile(Type, Dirname) ->
     end.
 
 %% @doc Write a new active filename to an open lockfile.
--spec write_activefile(binary(), string()) -> ok | {error, any()}.
+-spec write_activefile(reference(), string()) -> {ftruncate_error, integer()} | {pwrite_error, integer()} | ok | {error, lock_not_writable}.
 write_activefile(Lock, ActiveFilename) ->
     Contents = iolist_to_binary([os:getpid(), " ", ActiveFilename, "\n"]),
     bitcask_nifs:lock_writedata(Lock, Contents).

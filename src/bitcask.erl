@@ -67,7 +67,7 @@
                   out_file,
                   merged_files,
                   partial,
-                  live_keydir,
+                  live_keydir :: reference(),
                   hint_keydir,
                   del_keydir,
                   expiry_time,
@@ -79,12 +79,12 @@
 %% * A merge lock - bitcask.merge.lock (Optional)
 
 %% @doc Open a new or existing bitcask datastore for read-only access.
--spec open(Dirname::string()) -> reference() | {error, any()}.
+-spec open(Dirname::string()) -> reference().
 open(Dirname) ->
     open(Dirname, []).
 
 %% @doc Open a new or existing bitcask datastore with additional options.
--spec open(Dirname::string(), Opts::[_]) -> reference() | {error, any()}.
+-spec open(Dirname::string(), Opts::[_]) -> reference().
 open(Dirname, Opts) ->
     %% Make sure bitcask app is started so we can pull defaults from env
     ok = start_app(),
@@ -185,6 +185,8 @@ close(Ref) ->
 get(Ref, Key) ->
     get(Ref, Key, 2).
 
+-spec get(reference(), binary(), integer()) ->
+                 not_found | {ok, Value::binary()} | {error, Err::term()}.
 get(_Ref, _Key, 0) -> {error, nofile};
 get(Ref, Key, TryNum) ->
     State = get_state(Ref),
@@ -212,13 +214,11 @@ get(Ref, Key, TryNum) ->
                                     {ok, Value}
                             end
                     end
-            end;
-        {error, Reason} ->
-            {error, Reason}
+            end
     end.
 
 %% @doc Store a key and value in a bitcase datastore.
--spec put(reference(), Key::binary(), Value::binary()) -> ok | {error, any()}.
+-spec put(reference(), Key::binary(), Value::binary()) -> ok.
 put(Ref, Key, Value) ->
     #bc_state { write_file = WriteFile } = State = get_state(Ref),
 
@@ -282,7 +282,7 @@ put(Ref, Key, Value) ->
 
 
 %% @doc Delete a key from a bitcask datastore.
--spec delete(reference(), Key::binary()) -> ok | {error, any()}.
+-spec delete(reference(), Key::binary()) -> ok.
 delete(Ref, Key) ->
     put(Ref, Key, ?TOMBSTONE).
 
@@ -336,9 +336,7 @@ fold(Ref, Fun, Acc0) ->
                                                          false ->
                                                              Fun(K,V,Acc)
                                                      end
-                                             end;
-                                         {error,Reason} ->
-                                             {error,Reason}
+                                             end
                                      end
                              end
                      end,
@@ -390,7 +388,7 @@ subfold(SubFun,[FD | Rest],Acc0) ->
 
 %% @doc Merge several data files within a bitcask datastore
 %%      into a more compact form.
--spec merge(Dirname::string()) -> ok | {error, any()}.
+-spec merge(Dirname::string()) -> ok.
 merge(Dirname) ->
     merge(Dirname, [], readable_files(Dirname)).
 
@@ -401,7 +399,7 @@ merge(Dirname, Opts) ->
 
 %% @doc Merge several data files within a bitcask datastore
 %%      into a more compact form.
--spec merge(Dirname::string(), Opts::[_], FilesToMerge::[string()]) -> ok | {error, any()}.
+-spec merge(Dirname::string(), Opts::[_], FilesToMerge::[string()]) -> ok.
 merge(_Dirname, _Opts, []) ->
     ok;
 merge(Dirname, Opts, FilesToMerge0) ->
@@ -688,9 +686,7 @@ wait_for_keydir(Name, MillisToWait) ->
         {error, not_ready} ->
             timer:sleep(100),
             case MillisToWait of
-                infinity ->
-                    wait_for_keydir(Name, infinity);
-                Value when Value =< 0 ->
+                Value when is_integer(Value), Value =< 0 -> %% avoids 'infinity'!
                     timeout;
                 _ ->
                     wait_for_keydir(Name, MillisToWait - 100)
@@ -766,6 +762,8 @@ merge_single_entry(K, V, Tstamp, FileId, {Offset, _} = Pos, State) ->
                     inner_merge_write(K, V, Tstamp, State)
             end
     end.
+
+-spec inner_merge_write(binary(), binary(), integer(), #mstate{}) -> #mstate{}.
 
 inner_merge_write(K, V, Tstamp, State) ->
     %% write a single item while inside the merge process
@@ -866,10 +864,7 @@ out_of_date(Key, Tstamp, FileId, {Offset,_} = Pos, ExpiryTime, [KeyDir|Rest]) ->
                 true ->
                     %% Out of date!
                     true
-            end;
-
-        {error, Reason} ->
-            {error, Reason}
+            end
     end.
 
 readable_files(Dirname) ->
