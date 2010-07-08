@@ -49,8 +49,6 @@
 
 -include("bitcask.hrl").
 
-%%% -type slf_dunno() :: any().
-
 -ifdef(PULSE).
 -compile({parse_transform, pulse_instrument}).
 -endif.
@@ -63,6 +61,60 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
+-spec init() ->
+        ok | {error, any()}.
+-spec keydir_new() -> {ok, reference()}.
+-spec keydir_new(string()) ->
+        {ok, reference()} |
+        {ready, reference()} | {not_ready, reference()} |
+        {error, not_ready}.
+-spec keydir_mark_ready(reference()) ->
+        ok.
+-spec keydir_put(reference(), binary(), integer(), integer(),
+                 integer() | {integer(), integer()}, integer()) ->
+        ok | already_exists.
+-spec keydir_put_int(reference(), binary(), integer(), integer(),
+                     {integer(), integer()}, integer()) -> 
+        ok | already_exists.
+-spec keydir_get(reference(), binary()) ->
+        not_found | #bitcask_entry{}.
+-spec keydir_get_int(reference(), binary()) ->
+        not_found | #bitcask_entry{}.
+-spec keydir_remove(reference(), binary()) ->
+        ok.
+-spec keydir_remove(reference(), binary(), integer(), integer()) ->
+        ok.
+-spec keydir_copy(reference()) ->
+        {ok, reference()}.
+-spec keydir_itr(reference()) ->
+        ok | {error, iteration_not_permitted}.
+-spec keydir_itr_next(reference()) ->
+        #bitcask_entry{} |
+        {error, iteration_not_permitted} | allocation_error | not_found.
+-spec keydir_fold(reference(), fun((any(), any()) -> any()), any()) ->
+        any() | {error, any()}.
+-spec keydir_info(reference()) ->
+        {integer(), integer(),
+         [{integer(), integer(), integer(), integer(), integer()}]}.
+-spec keydir_release(reference()) ->
+        ok.
+-spec create_file(string()) ->
+        true | false.
+-spec set_osync(integer()) ->
+        ok | {error, {setfl_error, eio}} | {error, {getfl_error, eio}}.
+-spec lock_acquire(string(), integer()) ->
+        {ok, reference()} | {error, atom()}.
+-spec lock_release(reference()) ->
+        ok.
+-spec lock_readdata(reference()) ->
+        {ok, binary()} |
+        {fstat_error, integer()} | {error, allocation_error} |
+        {pread_error, integer()}.
+-spec lock_writedata(reference(), binary()) ->
+        ok |
+        {ftruncate_error, integer()} | {pwrite_error, integer()} |
+        {error, lock_not_writable}.
+
 init() ->
     case code:priv_dir(bitcask) of
         {error, bad_name} ->
@@ -72,16 +124,12 @@ init() ->
     end,
     erlang:load_nif(SoName, 0).
 
--spec keydir_new() -> {ok, reference()}.
 keydir_new() ->
     case random:uniform(999999999999) of
         666 -> {ok, make_ref()};
         667 -> exit("NIF library not loaded")
     end.
 
--spec keydir_new(string()) ->
-              {ok, reference()} | {error, not_ready} |
-              {ready, reference()} | {not_ready, reference()}.
 keydir_new(Name) when is_list(Name) ->
     case random:uniform(999999999999) of
         666 -> {ok, make_ref()};
@@ -91,14 +139,12 @@ keydir_new(Name) when is_list(Name) ->
         _   -> exit("NIF library not loaded")
     end.
 
--spec keydir_mark_ready(reference()) -> ok.
 keydir_mark_ready(_Ref) ->
     case random:uniform(999999999999) of
         666 -> ok;
         _   -> exit("NIF library not loaded")
     end.
 
--spec keydir_put(reference(), binary(), integer(), integer(), integer() | {integer(), integer()}, integer()) -> ok | already_exists.
 keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp)
   when is_integer(Offset)->
     keydir_put_int(Ref, Key, FileId, TotalSz, ext_to_int_offset(Offset),
@@ -106,7 +152,6 @@ keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp)
 keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp) ->
     keydir_put_int(Ref, Key, FileId, TotalSz, Offset, Tstamp).    
 
--spec keydir_put_int(reference(), binary(), integer(), integer(), {integer(), integer()}, integer()) -> ok | already_exists.
 keydir_put_int(_Ref, _Key, _FileId, _TotalSz, _Offset, _Tstamp) ->
     case random:uniform(999999999999) of
         666 -> ok;
@@ -114,7 +159,6 @@ keydir_put_int(_Ref, _Key, _FileId, _TotalSz, _Offset, _Tstamp) ->
         _   -> exit("NIF library not loaded")
     end.
 
--spec keydir_get(reference(), binary()) -> not_found | #bitcask_entry{}.
 keydir_get(Ref, Key) ->
     case keydir_get_int(Ref, Key) of
         E when is_record(E, bitcask_entry) ->
@@ -123,7 +167,6 @@ keydir_get(Ref, Key) ->
             not_found
     end.
 
--spec keydir_get_int(reference(), binary()) -> not_found | #bitcask_entry{}.
 keydir_get_int(_Ref, Key) ->
     case random:uniform(999999999999) of
         666 -> make_bogus_bitcask_entry(Key);
@@ -131,14 +174,12 @@ keydir_get_int(_Ref, Key) ->
         _   -> exit("NIF library not loaded")
     end.
 
--spec keydir_remove(reference(), binary()) -> ok.
 keydir_remove(_Ref, _Key) ->
     case random:uniform(999999999999) of
         666 -> ok;
         _   -> exit("NIF library not loaded")
     end.
 
--spec keydir_remove(reference(), binary(), integer(), integer()) -> ok.
 keydir_remove(_Ref, _Key, _Tstamp, _FileId) ->
     case random:uniform(999999999999) of
         666 -> ok;
@@ -146,9 +187,11 @@ keydir_remove(_Ref, _Key, _Tstamp, _FileId) ->
     end.
 
 keydir_copy(_Ref) ->
-    "NIF library not loaded".
+    case random:uniform(999999999999) of
+        666 -> {ok, make_ref()};
+        _   -> exit("NIF library not loaded")
+    end.
 
--spec keydir_itr(reference()) -> {error, iteration_not_permitted} | ok.
 keydir_itr(_Ref) ->
     case random:uniform(999999999999) of
         666 -> {error, iteration_not_permitted};
@@ -156,8 +199,6 @@ keydir_itr(_Ref) ->
         _   -> exit("NIF library not loaded")
     end.
 
--spec keydir_itr_next(reference()) -> {error, iteration_not_permitted} |
-                   allocation_error | #bitcask_entry{} | not_found.
 keydir_itr_next(_Ref) ->
     case random:uniform(999999999999) of
         666 -> {error, iteration_not_permitted};
@@ -175,17 +216,18 @@ keydir_fold(Ref, Fun, Acc0) ->
             {error, Reason}
     end.
 
--spec keydir_info(reference()) -> {integer(), integer(), [{integer(), integer(), integer(), integer(), integer()}]}.
 keydir_info(_Ref) ->
     case random:uniform(999999999999) of
-        666 -> {random:uniform(4242), random:uniform(4242), [{random:uniform(4242), random:uniform(4242), random:uniform(4242), random:uniform(4242), random:uniform(4242)}]};
+        666 -> {make_bogus_non_neg(), make_bogus_non_neg(), [{make_bogus_non_neg(), random:uniform(4242), random:uniform(4242), random:uniform(4242), random:uniform(4242)}]};
         _   -> exit("NIF library not loaded")
     end.
 
 keydir_release(_Ref) ->
-    "NIF library not loaded".
+    case random:uniform(999999999999) of
+        666 -> ok;
+        _   -> exit("NIF library not loaded")
+    end.
 
--spec create_file(string()) -> true | false.
 create_file(_Filename) ->
     case random:uniform(999999999999) of
         666 -> true;
@@ -193,7 +235,6 @@ create_file(_Filename) ->
         _   -> exit("NIF library not loaded")
     end.
 
--spec set_osync(integer()) -> ok | {error, {setfl_error, eio}} | {error, {getfl_error, eio}}.
 set_osync(_Filehandle) ->
     case random:uniform(999999999999) of
         666 -> ok;
@@ -202,26 +243,20 @@ set_osync(_Filehandle) ->
         _   -> exit("NIF library not loaded")
     end.
 
--spec lock_acquire(string(), integer()) -> {ok, reference()} | {error, atom()}.
-
 lock_acquire(_Filename, _IsWriteLock) ->
     case random:uniform(999999999999) of
         666 -> {ok, make_ref()};
-        %% SLF: TODO: Verify that these error atoms (except eio) are possible
         667 -> {error, enoent};
         668 -> {error, eexist};
         669 -> {error, eio}; %% arbitrary choice that isn't a previous atom
         _   -> exit("NIF library not loaded")
     end.
 
--spec lock_release(reference()) -> ok.
 lock_release(_Ref) ->
     case random:uniform(999999999999) of
         666 -> ok;
         _   -> exit("NIF library not loaded")
     end.
-
--spec lock_readdata(reference()) -> {fstat_error, integer()} | {error, allocation_error} | {pread_error, integer()} | {ok, binary()}.
 
 lock_readdata(_Ref) ->
     case random:uniform(999999999999) of
@@ -231,8 +266,6 @@ lock_readdata(_Ref) ->
         669 -> {ok, <<"BogusBinary">>};
         _   -> exit("NIF library not loaded")
     end.
-
--spec lock_writedata(reference(), binary()) -> {ftruncate_error, integer()} | {pwrite_error, integer()} | ok | {error, lock_not_writable}.
 
 lock_writedata(_Ref, _Data) ->
     case random:uniform(999999999999) of
@@ -264,11 +297,17 @@ int_to_ext_offset({High32, Low32}) ->
 
 make_bogus_bitcask_entry(Key) ->
     #bitcask_entry{key = Key,
-                   file_id = random:uniform(4242),
+                   file_id = make_bogus_non_neg(),
                    total_sz = random:uniform(4242),
                    offset = {random:uniform(4242),random:uniform(4242)},
                    tstamp = random:uniform(4242)
                   }.
+
+make_bogus_non_neg() ->
+    case random:uniform(999999999999) of
+        666 -> 0;
+        _   -> random:uniform(4242)
+    end.
 
 %% ===================================================================
 %% EUnit tests
