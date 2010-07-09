@@ -306,7 +306,7 @@ list_keys(Ref) -> fold(Ref, fun(K,_V,Acc) -> [K|Acc] end, []).
 
 %% @doc fold over all K/V pairs in a bitcask datastore.
 %% Fun is expected to take F(K,V,Acc0) -> Acc
--spec fold(reference(), fun(), any()) -> any() | {error, any()}.
+-spec fold(reference(), fun((binary(), binary(), any()) -> any()), any()) -> any() | {error, any()}.
 fold(Ref, Fun, Acc0) ->
     State = get_state(Ref),
 
@@ -394,6 +394,7 @@ merge(Dirname) ->
 
 %% @doc Merge several data files within a bitcask datastore
 %%      into a more compact form.
+-spec merge(Dirname::string(), Opts::[_]) -> ok.
 merge(Dirname, Opts) ->
     merge(Dirname, Opts, readable_files(Dirname)).
 
@@ -513,6 +514,7 @@ merge(Dirname, Opts, FilesToMerge0) ->
      end || F <- State#mstate.input_files],
     ok = bitcask_lockops:release(Lock).
 
+-spec needs_merge(reference()) -> {true, [string()]} | false.
 needs_merge(Ref) ->
     State = get_state(Ref),
     {_KeyCount, Summary} = status(Ref),
@@ -569,6 +571,7 @@ needs_merge(Ref) ->
             false
     end.
 
+-spec status(reference()) -> {integer(), [{string(), integer(), integer(), integer()}]}.
 status(Ref) ->
     State = get_state(Ref),
 

@@ -59,13 +59,13 @@
 
 %% @doc Open a new file for writing.
 %% Called on a Dirname, will open a fresh file in that directory.
-%% @spec create_file(Dirname :: string(), Opts :: [any()]) -> {ok, filestate()}
+-spec create_file(Dirname :: string(), Opts :: [any()]) -> {ok, #filestate{}}.
 create_file(DirName, Opts) ->
     create_file_loop(DirName, Opts, tstamp()).
 
 %% @doc Open an existing file for reading.
 %% Called with fully-qualified filename.
-%% @spec open_file(Filename :: string()) -> {ok, filestate()} | {error, any()}
+-spec open_file(Filename :: string()) -> {ok, #filestate{}} | {error, any()}.
 open_file(Filename) ->
     case file:open(Filename, [read, raw, binary]) of
         {ok, FD} ->
@@ -77,7 +77,7 @@ open_file(Filename) ->
     end.
 
 %% @doc Use when done writing a file.  (never open for writing again)
-%% @spec close(filestate()) -> ok
+-spec close(#filestate{} | fresh | undefined) -> ok.
 close(fresh) -> ok;
 close(undefined) -> ok;
 close(#filestate{ fd = FD, hintfd = HintFd }) ->
@@ -91,7 +91,7 @@ close(#filestate{ fd = FD, hintfd = HintFd }) ->
     ok.
 
 %% @doc Close a file for writing, but leave it open for reads.
-%% @spec close_for_writing(filestate()) -> filestate().
+-spec close_for_writing(#filestate{} | fresh | undefined) -> #filestate{} | ok.
 close_for_writing(fresh) -> ok;
 close_for_writing(undefined) -> ok;
 close_for_writing(State = 
@@ -102,7 +102,7 @@ close_for_writing(State =
     State#filestate { mode = read_only, hintfd = undefined }.
 
 %% @doc Use only after merging, to permanently delete a data file.
-%% @spec delete(filestate()) -> ok
+-spec delete(#filestate{}) -> ok | {error, atom()}.
 delete(#filestate{ filename = FN } = State) ->
     file:delete(FN),
     case has_hintfile(State) of
@@ -113,9 +113,10 @@ delete(#filestate{ filename = FN } = State) ->
     end.
 
 %% @doc Write a Key-named binary data field ("Value") to the Filestate.
-%% @spec write(filestate(), 
-%%             Key :: binary(), Value :: binary(), Tstamp :: integer()) ->
-%%       {ok, filestate(), Offset :: integer(), Size :: integer()}
+-spec write(#filestate{}, 
+            Key :: binary(), Value :: binary(), Tstamp :: integer()) ->
+        {ok, #filestate{}, Offset :: integer(), Size :: integer()} |
+        {error, read_only}.
 write(#filestate { mode = read_only }, _K, _V, _Tstamp) ->
     {error, read_only};
 write(Filestate=#filestate{fd = FD, hintfd = HintFD, ofs = Offset},
@@ -141,8 +142,10 @@ write(Filestate=#filestate{fd = FD, hintfd = HintFD, ofs = Offset},
 
 
 %% @doc Given an Offset and Size, get the corresponding k/v from Filename.
-%% @spec read(Filename :: string(), Offset :: integer(), Size :: integer()) ->
-%%       {ok, Key :: binary(), Value :: binary()}
+-spec read(Filename :: string() | #filestate{}, Offset :: integer(),
+           Size :: integer()) ->
+        {ok, Key :: binary(), Value :: binary()} |
+        {error, bad_crc} | {error, atom()}.
 read(Filename, Offset, Size) when is_list(Filename) ->
     case open_file(Filename) of
         {ok, Fstate} ->
@@ -168,10 +171,14 @@ read(#filestate { fd = FD }, Offset, Size) ->
             {error, Reason}
     end.
 
+%% @doc Call the OS's fsync(2) system call on the cask & hint files.
+-spec sync(#filestate{}) -> ok.
 sync(#filestate { mode = read_write, fd = Fd, hintfd = HintFd }) ->
     ok = file:sync(Fd),
     ok = file:sync(HintFd).
 
+-spec fold(fresh | #filestate{}, fun((binary(), binary(), integer(), {integer(), integer()}, any()) -> any()), any()) ->
+        any() | {error, any()}.
 fold(fresh, _Fun, Acc) -> Acc;
 fold(#filestate { fd = Fd }, Fun, Acc) ->
     %% TODO: Add some sort of check that this is a read-only file
@@ -186,10 +193,14 @@ fold(#filestate { fd = Fd }, Fun, Acc) ->
             {error, Reason}
     end.
 
+-spec fold_keys(fresh | #filestate{}, fun((binary(), integer(), {integer(), integer()}, any()) -> any()), any()) ->
+        any() | {error, any()}.
 fold_keys(fresh, _Fun, Acc) -> Acc;
 fold_keys(State, Fun, Acc) ->
     fold_keys(State, Fun, Acc, default).
 
+-spec fold_keys(fresh | #filestate{}, fun((binary(), integer(), {integer(), integer()}, any()) -> any()), any(), datafile | hintfile | default) ->
+        any() | {error, any()}.
 fold_keys(#filestate { fd = Fd } = State, Fun, Acc, Mode) ->
     case Mode of
         datafile ->
@@ -205,6 +216,7 @@ fold_keys(#filestate { fd = Fd } = State, Fun, Acc, Mode) ->
             end
     end.
 
+-spec create_hintfile(string() | #filestate{}) -> ok | {error, any()}.
 create_hintfile(Filename) when is_list(Filename) ->
     case open_file(Filename) of
         {ok, Fstate} ->
@@ -230,25 +242,29 @@ create_hintfile(State) when is_record(State, filestate) ->
                       {?MODULE, fold_keys_loop, [State#filestate.fd, 0, F]}).
 
 
+-spec mk_filename(string(), integer()) -> string().
 mk_filename(Dirname, Tstamp) ->
     filename:join(Dirname,
                   lists:concat([integer_to_list(Tstamp),".bitcask.data"])).
 
+-spec filename(#filestate{}) -> string().
 filename(#filestate { filename = Fname }) ->
     Fname.
 
+-spec hintfile_name(string() | #filestate{}) -> string().
 hintfile_name(Filename) when is_list(Filename) ->
     filename:rootname(Filename, ".data") ++ ".hint";
 hintfile_name(#filestate { filename = Fname }) ->
     hintfile_name(Fname).
 
 -spec file_tstamp(#filestate{} | string()) -> integer().
-
 file_tstamp(#filestate{tstamp=Tstamp}) ->
     Tstamp;
 file_tstamp(Filename) when is_list(Filename) ->
     list_to_integer(filename:basename(Filename, ".bitcask.data")).
 
+-spec check_write(fresh | #filestate{}, binary(), binary(), integer()) ->
+      fresh | wrap | ok.
 check_write(fresh, _Key, _Value, _MaxSize) ->
     %% for the very first write, special-case
     fresh;
