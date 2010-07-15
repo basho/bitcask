@@ -311,24 +311,30 @@ fold_loop(Fd, Header, Offset, Fun, Acc0) ->
 
 fold_keys_loop(Fd, Offset, Fun, Acc0) ->
     case file:pread(Fd, Offset, ?HEADER_SIZE) of
-        {ok, Header} ->
+        {ok, Header} when erlang:size(Header) =:= ?HEADER_SIZE ->
             <<_Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
               ValueSz:?VALSIZEFIELD>> = Header,
             TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
             PosInfo = {Offset, TotalSz},
             case file:pread(Fd, Offset + ?HEADER_SIZE, KeySz) of
-                {ok, Key} ->
+                {ok, Key} when erlang:size(Key) =:= KeySz ->
                     Acc = Fun(Key, Tstamp, PosInfo, Acc0),
                     fold_keys_loop(Fd, Offset + TotalSz, Fun, Acc);
                 eof ->
                     Acc0;
                 {error, Reason} ->
-                    {error, Reason}
+                    {error, Reason};
+                X ->
+                    error_logger:error_msg("Bad datafile entry 1: ~p\n", [X]),
+                    Acc0
             end;
         eof ->
             Acc0;
         {error, Reason} ->
-            {error, Reason}
+            {error, Reason};
+        X ->
+            error_logger:error_msg("Bad datafile entry 2: ~p\n", [X]),
+            Acc0
     end.
 
 
@@ -364,14 +370,19 @@ fold_hintfile_loop(Fd, HintRecord, Fun, Acc0) ->
                 <<NextRecord:?HINT_RECORD_SZ/bytes>> ->
                     fold_hintfile_loop(Fd, NextRecord, Fun, Acc);
                 <<>> ->
+                    Acc;
+                X ->
+                    error_logger:error_msg("Bad hintfile data 1: ~p\n", [X]),
                     Acc
             end;
         eof ->
             {error, incomplete_key};
         {error, Reason} ->
-            {error, Reason}
+            {error, Reason};
+        X ->
+            error_logger:error_msg("Bad hintfile data 2: ~p\n", [X]),
+            Acc0
     end.
-
 
 create_file_loop(DirName, Opts, Tstamp) ->
     Filename = mk_filename(DirName, Tstamp),

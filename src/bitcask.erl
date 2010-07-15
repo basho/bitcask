@@ -1158,4 +1158,52 @@ delete_partial_merge_test() ->
 
     ok.
 
+corrupt_file_test() ->
+    os:cmd("rm -rf /tmp/bc.test.corrupt"),
+    B1 = bitcask:open("/tmp/bc.test.corrupt", [read_write]),
+    ok = bitcask:put(B1,<<"k">>,<<"v">>),
+    {ok, <<"v">>} = bitcask:get(B1,<<"k">>),
+    close(B1),
+
+    %% write bogus data at end of hintfile, verify non-crash
+    os:cmd("rm -rf /tmp/bc.test.corrupt.hint"),
+    os:cmd("mkdir /tmp/bc.test.corrupt.hint"),
+    os:cmd("cp -r /tmp/bc.test.corrupt/*hint /tmp/bc.test.corrupt.hint/100.bitcask.hint"),
+    os:cmd("cp -r /tmp/bc.test.corrupt/*data /tmp/bc.test.corrupt.hint/100.bitcask.data"),
+    HFN = "/tmp/bc.test.corrupt.hint/100.bitcask.hint",
+    {ok, HFD} = file:open(HFN, [append, raw, binary]),
+    ok = file:write(HFD, <<"1">>),
+    file:close(HFD),    
+    B2 = bitcask:open("/tmp/bc.test.corrupt.hint"),
+    {ok, <<"v">>} = bitcask:get(B2,<<"k">>),
+    close(B2),
+
+    %% write bogus data at end of datafile, no hintfile, verify non-crash
+    os:cmd("rm -rf /tmp/bc.test.corrupt.data"),
+    os:cmd("mkdir /tmp/bc.test.corrupt.data"),
+    os:cmd("cp -r /tmp/bc.test.corrupt/*data /tmp/bc.test.corrupt.data/100.bitcask.data"),
+    DFN = "/tmp/bc.test.corrupt.data/100.bitcask.data",
+    {ok, DFD} = file:open(DFN, [append, raw, binary]),
+    ok = file:write(DFD, <<"2">>),
+    file:close(DFD),    
+    B3 = bitcask:open("/tmp/bc.test.corrupt.data"),
+    {ok, <<"v">>} = bitcask:get(B3,<<"k">>),
+    close(B3),
+
+    %% as above, but more than just headersize data
+    os:cmd("rm -rf /tmp/bc.test.corrupt.data2"),
+    os:cmd("mkdir /tmp/bc.test.corrupt.data2"),
+    os:cmd("cp -r /tmp/bc.test.corrupt/*data /tmp/bc.test.corrupt.data2/100.bitcask.data"),
+    D2FN = "/tmp/bc.test.corrupt.data2/100.bitcask.data",
+    {ok, D2FD} = file:open(D2FN, [append, raw, binary]),
+    ok = file:write(D2FD, <<"123456789012345">>),
+    file:close(D2FD),    
+    B4 = bitcask:open("/tmp/bc.test.corrupt.data2"),
+    {ok, <<"v">>} = bitcask:get(B4,<<"k">>),
+    close(B4),
+
+
+    ok.
+    
+
 -endif.
