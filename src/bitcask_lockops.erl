@@ -67,11 +67,15 @@ read_activefile(Type, Dirname) ->
     LockFilename = lock_filename(Type, Dirname),
     case bitcask_nifs:lock_acquire(LockFilename, 0) of
         {ok, Lock} ->
-            case read_lock_data(Lock) of
-                {ok, _Pid, ActiveFile} ->
-                    ActiveFile;
-                _ ->
-                    undefined
+            try
+                case read_lock_data(Lock) of
+                    {ok, _Pid, ActiveFile} ->
+                        ActiveFile;
+                    _ ->
+                        undefined
+                end
+            after
+                bitcask_nifs:lock_release(Lock)
             end;
         {error, _Reason} ->
             undefined
