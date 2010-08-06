@@ -741,6 +741,8 @@ merge_single_entry(K, V, Tstamp, FileId, {Offset, _} = Pos, State) ->
     case out_of_date(K, Tstamp, FileId, Pos, State#mstate.expiry_time,
                      [State#mstate.live_keydir, State#mstate.del_keydir]) of
         true ->
+            bitcask_nifs:keydir_remove(State#mstate.live_keydir, K,
+                                       Tstamp, FileId),
             State;
         false ->
             case (V =:= ?TOMBSTONE) of
@@ -1202,8 +1204,35 @@ corrupt_file_test() ->
     {ok, <<"v">>} = bitcask:get(B4,<<"k">>),
     close(B4),
 
-
     ok.
+
+testhelper_keydir_count(B) ->
+    KD = (get_state(B))#bc_state.keydir,
+    {KeyCount,_,_} = bitcask_nifs:keydir_info(KD),
+    KeyCount.
     
+expire_keydir_test() ->
+    %% Initialize dataset with max_file_size set to 1 so that each file will
+    %% only contain a single key.
+    close(init_dataset("/tmp/bc.test.mergeexpirekeydir", [{max_file_size, 1}],
+                       default_dataset())),
+
+    KDB = bitcask:open("/tmp/bc.test.mergeexpirekeydir"),
+
+    %% three keys in the keydir now
+    3 = testhelper_keydir_count(KDB),
+
+    %% Wait for it all to expire
+    timer:sleep(2000),
+
+    %% Merge everything
+    ok = merge("/tmp/bc.test.mergeexpirekeydir",[{expiry_secs,1}]),
+
+    %% should be no keys in the keydir now
+    0 = testhelper_keydir_count(KDB),
+
+    bitcask:close(KDB),
+    ok.
 
 -endif.
+
