@@ -1034,14 +1034,14 @@ list_keys_test() ->
 
 expire_test() ->
     os:cmd("rm -rf /tmp/bc.test.expire"),
-    B = bitcask:open("/tmp/bc.test.expire", [read_write,{expiry_secs,2}]),
+    B = bitcask:open("/tmp/bc.test.expire", [read_write,{expiry_secs,1}]),
     ok = bitcask:put(B,<<"k">>,<<"v">>),
     {ok, <<"v">>} = bitcask:get(B,<<"k">>),
     ok = bitcask:put(B, <<"k2">>, <<"v2">>),
     ok = bitcask:put(B, <<"k">>,<<"v3">>),
     {ok, <<"v2">>} = bitcask:get(B, <<"k2">>),
     {ok, <<"v3">>} = bitcask:get(B, <<"k">>),
-    timer:sleep(3000),
+    timer:sleep(2000),
     ok = bitcask:put(B, <<"k7">>,<<"v7">>),
     true = ([<<"k7">>] =:= bitcask:list_keys(B)),
     close(B),
@@ -1054,10 +1054,10 @@ expire_merge_test() ->
                        default_dataset())),
 
     %% Wait for it all to expire
-    timer:sleep(3000),
+    timer:sleep(2000),
 
     %% Merge everything
-    ok = merge("/tmp/bc.test.mergeexpire",[{expiry_secs,2}]),
+    ok = merge("/tmp/bc.test.mergeexpire",[{expiry_secs,1}]),
 
     %% Verify we've now only got one file
     1 = length(readable_files("/tmp/bc.test.mergeexpire")),
