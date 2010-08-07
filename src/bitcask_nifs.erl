@@ -28,7 +28,7 @@
          keydir_mark_ready/1,
          keydir_put/6,
          keydir_get/2,
-         keydir_remove/2, keydir_remove/4,
+         keydir_remove/2, keydir_remove/5,
          keydir_copy/1,
          keydir_itr/1,
          keydir_itr_next/1,
@@ -79,7 +79,7 @@
         not_found | #bitcask_entry{}.
 -spec keydir_remove(reference(), binary()) ->
         ok.
--spec keydir_remove(reference(), binary(), integer(), integer()) ->
+-spec keydir_remove(reference(), binary(), integer(), integer(), integer()) ->
         ok.
 -spec keydir_copy(reference()) ->
         {ok, reference()}.
@@ -175,7 +175,10 @@ keydir_remove(_Ref, _Key) ->
         _   -> exit("NIF library not loaded")
     end.
 
-keydir_remove(_Ref, _Key, _Tstamp, _FileId) ->
+keydir_remove(Ref, Key, Tstamp, FileId, Offset) ->
+    keydir_remove_int(Ref, Key, Tstamp, FileId, <<Offset:64/unsigned-native>>).
+
+keydir_remove_int(_Ref, _Key, _Tstamp, _FileId, _Offset) ->
     case random:uniform(999999999999) of
         666 -> ok;
         _   -> exit("NIF library not loaded")

@@ -170,7 +170,7 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_put_int", 6, bitcask_nifs_keydir_put_int},
     {"keydir_get_int", 2, bitcask_nifs_keydir_get_int},
     {"keydir_remove", 2, bitcask_nifs_keydir_remove},
-    {"keydir_remove", 4, bitcask_nifs_keydir_remove},
+    {"keydir_remove_int", 5, bitcask_nifs_keydir_remove},
     {"keydir_copy", 1, bitcask_nifs_keydir_copy},
     {"keydir_itr", 1, bitcask_nifs_keydir_itr},
     {"keydir_itr_next_int", 1, bitcask_nifs_keydir_itr_next},
@@ -526,17 +526,20 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
         {
             bitcask_keydir_entry* entry = kh_key(keydir->entries, itr);
 
-            // If this call has 4 arguments, this is a conditional removal. We
-            // only want to actually remove the entry if the tstamp and fileid
-            // matches the one provided. A sort of poor-man's CAS.
-            if (argc == 4)
+            // If this call has 5 arguments, this is a conditional removal. We
+            // only want to actually remove the entry if the tstamp, fileid and
+            // offset matches the one provided. A sort of poor-man's CAS.
+            if (argc == 5)
             {
                 uint32_t tstamp;
                 uint32_t file_id;
+                uint64_t offset;
                 if (enif_get_uint(env, argv[2], (unsigned int*)&tstamp) &&
-                    enif_get_uint(env, argv[3], (unsigned int*)&file_id))
+                    enif_get_uint(env, argv[3], (unsigned int*)&file_id) &&
+                    enif_get_uint64_bin(env, argv[4], (uint64_t*)&offset))
                 {
-                    if (entry->tstamp != tstamp || entry->file_id != file_id)
+                    if (entry->tstamp != tstamp || entry->file_id != file_id ||
+                        entry->offset != offset)
                     {
                         // Either tstamp or file_id didn't match precisely. Ignore
                         // this attempt to delete the record.
