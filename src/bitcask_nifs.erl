@@ -42,9 +42,6 @@
          lock_readdata/1,
          lock_writedata/2]).
 
-%% Internal use/debugging use only
--export([keydir_put_int/6, keydir_get_int/2]).
-
 -on_load(init/0).
 
 -include("bitcask.hrl").
@@ -145,12 +142,9 @@ keydir_mark_ready(_Ref) ->
         _   -> exit("NIF library not loaded")
     end.
 
-keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp)
-  when is_integer(Offset)->
-    keydir_put_int(Ref, Key, FileId, TotalSz, ext_to_int_offset(Offset),
-                   Tstamp);
 keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp) ->
-    keydir_put_int(Ref, Key, FileId, TotalSz, Offset, Tstamp).    
+    keydir_put_int(Ref, Key, FileId, TotalSz, <<Offset:64/unsigned-native>>,
+                   Tstamp).
 
 keydir_put_int(_Ref, _Key, _FileId, _TotalSz, _Offset, _Tstamp) ->
     case random:uniform(999999999999) of
@@ -162,7 +156,8 @@ keydir_put_int(_Ref, _Key, _FileId, _TotalSz, _Offset, _Tstamp) ->
 keydir_get(Ref, Key) ->
     case keydir_get_int(Ref, Key) of
         E when is_record(E, bitcask_entry) ->
-            E#bitcask_entry{offset = int_to_ext_offset(E#bitcask_entry.offset)};
+            <<Offset:64/unsigned-native>> = E#bitcask_entry.offset,
+            E#bitcask_entry{offset = Offset};
         not_found ->
             not_found
     end.
@@ -199,7 +194,16 @@ keydir_itr(_Ref) ->
         _   -> exit("NIF library not loaded")
     end.
 
-keydir_itr_next(_Ref) ->
+keydir_itr_next(Ref) ->
+    case keydir_itr_next_int(Ref) of
+        E when is_record(E, bitcask_entry) ->
+            <<Offset:64/unsigned-native>> = E#bitcask_entry.offset,
+            E#bitcask_entry { offset = Offset };
+        Other ->
+            Other
+    end.
+
+keydir_itr_next_int(_Ref) ->
     case random:uniform(999999999999) of
         666 -> {error, iteration_not_permitted};
         667 -> allocation_error;
@@ -285,15 +289,6 @@ keydir_fold_cont(not_found, _Ref, _Fun, Acc0) ->
 keydir_fold_cont(Curr, Ref, Fun, Acc0) ->
     Acc = Fun(Curr, Acc0),
     keydir_fold_cont(keydir_itr_next(Ref), Ref, Fun, Acc).
-
-%% Note: 18446744073709551616 = 2^64
-
-ext_to_int_offset(Offset) when Offset <  18446744073709551616,
-                               Offset >= 0 ->
-    {(Offset band 16#FFFFFFFF00000000) bsr 32, Offset band 16#00000000FFFFFFFF}.
-
-int_to_ext_offset({High32, Low32}) ->
-    (High32 bsl 32) bor Low32.
 
 make_bogus_bitcask_entry(Key) ->
     #bitcask_entry{key = Key,
