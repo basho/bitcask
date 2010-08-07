@@ -31,16 +31,10 @@
 -compile(export_all).
 
 -define(QC_OUT(P),
-        eqc:on_output(fun(Str, Args) -> ?debugFmt(Str, Args) end, P)).
+        eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
 qc(P) ->
-    case catch(eqc:current_counterexample()) of
-        CE when is_list(CE) ->
-            ?debugFmt("Using counter example: ~p\n", [CE]),
-            ?assert(eqc:check(P, CE));
-        _ ->
-            ?assert(eqc:quickcheck(P))
-    end.
+    ?assert(eqc:quickcheck(?QC_OUT(P))).
 
 keys() ->
     eqc_gen:non_empty(list(eqc_gen:non_empty(binary()))).
