@@ -45,13 +45,13 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 merge(Dir) ->
-    gen_server:call(?MODULE, {merge, [Dir]}).
+    gen_server:call(?MODULE, {merge, [Dir]}, infinity).
 
 merge(Dir, Opts) ->
-    gen_server:call(?MODULE, {merge, [Dir, Opts]}).
+    gen_server:call(?MODULE, {merge, [Dir, Opts]}, infinity).
 
 merge(Dir, Opts, Files) ->
-    gen_server:call(?MODULE, {merge, [Dir, Opts, Files]}).
+    gen_server:call(?MODULE, {merge, [Dir, Opts, Files]}, infinity).
 
 %% ====================================================================
 %% gen_server callbacks
