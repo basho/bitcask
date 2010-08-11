@@ -107,10 +107,10 @@ typedef struct
 
 
 // Handle lock helper functions
-#define R_LOCK(handle)    { if (keydir->lock) enif_rwlock_rlock(keydir->lock); }
-#define R_UNLOCK(handle)  { if (keydir->lock) enif_rwlock_runlock(keydir->lock); }
-#define RW_LOCK(handle)   { if (keydir->lock) enif_rwlock_rwlock(keydir->lock); }
-#define RW_UNLOCK(handle) { if (keydir->lock) enif_rwlock_rwunlock(keydir->lock); }
+#define R_LOCK(keydir)    { if (keydir->lock) enif_rwlock_rlock(keydir->lock); }
+#define R_UNLOCK(keydir)  { if (keydir->lock) enif_rwlock_runlock(keydir->lock); }
+#define RW_LOCK(keydir)   { if (keydir->lock) enif_rwlock_rwlock(keydir->lock); }
+#define RW_UNLOCK(keydir) { if (keydir->lock) enif_rwlock_rwunlock(keydir->lock); }
 
 // Atoms (initialized in on_load)
 static ERL_NIF_TERM ATOM_ALLOCATION_ERROR;
@@ -142,6 +142,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
 ERL_NIF_TERM bitcask_nifs_keydir_copy(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_itr(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_keydir_itr_release(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_info(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_release(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
@@ -174,6 +175,7 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_copy", 1, bitcask_nifs_keydir_copy},
     {"keydir_itr", 1, bitcask_nifs_keydir_itr},
     {"keydir_itr_next_int", 1, bitcask_nifs_keydir_itr_next},
+    {"keydir_itr_release", 1, bitcask_nifs_keydir_itr_release},
     {"keydir_info", 1, bitcask_nifs_keydir_info},
     {"keydir_release", 1, bitcask_nifs_keydir_release},
 
@@ -652,13 +654,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr(ErlNifEnv* env, int argc, const ERL_NIF_TER
     {
         bitcask_keydir* keydir = handle->keydir;
 
-        // If this is a named keydir, we do not permit iteration for locking reasons.
-        if (keydir->lock)
-        {
-            return enif_make_tuple2(env, ATOM_ERROR, ATOM_ITERATION_NOT_PERMITTED);
-        }
-
-        // Initialize the iterator
+        // Grab the lock and initialize the iterator
+        R_LOCK(keydir);
         keydir->iterator = kh_begin(keydir->entries);
         return ATOM_OK;
     }
@@ -675,12 +672,6 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
     if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle))
     {
         bitcask_keydir* keydir = handle->keydir;
-
-        // If this is a named keydir, we do not permit iteration for locking reasons.
-        if (keydir->lock)
-        {
-            return enif_make_tuple2(env, ATOM_ERROR, ATOM_ITERATION_NOT_PERMITTED);
-        }
 
         while (keydir->iterator != kh_end(keydir->entries))
         {
@@ -720,6 +711,24 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
 
         // The iterator is at the end of the table
         return ATOM_NOT_FOUND;
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
+ERL_NIF_TERM bitcask_nifs_keydir_itr_release(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_keydir_handle* handle;
+
+    if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle))
+    {
+        bitcask_keydir* keydir = handle->keydir;
+
+        // Unlock the keydir
+        R_UNLOCK(keydir);
+        return ATOM_OK;
     }
     else
     {

@@ -30,8 +30,6 @@
          keydir_get/2,
          keydir_remove/2, keydir_remove/5,
          keydir_copy/1,
-         keydir_itr/1,
-         keydir_itr_next/1,
          keydir_fold/3,
          keydir_info/1,
          keydir_release/1,
@@ -88,6 +86,8 @@
 -spec keydir_itr_next(reference()) ->
         #bitcask_entry{} |
         {error, iteration_not_permitted} | allocation_error | not_found.
+-spec keydir_itr_release(reference()) ->
+        ok.
 -spec keydir_fold(reference(), fun((any(), any()) -> any()), any()) ->
         any() | {error, any()}.
 -spec keydir_info(reference()) ->
@@ -215,10 +215,17 @@ keydir_itr_next_int(_Ref) ->
         _   -> exit("NIF library not loaded")
     end.
 
+keydir_itr_release(_Ref) ->
+    ok.
+
 keydir_fold(Ref, Fun, Acc0) ->
     case keydir_itr(Ref) of
         ok ->
-            keydir_fold_cont(keydir_itr_next(Ref), Ref, Fun, Acc0);
+            try
+                keydir_fold_cont(keydir_itr_next(Ref), Ref, Fun, Acc0)
+            after
+                keydir_itr_release(Ref)
+            end;
         {error, Reason} ->
             {error, Reason}
     end.
@@ -329,8 +336,16 @@ keydir_basic_test() ->
     ok = keydir_remove(Ref, <<"abc">>),
     not_found = keydir_get(Ref, <<"abc">>).
 
-keydir_itr_test() ->
+keydir_itr_anon_test() ->
     {ok, Ref} = keydir_new(),
+    keydir_itr_test_base(Ref).
+
+keydir_itr_named_test() ->
+    {not_ready, Ref} = keydir_new("keydir_itr_named_test"),
+    keydir_mark_ready(Ref),
+    keydir_itr_test_base(Ref).
+
+keydir_itr_test_base(Ref) ->
     ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
     ok = keydir_put(Ref, <<"def">>, 0, 4567, 1234, 2),
     ok = keydir_put(Ref, <<"hij">>, 1, 7890, 0, 3),
@@ -365,11 +380,6 @@ keydir_named_not_ready_test() ->
     ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
 
     {error, not_ready} = keydir_new("k2").
-
-keydir_named_noitr_test() ->
-    {not_ready, Ref} = keydir_new("k3"),
-    {error, iteration_not_permitted} = keydir_itr(Ref).
-
 
 create_file_test() ->
     Fname = "/tmp/bitcask_nifs.createfile.test",
