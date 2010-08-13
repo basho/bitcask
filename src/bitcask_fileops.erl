@@ -292,18 +292,24 @@ tstamp() ->
 
 
 fold_loop(Fd, Header, Offset, Fun, Acc0) ->
-    <<_Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
+    <<Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
      ValueSz:?VALSIZEFIELD>> = Header,
+    <<_:4/binary, HeaderMinusCRC/binary>> = Header,
     TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
     case file:read(Fd, TotalSz) of
         {ok, <<Key:KeySz/bytes, Value:ValueSz/bytes, Rest/binary>>} ->
-            PosInfo = {Offset, TotalSz},
-            Acc = Fun(Key, Value, Tstamp, PosInfo, Acc0),
-            case Rest of
-                <<NextHeader:?HEADER_SIZE/bytes>> ->
-                    fold_loop(Fd, NextHeader, Offset + TotalSz, Fun, Acc);
-                <<>> ->
-                    Acc
+            case erlang:crc32([HeaderMinusCRC, Key, Value]) of
+                Crc32 ->
+                    PosInfo = {Offset, TotalSz},
+                    Acc = Fun(Key, Value, Tstamp, PosInfo, Acc0),
+                    case Rest of
+                        <<NextHeader:?HEADER_SIZE/bytes>> ->
+                            fold_loop(Fd, NextHeader, Offset + TotalSz, Fun, Acc);
+                        <<>> ->
+                            Acc
+                    end;
+                _ ->
+                    {error, {bad_crc, Fd, Offset}}
             end;
         {error, Reason} ->
             {error, Reason}
@@ -316,6 +322,8 @@ fold_keys_loop(Fd, Offset, Fun, Acc0) ->
               ValueSz:?VALSIZEFIELD>> = Header,
             TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
             PosInfo = {Offset, TotalSz},
+            %% NOTE: We are intentionally *not* reading the value blob,
+            %%       so we cannot check the checksum.
             case file:pread(Fd, Offset + ?HEADER_SIZE, KeySz) of
                 {ok, Key} when erlang:size(Key) =:= KeySz ->
                     Acc = Fun(Key, Tstamp, PosInfo, Acc0),
