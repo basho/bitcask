@@ -30,6 +30,7 @@
          delete/2,
          sync/1,
          list_keys/1,
+         fold_keys/3,
          fold/3,
          merge/1, merge/2, merge/3,
          needs_merge/1,
@@ -304,6 +305,34 @@ sync(Ref) ->
 %% @doc List all keys in a bitcask datastore.
 -spec list_keys(reference()) -> [Key::binary()] | {error, any()}.
 list_keys(Ref) -> fold(Ref, fun(K,_V,Acc) -> [K|Acc] end, []).
+
+%% @doc Fold over all keys in a bitcask datastore.
+%% Must be able to understand the bitcask_entry record form.
+-spec fold_keys(reference(), Fun::fun(), Acc::term()) ->
+                                                       term() | {error, any()}.
+fold_keys(Ref, Fun, Acc0) ->
+    %% Fun should be of the form F(#bitcask_entry, A) -> A
+    ExpiryTime = expiry_time((get_state(Ref))#bc_state.opts),
+    RealFun = fun(BCEntry, Acc) ->
+        Key = BCEntry#bitcask_entry.key,
+        case BCEntry#bitcask_entry.tstamp < ExpiryTime of
+            true ->
+                Acc;
+            false ->
+                TSize = size(?TOMBSTONE),
+                case BCEntry#bitcask_entry.total_sz -
+                            (?HEADER_SIZE + size(Key)) of
+                    TSize ->  % might be a deleted record, so check
+                        case ?MODULE:get(Ref, Key) of
+                            not_found -> Acc;
+                            _ -> Fun(BCEntry, Acc)
+                        end;
+                    _ ->
+                        Fun(BCEntry, Acc)
+                end
+        end
+    end,
+    bitcask_nifs:keydir_fold((get_state(Ref))#bc_state.keydir, RealFun, Acc0).
 
 %% @doc fold over all K/V pairs in a bitcask datastore.
 %% Fun is expected to take F(K,V,Acc0) -> Acc
