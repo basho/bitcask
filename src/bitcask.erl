@@ -284,7 +284,8 @@ put(Ref, Key, Value) ->
 %% @doc Delete a key from a bitcask datastore.
 -spec delete(reference(), Key::binary()) -> ok.
 delete(Ref, Key) ->
-    put(Ref, Key, ?TOMBSTONE).
+    put(Ref, Key, ?TOMBSTONE),
+    ok = bitcask_nifs:keydir_remove((get_state(Ref))#bc_state.keydir, Key).
 
 %% @doc Force any writes to sync to disk.
 -spec sync(reference()) -> ok.
@@ -1234,6 +1235,24 @@ expire_keydir_test() ->
 
     %% should be no keys in the keydir now
     0 = testhelper_keydir_count(KDB),
+
+    bitcask:close(KDB),
+    ok.
+
+delete_keydir_test() ->
+    close(init_dataset("/tmp/bc.test.deletekeydir", [],
+                       default_dataset())),
+
+    KDB = bitcask:open("/tmp/bc.test.deletekeydir", [read_write]),
+
+    %% three keys in the keydir now
+    3 = testhelper_keydir_count(KDB),
+
+    %% Delete something
+    ok = bitcask:delete(KDB, <<"k">>),
+
+    %% should be 2 keys in the keydir now
+    2 = testhelper_keydir_count(KDB),
 
     bitcask:close(KDB),
     ok.
