@@ -304,7 +304,8 @@ sync(Ref) ->
 
 %% @doc List all keys in a bitcask datastore.
 -spec list_keys(reference()) -> [Key::binary()] | {error, any()}.
-list_keys(Ref) -> fold(Ref, fun(K,_V,Acc) -> [K|Acc] end, []).
+list_keys(Ref) -> 
+    fold_keys(Ref, fun(#bitcask_entry{key=K},Acc) -> [K|Acc] end, []).
 
 %% @doc Fold over all keys in a bitcask datastore.
 %% Must be able to understand the bitcask_entry record form.
@@ -1062,7 +1063,7 @@ list_keys_test() ->
     {ok, <<"v3">>} = bitcask:get(B, <<"k">>),
     ok = bitcask:delete(B,<<"k">>),
     ok = bitcask:put(B, <<"k7">>,<<"v7">>),
-    true = ([<<"k7">>,<<"k2">>] =:= bitcask:list_keys(B)),
+    true = ([<<"k2">>,<<"k7">>] =:= lists:sort(bitcask:list_keys(B))),
     close(B),
     ok.
 
