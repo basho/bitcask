@@ -443,15 +443,12 @@ merge(Dirname, Opts, FilesToMerge0) ->
     %% list of files.
     FilesToMerge = [F || F <- FilesToMerge0,
                          filelib:is_file(F)],
-    case FilesToMerge of
-        [] ->
-            %% None of the files to merge actually exist!
-            throw({error, no_files_to_merge});
+    merge1(Dirname, Opts, FilesToMerge).
 
-        _ ->
-            ok
-    end,
-
+%% Inner merge function, assumes that bitcask is running and all files exist.
+merge1(_Dirname, _Opts, []) ->
+    ok;
+merge1(Dirname, Opts, FilesToMerge) ->
     %% Test to see if this is a complete or partial merge
     Partial = not(lists:usort(readable_files(Dirname)) == 
                   lists:usort(FilesToMerge)),
