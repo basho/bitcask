@@ -67,7 +67,7 @@ create_file(DirName, Opts) ->
 %% Called with fully-qualified filename.
 -spec open_file(Filename :: string()) -> {ok, #filestate{}} | {error, any()}.
 open_file(Filename) ->
-    case file:open(Filename, [read, raw, binary]) of
+    case file:open(Filename, [read, raw, binary, read_ahead]) of
         {ok, FD} ->
             {ok, #filestate{mode = read_only,
                             filename = Filename, tstamp = file_tstamp(Filename),
@@ -347,7 +347,7 @@ fold_keys_loop(Fd, Offset, Fun, Acc0) ->
 
 
 fold_hintfile(State, Fun, Acc) ->
-    case file:open(hintfile_name(State), [read, raw, binary]) of
+    case file:open(hintfile_name(State), [read, raw, binary, read_ahead]) of
         {ok, HintFd} ->
             try
                 {ok, _} = file:position(HintFd, bof),
@@ -397,9 +397,9 @@ create_file_loop(DirName, Opts, Tstamp) ->
     ok = filelib:ensure_dir(Filename),
     case bitcask_nifs:create_file(Filename) of
         true ->
-            {ok, FD} = file:open(Filename, [read, write, raw, binary]),
+            {ok, FD} = file:open(Filename, [read, write, raw, binary, read_ahead]),
             {ok, HintFD} = file:open(hintfile_name(Filename),
-                                     [read, write, raw, binary]),
+                                     [read, write, raw, binary, read_ahead]),
             %% If o_sync is specified in the options, try to set that
             %% flag on the underlying file descriptor
             case bitcask:get_opt(sync_strategy, Opts) of
@@ -440,7 +440,7 @@ create_file_loop(DirName, Opts, Tstamp) ->
 generate_hintfile(Filename, {FolderMod, FolderFn, FolderArgs}) ->
     %% Create the temp file that we will write records out to.
     TmpFilename = temp_filename(Filename ++ ".~w"),
-    {ok, Fd} = file:open(TmpFilename, [read, write, raw, binary]),
+    {ok, Fd} = file:open(TmpFilename, [read, write, raw, binary, read_ahead]),
 
     %% Run the provided fold function over whatever the dataset is. The function
     %% is passed the Fd as the accumulator argument, and must return the same
