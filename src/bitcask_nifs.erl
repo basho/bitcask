@@ -121,6 +121,16 @@ init() ->
     end,
     erlang:load_nif(SoName, 0).
 
+%% ===================================================================
+%% Internal functions
+%% ===================================================================
+%% 
+%% Most of the functions below are actually defined in c_src/bitcask_nifs.c
+%% See that file for the real functionality of the bitcask_nifs module.
+%% The definitions here are only to satisfy trivial static analysis.
+%% 
+
+
 keydir_new() ->
     case random:uniform(999999999999) of
         666 -> {ok, make_ref()};
