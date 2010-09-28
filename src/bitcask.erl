@@ -1284,5 +1284,16 @@ delete_keydir_test() ->
     bitcask:close(KDB),
     ok.
 
+frag_status_test() ->
+    B1 = bitcask:open("/tmp/bc.test.fragtest", [read_write]),
+    ok = bitcask:put(B1,<<"k">>,<<"v">>),
+    ok = bitcask:put(B1,<<"k">>,<<"z">>),
+    ok = bitcask:close(B1),
+    % close and reopen so that status can reflect a closed file
+    B2 = bitcask:open("/tmp/bc.test.fragtest", [read_write]),
+    {1,[{_,50,16,32}]} = bitcask:status(B2),
+    %% 1 key, 50% frag, 16 dead bytes, 32 total bytes
+    ok.
+
 -endif.
 
