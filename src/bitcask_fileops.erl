@@ -311,6 +311,10 @@ fold_loop(Fd, Header, Offset, Fun, Acc0) ->
                 _ ->
                     {error, {bad_crc, Fd, Offset}}
             end;
+        {ok, X} ->
+            error_logger:error_msg("Bad datafile entry, discarding"
+                                   "(~p/~p bytes)\n", [size(X),TotalSz]),
+            Acc0;
         {error, Reason} ->
             {error, Reason}
     end.
