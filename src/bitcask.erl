@@ -1285,6 +1285,8 @@ delete_keydir_test() ->
     ok.
 
 frag_status_test() ->
+    os:cmd("rm -rf /tmp/bc.test.fragtest"),
+    os:cmd("mkdir /tmp/bc.test.fragtest"),
     B1 = bitcask:open("/tmp/bc.test.fragtest", [read_write]),
     ok = bitcask:put(B1,<<"k">>,<<"v">>),
     ok = bitcask:put(B1,<<"k">>,<<"z">>),
