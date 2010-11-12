@@ -15,6 +15,12 @@ extern "C" {
 #define enif_alloc_binary_compat enif_alloc_binary
 #define enif_alloc_compat enif_alloc
 #define enif_free_compat enif_free
+#define enif_cond_create erl_drv_cond_create
+#define enif_cond_destroy erl_drv_cond_destroy
+#define enif_cond_signal erl_drv_cond_signal
+#define enif_cond_broadcast erl_drv_cond_broadcast
+#define enif_cond_wait erl_drv_cond_wait
+#define ErlNifCond ErlDrvCond
 #endif /* R13B04 */
 
 #if ERL_NIF_MAJOR_VERSION == 2 && ERL_NIF_MINOR_VERSION == 0
