@@ -66,7 +66,6 @@ KHASH_MAP_INIT_INT(fstats, bitcask_fstats_entry*);
 typedef struct
 {
     khash_t(entries)* entries;
-    khiter_t          iterator;
     khash_t(fstats)*  fstats;
     size_t        key_count;
     size_t        key_bytes;
@@ -79,6 +78,7 @@ typedef struct
 typedef struct
 {
     bitcask_keydir* keydir;
+    khiter_t        iterator;
     ErlNifTid       il_thread;  /* Iterator lock thread */
     ErlNifMutex*    il_signal_mutex;
     ErlNifCond*     il_signal;
@@ -209,7 +209,6 @@ ERL_NIF_TERM bitcask_nifs_keydir_new0(ErlNifEnv* env, int argc, const ERL_NIF_TE
     bitcask_keydir* keydir = enif_alloc_compat(env, sizeof(bitcask_keydir));
     memset(keydir, '\0', sizeof(bitcask_keydir));
     keydir->entries  = kh_init(entries);
-    keydir->iterator = kh_begin(keydir->entries);
     keydir->fstats   = kh_init(fstats);
 
     // Assign the keydir to our handle and hand it back
@@ -260,7 +259,6 @@ ERL_NIF_TERM bitcask_nifs_keydir_new1(ErlNifEnv* env, int argc, const ERL_NIF_TE
 
             // Initialize hash tables
             keydir->entries  = kh_init(entries);
-            keydir->iterator = kh_begin(keydir->entries);
             keydir->fstats   = kh_init(fstats);
 
             // Be sure to initialize the rwlock and set our refcount
@@ -418,10 +416,6 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
             // First entry for this key -- increment both live and total counters
             update_fstats(env, keydir, entry.file_id, 1, 1,
                           entry.total_sz, entry.total_sz);
-
-            // Reset the iterator to ensure that someone doesn't cause a crash
-            // by trying to interleave change operations with iterations
-            keydir->iterator = kh_begin(keydir->entries);
 
             RW_UNLOCK(keydir);
             return ATOM_OK;
@@ -582,10 +576,6 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
 
             kh_del(entries, keydir->entries, itr);
 
-            // Reset the iterator to ensure that someone doesn't cause a crash
-            // by trying to interleave change operations with iterations
-            keydir->iterator = kh_begin(keydir->entries);
-
             enif_free_compat(env, entry);
         }
 
@@ -618,7 +608,6 @@ ERL_NIF_TERM bitcask_nifs_keydir_copy(ErlNifEnv* env, int argc, const ERL_NIF_TE
         new_handle->keydir = new_keydir;
         memset(new_keydir, '\0', sizeof(bitcask_keydir));
         new_keydir->entries  = kh_init(entries);
-        new_keydir->iterator = kh_begin(new_keydir->entries);
         new_keydir->fstats   = kh_init(fstats);
 
         // Deep copy each item from the existing handle
@@ -693,8 +682,6 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr(ErlNifEnv* env, int argc, const ERL_NIF_TER
 
     if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle))
     {
-        bitcask_keydir* keydir = handle->keydir;
-
         // If a iterator thread is already active for this keydir, bail
         if (handle->il_thread)
         {
@@ -730,7 +717,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr(ErlNifEnv* env, int argc, const ERL_NIF_TER
         }
 
         // Ready to go; initialize the iterator and unlock the signal mutex
-        keydir->iterator = kh_begin(keydir->entries);
+        handle->iterator = kh_begin(handle->keydir->entries);
         enif_mutex_unlock(handle->il_signal_mutex);
 
         return ATOM_OK;
@@ -755,11 +742,11 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
             return enif_make_tuple2(env, ATOM_ERROR, ATOM_ITERATION_NOT_STARTED);
         }
 
-        while (keydir->iterator != kh_end(keydir->entries))
+        while (handle->iterator != kh_end(keydir->entries))
         {
-            if (kh_exist(keydir->entries, keydir->iterator))
+            if (kh_exist(keydir->entries, handle->iterator))
             {
-                bitcask_keydir_entry* entry = kh_key(keydir->entries, keydir->iterator);
+                bitcask_keydir_entry* entry = kh_key(keydir->entries, handle->iterator);
                 ErlNifBinary key;
 
                 // Alloc the binary and make sure it succeeded
@@ -781,13 +768,13 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
                                                      enif_make_uint(env, entry->tstamp));
 
                 // Update the iterator to the next entry
-                (keydir->iterator)++;
+                (handle->iterator)++;
                 return curr;
             }
             else
             {
                 // No item in this slot; increment the iterator and keep looping
-                (keydir->iterator)++;
+                (handle->iterator)++;
             }
         }
 
