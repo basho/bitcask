@@ -81,13 +81,10 @@ do_test(State0) ->
     io:format("\nInitial populate.\n"),
     State1 = start_writer(State0),
     kick_writer(State1),
-    receive
-        {'EXIT', _From, Why} ->
-            erlang:error({writer_failed, Why});
+    wait_for_writer(State1),
 
-        {write_done, 1} ->
-            ok
-    end,
+    %% Start continually rewriting the keys and optionally reading,
+    %% folding and merging
     State = State1#state{seq = 1},
     kick_writer(State),
     start_readers(State, State#state.readers),
@@ -147,6 +144,19 @@ restart_procs(State) ->
         Other ->
             io:format("Restart procs got unexpected message\n~p\n", [Other]),
             State
+    end.
+
+%% Wait for the initial writer to complete - the os:cmd call
+%% can generate an EXIT message
+wait_for_writer(State) ->
+    WriterPid = State#state.writer_pid,
+    receive
+        {'EXIT', WriterPid, Why} ->
+            erlang:error({initial_write_failed, Why});
+        {'EXIT', _Pid, _Why} ->
+            wait_for_writer(State);
+        {write_done, 1} ->
+            ok
     end.
 
 wait_for_procs(#state{writers = 0, readers = 0, folders = 0, mergers = 0}) ->
