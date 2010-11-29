@@ -105,56 +105,30 @@ open(Dirname, Opts) ->
     %% Get the max file size parameter from opts
     MaxFileSize = get_opt(max_file_size, Opts),
 
-    %% Get the named keydir for this directory. If we get it and it's already
-    %% marked as ready, that indicates another caller has already loaded
-    %% all the data from disk and we can short-circuit scanning all the files.
-    case bitcask_nifs:keydir_new(Dirname) of
-        {ready, KeyDir} ->
-            %% A keydir already exists, nothing more to do here. We'll lazy
-            %% open files as needed.
-            ReadFiles = [];
+    %% Get the number of seconds we are willing to wait for the keydir init to timeout
+    WaitTime = timer:seconds(get_opt(open_timeout, Opts)),
 
-        {not_ready, KeyDir} ->
-            %% We've just created a new named keydir, so we need to load up all
-            %% the data from disk. Build a list of all the bitcask data files
-            %% and sort it in descending order (newest->oldest).
-            SortedFiles = readable_files(Dirname),
-            ReadFiles = scan_key_files(SortedFiles, KeyDir, []),
+    %% Loop and wait for the keydir to come available.
+    case init_keydir(Dirname, WaitTime) of
+        {ok, KeyDir, ReadFiles} ->
+            %% Ensure that expiry_secs is in Opts and not just application env
+            ExpOpts = [{expiry_secs,get_opt(expiry_secs,Opts)}|Opts],
 
-            %% Now that we loaded all the data, mark the keydir as ready
-            %% so other callers can use it
-            ok = bitcask_nifs:keydir_mark_ready(KeyDir);
+            Ref = make_ref(),
+            erlang:put(Ref, #bc_state {dirname = Dirname,
+                                       read_files = ReadFiles,
+                                       write_file = WritingFile, % <fd>|undefined|fresh
+                                       write_lock = undefined,
+                                       max_file_size = MaxFileSize,
+                                       opts = ExpOpts,
+                                       keydir = KeyDir}),
+            Ref;
+        {error, Reason} ->
+            {error, Reason}
+    end.
 
-        {error, not_ready} ->
-            %% Some other process is loading data into the keydir.
-            %% Setup a blank ReadFiles (since we'll lazy load files)
-            %% and wait for it to be ready.
-            ReadFiles = [],
-            WaitTime = timer:seconds(get_opt(open_timeout, Opts)),
-            case wait_for_keydir(Dirname, WaitTime) of
-                {ok, KeyDir} ->
-                    ok;
-                timeout ->
-                    %% Well, we timed out waiting around for the other
-                    %% process to load data from disk.
-                    KeyDir = undefined, % Make erlc happy w/ non-local exit
-                    throw({error, open_timeout})
-            end
-    end,
 
-    %% Ensure that expiry_secs is in Opts and not just application env
-    ExpOpts = [{expiry_secs,get_opt(expiry_secs,Opts)}|Opts],
 
-    Ref = make_ref(),
-    erlang:put(Ref, #bc_state {dirname = Dirname,
-                               read_files = ReadFiles,
-                               write_file = WritingFile, % <fd>|undefined|fresh
-                               write_lock = undefined,
-                               max_file_size = MaxFileSize,
-                               opts = ExpOpts,
-                               keydir = KeyDir}),
-
-    Ref.
 
 %% @doc Close a bitcask data store and flush any pending writes to disk.
 -spec close(reference()) -> ok.
@@ -704,23 +678,37 @@ scan_key_files([Filename | Rest], KeyDir, Acc) ->
     scan_key_files(Rest, KeyDir, [File | Acc]).
 
 %%
-%% Wait for a named keydir to become ready for usage. The MillisToWait is
-%% the remaining time we should continue waiting. Each wait is at max 100ms
-%% to avoid blocking for longer than necessary, but still not do a lot of
-%% extraneous polling.
+%% Initialize a keydir for a given directory.
 %%
-wait_for_keydir(Name, MillisToWait) ->
-    case bitcask_nifs:keydir_new(Name) of
+init_keydir(Dirname, WaitTime) ->
+    %% Get the named keydir for this directory. If we get it and it's already
+    %% marked as ready, that indicates another caller has already loaded
+    %% all the data from disk and we can short-circuit scanning all the files.
+    case bitcask_nifs:keydir_new(Dirname) of
         {ready, KeyDir} ->
-            {ok, KeyDir};
+            %% A keydir already exists, nothing more to do here. We'll lazy
+            %% open files as needed.
+            {ok, KeyDir, []};
+
+        {not_ready, KeyDir} ->
+            %% We've just created a new named keydir, so we need to load up all
+            %% the data from disk. Build a list of all the bitcask data files
+            %% and sort it in descending order (newest->oldest).
+            SortedFiles = readable_files(Dirname),
+            ReadFiles = scan_key_files(SortedFiles, KeyDir, []),
+
+            %% Now that we loaded all the data, mark the keydir as ready
+            %% so other callers can use it
+            ok = bitcask_nifs:keydir_mark_ready(KeyDir),
+            {ok, KeyDir, ReadFiles};
 
         {error, not_ready} ->
             timer:sleep(100),
-            case MillisToWait of
+            case WaitTime of
                 Value when is_integer(Value), Value =< 0 -> %% avoids 'infinity'!
-                    timeout;
+                    {error, timeout};
                 _ ->
-                    wait_for_keydir(Name, MillisToWait - 100)
+                    init_keydir(Dirname, WaitTime - 100)
             end
     end.
 
@@ -741,6 +729,7 @@ get_filestate(FileId,
                                       [Filestate | State#bc_state.read_files]}}
             end
     end.
+
 
 list_data_files(Dirname, WritingFile, Mergingfile) ->
     %% Build a list of {tstamp, filename} for all files in the directory that
