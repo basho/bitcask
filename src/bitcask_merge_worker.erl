@@ -25,6 +25,13 @@
 
 -behaviour(gen_server).
 
+-ifdef(TEST).
+-ifdef(EQC).
+-include_lib("eqc/include/eqc.hrl").
+-endif.
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 %% API
 -export([start_link/0,
          merge/1, merge/2, merge/3]).
@@ -116,15 +123,74 @@ code_change(_OldVsn, State, _Extra) ->
 %% ====================================================================
 
 do_merge(Args) ->
-    Start = now(),
-    Result = (catch apply(bitcask, merge, Args)),
-    ElapsedSecs = timer:now_diff(now(), Start) / 1000000,
-    case Result of
-        ok ->
-            error_logger:info_msg("Merged ~p in ~p seconds.\n",
-                                  [Args, ElapsedSecs]);
-        {Error, Reason} when Error == error; Error == 'EXIT' ->
-            error_logger:error_msg("Failed to merge ~p: ~p\n",
-                                   [Args, Reason])
+    {_, {Hour, _, _}} = calendar:local_time(),
+    case in_merge_window(Hour, merge_window()) of
+        true ->
+            Start = now(),
+            Result = (catch apply(bitcask, merge, Args)),
+            ElapsedSecs = timer:now_diff(now(), Start) / 1000000,
+            case Result of
+                ok ->
+                    error_logger:info_msg("Merged ~p in ~p seconds.\n",
+                                          [Args, ElapsedSecs]);
+                {Error, Reason} when Error == error; Error == 'EXIT' ->
+                    error_logger:error_msg("Failed to merge ~p: ~p\n",
+                                           [Args, Reason])
+            end;
+        false ->
+            ok
     end.
 
+merge_window() ->
+    case application:get_env(bitcask, merge_window) of
+        {ok, always} ->
+            always;
+        {ok, never} ->
+            never;
+        {ok, {StartHour, EndHour}} when StartHour >= 0, StartHour =< 23,
+                                        EndHour >= 0, EndHour =< 23 ->
+            {StartHour, EndHour};
+        Other ->
+            error_logger:error_msg("Invalid bitcask_merge window specified: ~p. "
+                                   "Defaulting to 'always'.\n", [Other]),
+            always
+    end.
+
+in_merge_window(_NowHour, always) ->
+    true;
+in_merge_window(_NowHour, never) ->
+    false;
+in_merge_window(_NowHour, {Start, Start}) ->
+    true;
+in_merge_window(NowHour, {Start, End}) when Start < End ->
+    (NowHour >= Start) and (NowHour =< End);
+in_merge_window(NowHour, {Start, End}) when Start > End ->
+    (NowHour >= Start) or (NowHour =< End).
+
+
+%% ====================================================================
+%% Unit tests
+%% ====================================================================
+
+-ifdef(EQC).
+
+prop_in_window() ->
+    ?FORALL({NowHour, WindowLen, StartTime}, {choose(0, 23), choose(1, 24), choose(0, 23)},
+            begin
+                EndTime = (StartTime + WindowLen) rem 24,
+
+                %% Generate a set of all hours within this window
+                WindowHours = [H rem 24 || H <- lists:seq(StartTime, StartTime + WindowLen)],
+
+                %% If NowHour is in the set of windows hours, we expect our function
+                %% to indicate that we are in the window
+                ExpInWindow = lists:member(NowHour, WindowHours),
+                ?assertEqual(ExpInWindow, in_merge_window(NowHour, {StartTime, EndTime})),
+                true
+            end).
+
+prop_in_window_test() ->
+    ?assert(eqc:quickcheck(prop_in_window())).
+
+
+-endif.
