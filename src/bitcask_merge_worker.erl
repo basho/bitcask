@@ -160,9 +160,7 @@ in_merge_window(_NowHour, always) ->
     true;
 in_merge_window(_NowHour, never) ->
     false;
-in_merge_window(_NowHour, {Start, Start}) ->
-    true;
-in_merge_window(NowHour, {Start, End}) when Start < End ->
+in_merge_window(NowHour, {Start, End}) when Start =< End ->
     (NowHour >= Start) and (NowHour =< End);
 in_merge_window(NowHour, {Start, End}) when Start > End ->
     (NowHour >= Start) or (NowHour =< End).
@@ -175,7 +173,7 @@ in_merge_window(NowHour, {Start, End}) when Start > End ->
 -ifdef(EQC).
 
 prop_in_window() ->
-    ?FORALL({NowHour, WindowLen, StartTime}, {choose(0, 23), choose(1, 24), choose(0, 23)},
+    ?FORALL({NowHour, WindowLen, StartTime}, {choose(0, 23), choose(0, 23), choose(0, 23)},
             begin
                 EndTime = (StartTime + WindowLen) rem 24,
 
