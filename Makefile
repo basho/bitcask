@@ -5,8 +5,6 @@ PKG_VERSION	?= $(shell echo $(REVISION) | tr - .)
 
 .PHONY: rel deps package pkgclean
 
-BITCASK_TAG		= $(shell hg identify -t)
-
 all: deps compile
 
 compile:
