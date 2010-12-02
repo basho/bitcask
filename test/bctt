@@ -29,7 +29,8 @@
                 readers=0,
                 folders=0,
                 mergers=0,
-                max_file_size=10*1024*1024}).
+                max_file_size=10*1024*1024,
+                open_timeout=undefined}).
 
 %% Function to run from inside beam
 test() ->
@@ -70,6 +71,7 @@ syntax() ->
               "     [folders=NumFolders]\n"
               "     [mergers=NumMergers]\n"
               "     [max_file_size=Bytes]  # set 0 for defaults\n"
+              "     [open_timeout=Secs]\n"
               "     [restart_writer=true|false]\n").
 
 
@@ -202,14 +204,20 @@ start_writer(State) ->
     State#state{writer_pid = Pid}.
 
 writer_opts(State) ->
-    lists:flatten(
-      [read_write], 
-      case State#state.max_file_size of
-          Size when is_integer(Size), Size > 0->
-              [{max_file_size, Size}];
-          _ ->
-              []
-      end).
+    lists:flatten([
+                   [read_write], 
+                   case State#state.max_file_size of
+                       Size when is_integer(Size), Size > 0->
+                           [{max_file_size, Size}];
+                       _ ->
+                           []
+                   end,
+                   case State#state.open_timeout of
+                       OpenTimeout when is_integer(OpenTimeout) ->
+                           [{open_timeout, OpenTimeout}];
+                       _ ->
+                           []
+                   end]).
 
 start_readers(_State, 0) ->
     ok;
@@ -391,7 +399,6 @@ process_args([Arg | Rest], State) ->
     end.
 
 process_arg({help, _}, _State) ->
-    syntax(),
     syntax;
 process_arg({Name, Val}, State) when Name =:= duration;
                                      Name =:= status_freq;
@@ -399,7 +406,8 @@ process_arg({Name, Val}, State) when Name =:= duration;
                                      Name =:= readers;
                                      Name =:= folders;
                                      Name =:= mergers;
-                                     Name =:= max_file_size ->
+                                     Name =:= max_file_size;
+                                     Name =:= open_timeout ->
     case is_integer(Val) of
         true ->
             {ok, setelement(get_state_index(Name), State, Val)};
@@ -459,12 +467,18 @@ print_params(State) ->
     io:format("folders:       ~b\n", [State#state.folders]),
     io:format("mergers:       ~b\n", [State#state.mergers]),
     io:format("max_file_size: ~s\n", [format_max_file_size(State#state.max_file_size)]),
+    io:format("open_timeout:  ~s\n", [format_timeout(State#state.open_timeout)]),
     io:format("\n").
 
 format_duration(undefined) ->
     "once";
 format_duration(Duration) ->
     io_lib:format("~p ms", [Duration]).
+
+format_timeout(undefined) ->
+    "default";
+format_timeout(Secs) ->
+    io_lib:format("~b s", [Secs]).
     
 format_max_file_size(MaxFileSize) when is_integer(MaxFileSize), MaxFileSize > 0 ->
     io_lib:format("~b", [MaxFileSize]);
