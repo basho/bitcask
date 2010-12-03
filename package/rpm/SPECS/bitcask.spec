@@ -30,6 +30,10 @@ Because you need another a key/value storage engine
 
 %build
 mkdir %{name}
+# 2010-12-02: there are odd problems with get-deps in recent rebar releases.
+# Bypassing the 'deps' target solves this problems when packaging from an
+# archive tarball.
+#ERL_FLAGS="-smp enable" make 
 ERL_FLAGS="-smp enable" make
 
 %install
