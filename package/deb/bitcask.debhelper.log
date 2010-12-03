@@ -1,0 +1,6 @@
+dh_installdirs
+dh_strip
+dh_compress
+dh_installdeb
+dh_gencontrol
+dh_builddeb
