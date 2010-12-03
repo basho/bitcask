@@ -35,6 +35,12 @@
          %% applications.
          {sync_strategy, none},
 
+         %% Merge window. Span of hours during which merge is acceptable.
+         %% * {Start, End} - Hours during which merging is permitted
+         %% * always       - Merging is always permitted (default)
+         %% * never        - Merging is never permitted
+         {merge_window, always},
+
          %% Merge trigger variables. Files exceeding ANY of these
          %% values will cause bitcask:needs_merge/1 to return true.
          %%
