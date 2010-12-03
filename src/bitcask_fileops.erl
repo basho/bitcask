@@ -171,7 +171,7 @@ read(#filestate { fd = FD }, Offset, Size) ->
             {error, Reason}
     end.
 
-%% @doc Call the OS's fsync(2) system call on the cask and hint files.
+%% @doc Call the OS's fsync(2) system call on the cask & hint files.
 -spec sync(#filestate{}) -> ok.
 sync(#filestate { mode = read_write, fd = Fd, hintfd = HintFd }) ->
     ok = file:sync(Fd),

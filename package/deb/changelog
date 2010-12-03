@@ -1,5 +1,0 @@
-bitcask (8) unstable; urgency=low
-
-  * Initial release of bitcask key/value store
-
- -- Ryan Tilder <rtilder@basho.com>  Wed, 26 May 2010 16:20:40 UTC
