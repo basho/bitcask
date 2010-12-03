@@ -34,7 +34,7 @@ mkdir %{name}
 # Bypassing the 'deps' target solves this problems when packaging from an
 # archive tarball.
 #ERL_FLAGS="-smp enable" make 
-ERL_FLAGS="-smp enable" make
+ERL_FLAGS="-smp enable" make compile
 
 %install
 mkdir -p %{buildroot}%{_libdir}%{name}
