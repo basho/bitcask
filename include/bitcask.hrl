@@ -2,7 +2,7 @@
 -record(bitcask_entry, { key :: binary(),
                          file_id :: integer(),
                          total_sz :: integer(),
-                         offset :: integer() | {integer(), integer()}, % ext or int
+                         offset :: integer() | binary(), 
                          tstamp :: integer() }).
 
 

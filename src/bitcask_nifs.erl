@@ -66,10 +66,10 @@
 -spec keydir_mark_ready(reference()) ->
         ok.
 -spec keydir_put(reference(), binary(), integer(), integer(),
-                 integer() | {integer(), integer()}, integer()) ->
+                 integer(), integer()) ->
         ok | already_exists.
 -spec keydir_put_int(reference(), binary(), integer(), integer(),
-                     {integer(), integer()}, integer()) -> 
+                     binary(), integer()) -> 
         ok | already_exists.
 -spec keydir_get(reference(), binary()) ->
         not_found | #bitcask_entry{}.
@@ -319,7 +319,7 @@ make_bogus_bitcask_entry(Key) ->
     #bitcask_entry{key = Key,
                    file_id = make_bogus_non_neg(),
                    total_sz = random:uniform(4242),
-                   offset = {random:uniform(4242),random:uniform(4242)},
+                   offset = random:uniform(4242),
                    tstamp = random:uniform(4242)
                   }.
 
