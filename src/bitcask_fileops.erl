@@ -180,13 +180,13 @@ sync(#filestate { mode = read_write, fd = Fd, hintfd = HintFd }) ->
 -spec fold(fresh | #filestate{}, fun((binary(), binary(), integer(), {integer(), integer()}, any()) -> any()), any()) ->
         any() | {error, any()}.
 fold(fresh, _Fun, Acc) -> Acc;
-fold(#filestate { fd = Fd }, Fun, Acc) ->
+fold(#filestate { fd=Fd, filename=Filename, tstamp=FTStamp }, Fun, Acc) ->
     %% TODO: Add some sort of check that this is a read-only file
     {ok, _} = file:position(Fd, bof),
     case file:read(Fd, ?HEADER_SIZE) of
         {ok, <<_Crc:?CRCSIZEFIELD, _Tstamp:?TSTAMPFIELD, _KeySz:?KEYSIZEFIELD,
               _ValueSz:?VALSIZEFIELD>> = H} ->
-            fold_loop(Fd, H, 0, Fun, Acc);
+            fold_loop(Fd, Filename, FTStamp, H, 0, Fun, Acc);
         eof ->
             Acc;
         {error, Reason} ->
@@ -291,7 +291,7 @@ tstamp() ->
     (Mega * 1000000) + Sec.
 
 
-fold_loop(Fd, Header, Offset, Fun, Acc0) ->
+fold_loop(Fd, Filename, FTStamp, Header, Offset, Fun, Acc0) ->
     <<Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
      ValueSz:?VALSIZEFIELD>> = Header,
     <<_:4/binary, HeaderMinusCRC/binary>> = Header,
@@ -300,11 +300,12 @@ fold_loop(Fd, Header, Offset, Fun, Acc0) ->
         {ok, <<Key:KeySz/bytes, Value:ValueSz/bytes, Rest/binary>>} ->
             case erlang:crc32([HeaderMinusCRC, Key, Value]) of
                 Crc32 ->
-                    PosInfo = {Offset, TotalSz},
+                    PosInfo = {Filename, FTStamp, Offset, TotalSz},
                     Acc = Fun(Key, Value, Tstamp, PosInfo, Acc0),
                     case Rest of
                         <<NextHeader:?HEADER_SIZE/bytes>> ->
-                            fold_loop(Fd, NextHeader, Offset + TotalSz, Fun, Acc);
+                            fold_loop(Fd, Filename, FTStamp, NextHeader,
+                                      Offset + TotalSz, Fun, Acc);
                         <<>> ->
                             Acc
                     end;
