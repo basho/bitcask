@@ -137,7 +137,7 @@ prop_fold() ->
 
 
 prop_merge_test_() ->
-    {timeout, 60, fun() -> qc(prop_merge()) end}.
+    {timeout, 3*60, fun() -> qc(prop_merge()) end}.
 
 merge1_test() ->
     ?assert(eqc:check(prop_merge(),
@@ -155,7 +155,7 @@ merge3_test() ->
                         1,1}])).
 
 prop_fold_test_() ->
-    {timeout, 60, fun() -> qc(prop_fold()) end}.
+    {timeout, 3*60, fun() -> qc(prop_fold()) end}.
 
 
 -endif.
