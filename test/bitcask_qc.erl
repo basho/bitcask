@@ -107,31 +107,33 @@ prop_fold() ->
                      %% a model of what SHOULD be in the data.
                      Ref = bitcask:open("/tmp/bc.prop.fold",
                                         [read_write, {max_file_size, M1}]),
-                     Model = apply_kv_ops(Ops, Ref, []),
+                     try
+                         Model = apply_kv_ops(Ops, Ref, []),
 
-                     %% Build a list of the K/V pairs available to fold
-                     Actual = bitcask:fold(Ref, 
-                                           fun(K, V, Acc0) -> 
-                                                   [{K, V} | Acc0]
-                                           end,
-                                           []),
+                         %% Build a list of the K/V pairs available to fold
+                         Actual = bitcask:fold(Ref, 
+                                               fun(K, V, Acc0) -> 
+                                                       [{K, V} | Acc0]
+                                               end,
+                                               []),
 
-                     %% Traverse the model and verify that retrieving
-                     %% each key returns the expected value. It's
-                     %% important to note that the model keeps
-                     %% tombstones on deleted values so we can attempt
-                     %% to retrieve those deleted values and check the
-                     %% corresponding tombstone path in bitcask.
-                     %% Verify that the bitcask contains exactly what
-                     %% we expect
-                     F = fun({K, deleted}) ->
-                               ?assert(false == lists:keymember(K, 1, Actual));
-                            ({K, V}) ->
-                               ?assertEqual({K, V}, lists:keyfind(K, 1, Actual))
-                         end,
-                     lists:map(F, Model),
-
-                     bitcask:close(Ref),
+                         %% Traverse the model and verify that retrieving
+                         %% each key returns the expected value. It's
+                         %% important to note that the model keeps
+                         %% tombstones on deleted values so we can attempt
+                         %% to retrieve those deleted values and check the
+                         %% corresponding tombstone path in bitcask.
+                         %% Verify that the bitcask contains exactly what
+                         %% we expect
+                         F = fun({K, deleted}) ->
+                                 ?assert(false == lists:keymember(K, 1, Actual));
+                                ({K, V}) ->
+                                     ?assertEqual({K, V}, lists:keyfind(K, 1, Actual))
+                             end,
+                         lists:map(F, Model)
+                     after
+                         bitcask:close(Ref)
+                     end,
                      true
                  end)).
 

@@ -317,11 +317,9 @@ fold(Ref, Fun, Acc0) ->
 
     case open_fold_files(State#bc_state.dirname, 3) of
         {ok, Files} ->
-            {_,_,Tseed} = now(),
-            {ok, Bloom} = ebloom:new(1000000,0.00003,Tseed), % arbitrary large bloom
             ExpiryTime = expiry_time(State#bc_state.opts),
-            SubFun = fun(K,V,TStamp,{Offset,_Sz},Acc) ->
-                             case ebloom:contains(Bloom,K) orelse (TStamp < ExpiryTime) of
+            SubFun = fun(K,V,TStamp,{_FN,FTS,Offset,_Sz},Acc) ->
+                             case (TStamp < ExpiryTime) of
                                  true ->
                                      Acc;
                                  false ->
@@ -330,11 +328,15 @@ fold(Ref, Fun, Acc0) ->
                                          not_found ->
                                              Acc;
                                          E when is_record(E, bitcask_entry) ->
-                                             case Offset =:= E#bitcask_entry.offset of
+                                             case
+                                              Offset =:= E#bitcask_entry.offset
+                                               andalso
+                                              TStamp =:= E#bitcask_entry.tstamp
+                                               andalso
+                                              FTS =:= E#bitcask_entry.file_id of
                                                  false ->
                                                      Acc;
                                                  true ->
-                                                     ebloom:insert(Bloom,K),
                                                      case V =:= ?TOMBSTONE of
                                                          true ->
                                                              Acc;
@@ -754,7 +756,7 @@ merge_files(#mstate { input_files = [File | Rest]} = State) ->
     ok = bitcask_fileops:close(File),
     merge_files(State1#mstate { input_files = Rest }).
 
-merge_single_entry(K, V, Tstamp, FileId, {Offset, _} = Pos, State) ->
+merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
     case out_of_date(K, Tstamp, FileId, Pos, State#mstate.expiry_time, false,
                      [State#mstate.live_keydir, State#mstate.del_keydir]) of
         true ->
@@ -835,7 +837,7 @@ out_of_date(_Key, _Tstamp, _FileId, _Pos, _ExpiryTime, EverFound, []) ->
 out_of_date(_Key, Tstamp, _FileId, _Pos, ExpiryTime, _EverFound, _KeyDirs)
   when Tstamp < ExpiryTime ->
     true;
-out_of_date(Key, Tstamp, FileId, {Offset,_} = Pos, ExpiryTime, EverFound,
+out_of_date(Key, Tstamp, FileId, {_,_,Offset,_} = Pos, ExpiryTime, EverFound,
             [KeyDir|Rest]) ->
     case bitcask_nifs:keydir_get(KeyDir, Key) of
         not_found ->
@@ -1035,6 +1037,18 @@ bitfold_test() ->
     B2 = bitcask:open("/tmp/bc.test.bitfold"),
     true = ([{<<"k7">>,<<"v7">>},{<<"k2">>,<<"v2">>}] =:=
             bitcask:fold(B2,fun(K,V,Acc) -> [{K,V}|Acc] end,[])),
+    close(B2),
+    ok.
+
+fold1_test() ->
+    os:cmd("rm -rf /tmp/bc.test.fold1"),
+    B = bitcask:open("/tmp/bc.test.fold1", [read_write,{max_file_size, 1}]),
+    ok = bitcask:put(B,<<"k">>,<<"v">>),
+    ok = bitcask:put(B,<<"k">>,<<"v1">>),
+    close(B),
+    B2 = bitcask:open("/tmp/bc.test.fold1"),
+    true = ([{<<"k">>,<<"v1">>}] =:=
+                bitcask:fold(B2,fun(K,V,Acc) -> [{K,V}|Acc] end,[])),
     close(B2),
     ok.
 
