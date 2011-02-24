@@ -177,7 +177,10 @@ sync(#filestate { mode = read_write, fd = Fd, hintfd = HintFd }) ->
     ok = file:sync(Fd),
     ok = file:sync(HintFd).
 
--spec fold(fresh | #filestate{}, fun((binary(), binary(), integer(), {integer(), integer()}, any()) -> any()), any()) ->
+-spec fold(fresh | #filestate{},
+           fun((binary(), binary(), integer(),
+                {list(), integer(), integer(), integer()}, any()) -> any()),
+           any()) ->
         any() | {error, any()}.
 fold(fresh, _Fun, Acc) -> Acc;
 fold(#filestate { fd=Fd, filename=Filename, tstamp=FTStamp }, Fun, Acc) ->
