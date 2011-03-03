@@ -717,11 +717,11 @@ init_keydir(Dirname, WaitTime) ->
 
 get_filestate(FileId,
               State=#bc_state{ dirname = Dirname, read_files = ReadFiles }) ->
-    Fname = bitcask_fileops:mk_filename(Dirname, FileId),
-    case lists:keysearch(Fname, #filestate.filename, ReadFiles) of
+    case lists:keysearch(FileId, #filestate.tstamp, ReadFiles) of
         {value, Filestate} ->
             {Filestate, State};
         false ->
+	    Fname = bitcask_fileops:mk_filename(Dirname, FileId),
             case bitcask_fileops:open_file(Fname) of
                 {error,enoent} ->
                     %% merge removed the file since the keydir_get
