@@ -721,7 +721,7 @@ get_filestate(FileId,
         {value, Filestate} ->
             {Filestate, State};
         false ->
-	    Fname = bitcask_fileops:mk_filename(Dirname, FileId),
+            Fname = bitcask_fileops:mk_filename(Dirname, FileId),
             case bitcask_fileops:open_file(Fname) of
                 {error,enoent} ->
                     %% merge removed the file since the keydir_get
