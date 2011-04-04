@@ -315,11 +315,12 @@ keydir_fold_cont(Curr, Ref, Fun, Acc0) ->
     Acc = Fun(Curr, Acc0),
     keydir_fold_cont(keydir_itr_next(Ref), Ref, Fun, Acc).
 
+%%-spec make_bogus_bitcask_entry(Key::binary()) -> #bitcask_entry{}.
 make_bogus_bitcask_entry(Key) ->
     #bitcask_entry{key = Key,
                    file_id = make_bogus_non_neg(),
                    total_sz = random:uniform(4242),
-                   offset = random:uniform(4242),
+                   offset =  <<(4242):64/unsigned-native>>,
                    tstamp = random:uniform(4242)
                   }.
 

@@ -80,12 +80,12 @@
 %% * A merge lock - bitcask.merge.lock (Optional)
 
 %% @doc Open a new or existing bitcask datastore for read-only access.
--spec open(Dirname::string()) -> reference().
+-spec open(Dirname::string()) -> reference() | {error, timeout}.
 open(Dirname) ->
     open(Dirname, []).
 
 %% @doc Open a new or existing bitcask datastore with additional options.
--spec open(Dirname::string(), Opts::[_]) -> reference().
+-spec open(Dirname::string(), Opts::[_]) -> reference() | {error, timeout}.
 open(Dirname, Opts) ->
     %% Make sure bitcask app is started so we can pull defaults from env
     ok = start_app(),
