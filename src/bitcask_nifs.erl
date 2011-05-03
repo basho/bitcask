@@ -397,6 +397,16 @@ keydir_named_not_ready_test() ->
 
     {error, not_ready} = keydir_new("k2").
 
+keydir_put_fold_error_test() ->
+    {ok, Ref1} = keydir_new(),
+    ok = keydir_put(Ref1, <<"abc">>, 0, 1234, 0, 1),
+    ?assertEqual({error, iteration_in_process},
+                 keydir_fold(Ref1,
+                             fun(_E, _Acc0) ->
+                                     keydir_put(Ref1, <<"abc">>, 1, 1235, 1, 1)
+                             end,
+                             [])).
+
 create_file_test() ->
     Fname = "/tmp/bitcask_nifs.createfile.test",
     file:delete(Fname),

@@ -390,6 +390,13 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
         enif_get_uint(env, argv[5], &(entry.tstamp)))
     {
         bitcask_keydir* keydir = handle->keydir;
+
+        // If a iterator thread is already active for this keydir, bail
+        if (handle->il_thread)
+        {
+            return enif_make_tuple2(env, ATOM_ERROR, ATOM_ITERATION_IN_PROCESS);
+        }
+
         RW_LOCK(keydir);
 
         // Now that we've marshalled everything, see if the tstamp for this key is >=
@@ -530,6 +537,13 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
         enif_inspect_binary(env, argv[1], &key))
     {
         bitcask_keydir* keydir = handle->keydir;
+
+        // If a iterator thread is already active for this keydir, bail
+        if (handle->il_thread)
+        {
+            return enif_make_tuple2(env, ATOM_ERROR, ATOM_ITERATION_IN_PROCESS);
+        }
+
         RW_LOCK(keydir);
 
         khiter_t itr = find_keydir_entry(env, keydir, &key);
