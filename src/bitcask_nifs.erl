@@ -158,8 +158,22 @@ keydir_mark_ready(_Ref) ->
     end.
 
 keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp) ->
-    keydir_put_int(Ref, Key, FileId, TotalSz, <<Offset:64/unsigned-native>>,
-                   Tstamp).
+    try_keydir_put_int(Ref, Key, FileId, TotalSz, <<Offset:64/unsigned-native>>,
+                       Tstamp, 0).
+
+try_keydir_put_int(Ref, Key, FileId, TotalSz, BinOffset, Tstamp, Reps) ->
+    case keydir_put_int(Ref, Key, FileId, TotalSz, BinOffset, Tstamp) of
+        {error, iteration_in_process} ->
+            try_keydir_put_int(Ref, Key, FileId, TotalSz, BinOffset, Tstamp, Reps + 1);
+        R when Reps > 0 ->
+            put_retries(Reps),
+            R;
+        R ->
+            R
+    end.
+
+put_retries(_Reps) ->
+    ok.
 
 keydir_put_int(_Ref, _Key, _FileId, _TotalSz, _Offset, _Tstamp) ->
     case random:uniform(999999999999) of
@@ -396,6 +410,25 @@ keydir_named_not_ready_test() ->
     ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
 
     {error, not_ready} = keydir_new("k2").
+
+keydir_itr_while_itr_error_test() ->
+    {ok, Ref1} = keydir_new(),
+    ok = keydir_itr(Ref1),
+    try
+        ?assertEqual({error, iteration_in_process}, keydir_itr(Ref1))
+    after
+        keydir_itr_release(Ref1)
+    end.
+
+keydir_double_itr_test() -> % check iterating flag is cleared
+    {ok, Ref1} = keydir_new(),
+    Folder = fun(_,Acc) -> Acc end,
+    ?assertEqual(acc, keydir_fold(Ref1, Folder, acc)),
+    ?assertEqual(acc, keydir_fold(Ref1, Folder, acc)).
+
+keydir_next_notstarted_error_test() ->
+    {ok, Ref1} = keydir_new(),
+    ?assertEqual({error, iteration_not_started}, keydir_itr_next(Ref1)).
 
 create_file_test() ->
     Fname = "/tmp/bitcask_nifs.createfile.test",

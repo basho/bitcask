@@ -27,6 +27,7 @@
 
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("bitcask/include/bitcask.hrl").
 
 -compile(export_all).
 
@@ -97,7 +98,7 @@ prop_merge() ->
 
 
 prop_fold() ->
-    ?LET({Keys, Values}, {keys(), values()},
+    ?LET({Keys, Values, FoldOp}, {keys(), values(), oneof([fold, fold_keys])},
          ?FORALL({Ops, M1}, {eqc_gen:non_empty(list(ops(Keys, Values))),
                              choose(1,128)},
                  begin
@@ -111,11 +112,19 @@ prop_fold() ->
                          Model = apply_kv_ops(Ops, Ref, []),
 
                          %% Build a list of the K/V pairs available to fold
-                         Actual = bitcask:fold(Ref, 
-                                               fun(K, V, Acc0) -> 
-                                                       [{K, V} | Acc0]
-                                               end,
-                                               []),
+                         Actual = case FoldOp of
+                                      fold_keys ->
+                                          bitcask:fold_keys(Ref,
+                                                            fun(E, Acc0) ->
+                                                                K = E#bitcask_entry.key,
+                                                                {ok, V} = bitcask:get(Ref, K),
+                                                                [{K, V} | Acc0]
+                                                            end, []);
+                                      fold ->
+                                          bitcask:fold(Ref, fun(K, V, Acc0) ->
+                                                                [{K, V} | Acc0]
+                                                            end, [])
+                                  end,
 
                          %% Traverse the model and verify that retrieving
                          %% each key returns the expected value. It's
