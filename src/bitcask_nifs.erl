@@ -163,7 +163,7 @@ keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp) ->
 
 try_keydir_put_int(Ref, Key, FileId, TotalSz, BinOffset, Tstamp, Reps) ->
     case keydir_put_int(Ref, Key, FileId, TotalSz, BinOffset, Tstamp) of
-        iteration_in_process ->
+        {error, iteration_in_process} ->
             try_keydir_put_int(Ref, Key, FileId, TotalSz, BinOffset, Tstamp, Reps + 1);
         R when Reps > 0 ->
             put_retries(Reps),
@@ -411,7 +411,7 @@ keydir_named_not_ready_test() ->
 
     {error, not_ready} = keydir_new("k2").
 
-keydir_double_itr_error_test() ->
+keydir_itr_while_itr_error_test() ->
     {ok, Ref1} = keydir_new(),
     ok = keydir_itr(Ref1),
     try
@@ -419,6 +419,12 @@ keydir_double_itr_error_test() ->
     after
         keydir_itr_release(Ref1)
     end.
+
+keydir_double_itr_test() -> % check iterating flag is cleared
+    {ok, Ref1} = keydir_new(),
+    Folder = fun(_,Acc) -> Acc end,
+    ?assertEqual(acc, keydir_fold(Ref1, Folder, acc)),
+    ?assertEqual(acc, keydir_fold(Ref1, Folder, acc)).
 
 keydir_next_notstarted_error_test() ->
     {ok, Ref1} = keydir_new(),

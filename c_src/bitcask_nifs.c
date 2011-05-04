@@ -391,7 +391,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
         if (keydir->keyfolders > 0)
         {
             UNLOCK(keydir);
-            return ATOM_ITERATION_IN_PROCESS;
+            return enif_make_tuple2(env, ATOM_ERROR, ATOM_ITERATION_IN_PROCESS);
         }
 
         // Now that we've marshalled everything, see if the tstamp for this key is >=
@@ -753,6 +753,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_release(ErlNifEnv* env, int argc, const ERL
             return enif_make_tuple2(env, ATOM_ERROR, ATOM_ITERATION_NOT_STARTED);
         }
 
+        handle->iterating = 0;
         handle->keydir->keyfolders--;
         UNLOCK(handle->keydir);
         return ATOM_OK;
