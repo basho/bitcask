@@ -1,5 +1,6 @@
-#! /usr/bin/env escript 
+#! /usr/bin/env escript
 %% -*- erlang -*-
+%%! -pz ../bitcask
 %%
 %% Bitcask Torture Tests
 %% 
@@ -14,10 +15,11 @@
 
 -module(bctt).
 -compile([export_all]).
-
+-include_lib("bitcask/include/bitcask.hrl").
 -record(state, {seq = 0,
                 reader_reps=0,
                 folder_reps=0,
+                fold_keys_reps=0,
                 merger_reps=0,
                 duration,
                 status_freq = 10000,
@@ -28,6 +30,7 @@
                 writers=1,
                 readers=0,
                 folders=0,
+                foldkeys=0,
                 mergers=0,
                 max_file_size=10*1024*1024,
                 open_timeout=undefined}).
@@ -46,6 +49,7 @@ main() ->
     main([]).
 
 main(Args) ->
+    io:format("PWD: ~p\n", [file:get_cwd()]),
     try
         case process_args([parse_arg(Arg) || Arg <- Args], #state{}) of
             {ok, State} ->
@@ -69,6 +73,7 @@ syntax() ->
               "     [num_keys=NumKeys]\n"
               "     [readers=NumReaders]\n"
               "     [folders=NumFolders]\n"
+              "     [foldkeys=NumFoldKeys]\n"
               "     [mergers=NumMergers]\n"
               "     [max_file_size=Bytes]  # set 0 for defaults\n"
               "     [open_timeout=Secs]\n"
@@ -91,6 +96,7 @@ do_test(State0) ->
     kick_writer(State),
     start_readers(State, State#state.readers),
     start_folders(State, State#state.folders),
+    start_fold_keys(State, State#state.foldkeys),
     start_mergers(State, State#state.mergers),
     schedule_status(State),
     case State#state.duration of 
@@ -110,9 +116,10 @@ restart_procs(State) ->
             io:format("Test ending...\n"),
             State;
         status ->
-            io:format("Writer seq: ~p  Readers=~p Folders=~p Merges=~p\n",
+            io:format("Writer seq: ~p  Readers=~p Folders=~p FoldKeys=~p Merges=~p\n",
                       [State#state.seq, State#state.reader_reps, 
-                       State#state.folder_reps, State#state.merger_reps]),
+                       State#state.folder_reps, State#state.fold_keys_reps,
+                       State#state.merger_reps]),
             schedule_status(State),
             restart_procs(State);
         {write_done, WriteSeq} ->
@@ -138,6 +145,9 @@ restart_procs(State) ->
         {fold_done, _FoldSeq} ->
             start_folders(State, 1),
             restart_procs(State#state{folder_reps = State#state.folder_reps+1});
+        {fold_keys_done, _FoldSeq} ->
+            start_fold_keys(State, 1),
+            restart_procs(State#state{fold_keys_reps = State#state.fold_keys_reps+1});
         {'EXIT', _From, normal} ->
             restart_procs(State);
         {'EXIT', From, Reason} ->
@@ -161,7 +171,7 @@ wait_for_writer(State) ->
             ok
     end.
 
-wait_for_procs(#state{writers = 0, readers = 0, folders = 0, mergers = 0}) ->
+wait_for_procs(#state{writers = 0, readers = 0, folders = 0, foldkeys = 0, mergers = 0}) ->
     io:format("Test complete\n");
 wait_for_procs(State) ->
     receive
@@ -171,6 +181,8 @@ wait_for_procs(State) ->
             wait_for_procs(State#state{readers = State#state.readers - 1});
         {fold_done, _FoldSeq} ->
             wait_for_procs(State#state{folders = State#state.folders - 1});
+        {fold_keys_done, _FoldKeySeq} ->
+            wait_for_procs(State#state{foldkeys = State#state.foldkeys - 1});
         merge_done ->
             wait_for_procs(State#state{mergers = State#state.mergers - 1});
         {write_done, _WriteSeq} ->
@@ -239,6 +251,16 @@ start_folders(State, NumFolders) ->
                end),
     start_folders(State, NumFolders - 1).
 
+start_fold_keys(_State, 0) ->
+    ok;
+start_fold_keys(State, NumFoldKeys) ->
+    Caller = self(),
+    spawn_link(fun() ->
+                       fold_keys_proc(State#state.cask, State#state.num_keys,
+                                      State#state.seq, Caller)
+               end),
+    start_fold_keys(State, NumFoldKeys - 1).
+
 start_mergers(_State, 0) ->
     ok;
 start_mergers(State, NumMergers) ->
@@ -306,8 +328,20 @@ fold(Ref, NumKeys, MinSeq) ->
                      {MinSeq2, [Key | Keys]}
              end,
     {MinSeq, FoldedKeys} = bitcask:fold(Ref, Folder, {MinSeq, []}),
-    %% Exp = lists:seq(1, NumKeys),
-    %% Exp = lists:sort(FoldedKeys), % check we get the keys we expect
+    check_fold(1, NumKeys, lists:sort(FoldedKeys)).
+
+fold_keys_proc(Cask, NumKeys, Seq, Caller) ->
+    Ref = bitcask:open(Cask),
+    fold_keys(Ref, NumKeys),
+    bitcask:close(Ref),
+    Caller ! {fold_keys_done, Seq}.    
+
+fold_keys(Ref, NumKeys) ->
+    Folder = fun(#bitcask_entry{key = <<Key:32>>}, Keys) ->
+                     %io:format(user, "FoldedKey: ~p\n", [Key]),
+                     [Key | Keys]
+             end,
+    FoldedKeys = bitcask:fold_keys(Ref, Folder, []),
     check_fold(1, NumKeys, lists:sort(FoldedKeys)).
 
 check_fold(Key, MaxKey, []) when Key == MaxKey + 1 ->
@@ -405,6 +439,7 @@ process_arg({Name, Val}, State) when Name =:= duration;
                                      Name =:= num_keys;
                                      Name =:= readers;
                                      Name =:= folders;
+                                     Name =:= foldkeys;
                                      Name =:= mergers;
                                      Name =:= max_file_size;
                                      Name =:= open_timeout ->
@@ -465,6 +500,7 @@ print_params(State) ->
     io:format("num_keys:      ~b\n", [State#state.num_keys]),
     io:format("readers:       ~b\n", [State#state.readers]),
     io:format("folders:       ~b\n", [State#state.folders]),
+    io:format("foldkeys:      ~b\n", [State#state.foldkeys]),
     io:format("mergers:       ~b\n", [State#state.mergers]),
     io:format("max_file_size: ~s\n", [format_max_file_size(State#state.max_file_size)]),
     io:format("open_timeout:  ~s\n", [format_timeout(State#state.open_timeout)]),
