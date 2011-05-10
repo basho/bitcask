@@ -186,7 +186,11 @@ get(Ref, Key, TryNum) ->
                                 {ok, _Key, ?TOMBSTONE} ->
                                     not_found;
                                 {ok, _Key, Value} ->
-                                    {ok, Value}
+                                    {ok, Value};
+                                {error, eof} ->
+                                    not_found;
+                                {error, _} = Err ->
+                                    Err
                             end
                     end
             end
@@ -1298,6 +1302,24 @@ frag_status_test() ->
     B2 = bitcask:open("/tmp/bc.test.fragtest", [read_write]),
     {1,[{_,50,16,32}]} = bitcask:status(B2),
     %% 1 key, 50% frag, 16 dead bytes, 32 total bytes
+    ok.
+
+truncated_datafile_test() ->
+    %% Mostly stolen from frag_status_test()....
+    Dir = "/tmp/bc.test.truncdata",
+    os:cmd("rm -rf " ++ Dir),
+    os:cmd("mkdir " ++ Dir),
+    B1 = bitcask:open(Dir, [read_write]),
+    [ok = bitcask:put(B1, <<"k">>, <<X:32>>) || X <- lists:seq(1, 100)],
+    ok = bitcask:close(B1),
+
+    os:cmd(lists:flatten(io_lib:format("cat ~s/*.data | dd bs=512 count=1 "
+                                       "> ~s/FOO", [Dir, Dir]))),
+    os:cmd(lists:flatten(io_lib:format("mv ~s/FOO ~s/*.data", [Dir, Dir]))),
+
+    % close and reopen so that status can reflect a closed file
+    B2 = bitcask:open(Dir, [read_write]),
+    {1, [{_, _, _, _}]} = bitcask:status(B2),
     ok.
 
 -endif.
