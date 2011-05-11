@@ -1319,7 +1319,7 @@ truncated_datafile_test() ->
 
     % close and reopen so that status can reflect a closed file
     B2 = bitcask:open(Dir, [read_write]),
-    {1, [{_, _, _, _}]} = bitcask:status(B2),
+    {1, [{_, _, _, 494}]} = bitcask:status(B2),
     ok.
 
 -endif.
