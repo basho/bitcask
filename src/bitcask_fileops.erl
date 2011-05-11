@@ -194,6 +194,12 @@ fold(#filestate { fd=Fd, filename=Filename, tstamp=FTStamp }, Fun, Acc) ->
         {ok, <<_Crc:?CRCSIZEFIELD, _Tstamp:?TSTAMPFIELD, _KeySz:?KEYSIZEFIELD,
               _ValueSz:?VALSIZEFIELD>> = H} ->
             fold_loop(Fd, Filename, FTStamp, H, 0, Fun, Acc);
+        {ok, Bytes} ->
+            error_logger:error_msg("~s:fold: ~s: expected ~p bytes but got "
+                                   "only ~p bytes, skipping\n",
+                                   [?MODULE, Filename, ?HEADER_SIZE,
+                                    size(Bytes)]),
+            Acc;
         eof ->
             Acc;
         {error, Reason} ->
@@ -313,7 +319,7 @@ fold_loop(Fd, Filename, FTStamp, Header, Offset, Fun, Acc0) ->
                         <<NextHeader:?HEADER_SIZE/bytes>> ->
                             fold_loop(Fd, Filename, FTStamp, NextHeader,
                                       Offset + TotalSz, Fun, Acc);
-                        <<>> ->
+                        _ ->
                             Acc
                     end;
                 _ ->
@@ -369,6 +375,13 @@ fold_hintfile(State, Fun, Acc) ->
                     {ok, <<H:?HINT_RECORD_SZ/bytes>>} ->
                         fold_hintfile_loop(DataSize, hintfile_name(State),
                                            HintFd, H, Fun, Acc);
+                    {ok, Bytes} ->
+                        error_logger:error_msg("~s:fold_hintfile: ~s: expected "
+                                               "~p bytes but got only ~p "
+                                               "bytes, skipping\n",
+                                   [?MODULE, hintfile_name(State),
+                                    ?HINT_RECORD_SZ, size(Bytes)]),
+                        Acc;
                     eof ->
                         Acc;
                     {error, Reason} ->

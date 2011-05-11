@@ -1313,14 +1313,64 @@ truncated_datafile_test() ->
     [ok = bitcask:put(B1, <<"k">>, <<X:32>>) || X <- lists:seq(1, 100)],
     ok = bitcask:close(B1),
 
-    os:cmd(lists:flatten(io_lib:format("cat ~s/*.data | dd bs=512 count=1 "
-                                       "> ~s/FOO", [Dir, Dir]))),
-    os:cmd(lists:flatten(io_lib:format("mv ~s/FOO ~s/*.data", [Dir, Dir]))),
+    [DataFile|_] = filelib:wildcard(Dir ++ "/*.data"),
+    truncate_file(DataFile, 512),
 
     % close and reopen so that status can reflect a closed file
     B2 = bitcask:open(Dir, [read_write]),
     {1, [{_, _, _, 494}]} = bitcask:status(B2),
     ok.
+
+truncated_merge_test() ->
+    Dir = "/tmp/bc.test.truncmerge",
+    os:cmd("rm -rf " ++ Dir),
+    os:cmd("mkdir " ++ Dir),
+
+    %% Initialize dataset with max_file_size set to 1 so that each file will
+    %% only contain a single key.
+    %% If anyone ever modifies default_dataset() to return fewer than 3
+    %% elements, this test will break.
+    DataSet = default_dataset() ++ [{<<"k98">>, <<"v98">>},
+                                    {<<"k99">>, <<"v99">>}],
+    close(init_dataset(Dir, [{max_file_size, 1}], DataSet)),
+
+    %% Verify number of files in directory
+    5 = length(readable_files(Dir)),
+
+    [FirstData, SecondData|_] = filelib:wildcard(Dir ++ "/*.data"),
+    [_, _, ThirdHint, FourthHint|_] = filelib:wildcard(Dir ++ "/*.hint"),
+          
+    %% Truncate 1st after data file's header, read by bitcask_fileops:fold/3).
+    %% Truncate 2nd in the middle of header, which provokes another
+    %%     variation of bug mentioned by Bugzilla 1097.
+    %% Truncate 3rd after data file's header, read by
+    %%     bitcask_fileops:fold_hintfile/3).
+    %% Truncate 4th in the middle of header, same situation as 2nd....
+    ok = truncate_file(FirstData, 15),
+    ok = truncate_file(SecondData, 5),
+    ok = truncate_file(ThirdHint, 15),
+    ok = truncate_file(FourthHint, 5),
+    %% Merge everything
+    ok = merge(Dir),
+
+    %% Verify we've now only got one file
+    1 = length(readable_files(Dir)),
+
+    %% Make sure all corrupted data is missing, all good data is present
+    B = bitcask:open(Dir),
+    {BadData, GoodData} = lists:split(4, DataSet),
+    lists:foldl(fun({K, _V}, _) ->
+                        not_found = bitcask:get(B, K)
+                end, undefined, BadData),
+    lists:foldl(fun({K, V}, _) ->
+                        {ok, V} = bitcask:get(B, K)
+                end, undefined, GoodData).
+
+truncate_file(Path, Offset) ->
+    {ok, FH} = file:open(Path, [read, write]),
+    {ok, Offset} = file:position(FH, Offset),
+    ok = file:truncate(FH),
+    file:close(FH).    
 
 -endif.
 
