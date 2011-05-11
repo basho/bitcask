@@ -44,6 +44,8 @@
          tstamp/0,
          check_write/4]).
 
+-include_lib("kernel/include/file.hrl").
+
 -include("bitcask.hrl").
 
 -define(HINT_RECORD_SZ, 18). % Tstamp(4) + KeySz(2) + TotalSz(4) + Offset(8)
@@ -167,6 +169,8 @@ read(#filestate { fd = FD }, Offset, Size) ->
                 _BadCrc ->
                     {error, bad_crc}
             end;
+        eof ->
+            {error, eof};
         {error, Reason} ->
             {error, Reason}
     end.
@@ -358,10 +362,13 @@ fold_hintfile(State, Fun, Acc) ->
     case file:open(hintfile_name(State), [read, raw, binary, read_ahead]) of
         {ok, HintFd} ->
             try
+                {ok, DataI} = file:read_file_info(State#filestate.filename),
+                DataSize = DataI#file_info.size,
                 {ok, _} = file:position(HintFd, bof),
                 case file:read(HintFd, ?HINT_RECORD_SZ) of
                     {ok, <<H:?HINT_RECORD_SZ/bytes>>} ->
-                        fold_hintfile_loop(HintFd, H, Fun, Acc);
+                        fold_hintfile_loop(DataSize, hintfile_name(State),
+                                           HintFd, H, Fun, Acc);
                     eof ->
                         Acc;
                     {error, Reason} ->
@@ -374,30 +381,34 @@ fold_hintfile(State, Fun, Acc) ->
             {error, {fold_hintfile, Reason}}
     end.
 
-fold_hintfile_loop(Fd, HintRecord, Fun, Acc0) ->
+fold_hintfile_loop(DataSize, HintFile, Fd, HintRecord, Fun, Acc0) ->
     <<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
       TotalSz:?TOTALSIZEFIELD, Offset:?OFFSETFIELD>> = HintRecord,
     ReadSz = KeySz + ?HINT_RECORD_SZ,
     case file:read(Fd, ReadSz) of
-        {ok, <<Key:KeySz/bytes, Rest/binary>>} ->
+        {ok, <<Key:KeySz/bytes, Rest/binary>>} when
+                                               Offset + TotalSz =< DataSize ->
             PosInfo = {Offset, TotalSz},
             Acc = Fun(Key, Tstamp, PosInfo, Acc0),
             case Rest of
                 <<NextRecord:?HINT_RECORD_SZ/bytes>> ->
-                    fold_hintfile_loop(Fd, NextRecord, Fun, Acc);
+                    fold_hintfile_loop(DataSize, HintFile,
+                                       Fd, NextRecord, Fun, Acc);
                 <<>> ->
                     Acc;
                 X ->
                     error_logger:error_msg("Bad hintfile data 1: ~p\n", [X]),
                     Acc
             end;
+        {ok, _} ->
+            error_logger:error_msg("Hintfile '~s' contains pointer ~p ~p "
+                                   "that is greater than total data size ~p\n",
+                                   [HintFile, Offset, TotalSz, DataSize]),
+            Acc0;
         eof ->
             {error, incomplete_key};
         {error, Reason} ->
-            {error, Reason};
-        X ->
-            error_logger:error_msg("Bad hintfile data 2: ~p\n", [X]),
-            Acc0
+            {error, Reason}
     end.
 
 create_file_loop(DirName, Opts, Tstamp) ->
