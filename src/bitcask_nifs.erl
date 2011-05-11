@@ -70,7 +70,7 @@
         ok | already_exists.
 -spec keydir_put_int(reference(), binary(), integer(), integer(),
                      binary(), integer()) -> 
-        ok | already_exists.
+        ok | already_exists | {error, iteration_in_process}.
 -spec keydir_get(reference(), binary()) ->
         not_found | #bitcask_entry{}.
 -spec keydir_get_int(reference(), binary()) ->
@@ -161,6 +161,10 @@ keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp) ->
     try_keydir_put_int(Ref, Key, FileId, TotalSz, <<Offset:64/unsigned-native>>,
                        Tstamp, 0).
 
+-spec try_keydir_put_int(reference(), binary(), integer(), integer(),
+                         binary(), integer(), non_neg_integer()) -> 
+                                ok | already_exists.
+                                
 try_keydir_put_int(Ref, Key, FileId, TotalSz, BinOffset, Tstamp, Reps) ->
     case keydir_put_int(Ref, Key, FileId, TotalSz, BinOffset, Tstamp) of
         {error, iteration_in_process} ->
@@ -179,6 +183,7 @@ keydir_put_int(_Ref, _Key, _FileId, _TotalSz, _Offset, _Tstamp) ->
     case random:uniform(999999999999) of
         666 -> ok;
         667 -> already_exists;
+        668 -> {error, iteration_in_process};
         _   -> exit("NIF library not loaded")
     end.
 
