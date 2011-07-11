@@ -30,6 +30,7 @@
          open_file/1,
          close/1,
          close_for_writing/1,
+         data_file_tstamps/1,
          write/4,
          read/3,
          sync/1,
@@ -63,7 +64,8 @@
 %% Called on a Dirname, will open a fresh file in that directory.
 -spec create_file(Dirname :: string(), Opts :: [any()]) -> {ok, #filestate{}}.
 create_file(DirName, Opts) ->
-    create_file_loop(DirName, Opts, tstamp()).
+    TS = erlang:max(most_recent_tstamp(DirName) + 1, tstamp()),
+    create_file_loop(DirName, Opts, TS).
 
 %% @doc Open an existing file for reading.
 %% Called with fully-qualified filename.
@@ -102,6 +104,16 @@ close_for_writing(State =
     file:sync(HintFd),
     file:close(HintFd),
     State#filestate { mode = read_only, hintfd = undefined }.
+
+%% Build a list of {tstamp, filename} for all files in the directory that
+%% match our regex. 
+-spec data_file_tstamps(Dirname :: string()) -> [{integer(), string()}].
+data_file_tstamps(Dirname) ->
+    filelib:fold_files(Dirname, "[0-9]+.bitcask.data", false,
+                       fun(F, Acc) ->
+                               [{file_tstamp(F), F} | Acc]
+                       end, []).
+
 
 %% @doc Use only after merging, to permanently delete a data file.
 -spec delete(#filestate{}) -> ok | {error, atom()}.
@@ -459,14 +471,17 @@ create_file_loop(DirName, Opts, Tstamp) ->
             end;
         false ->
             %% Couldn't create a new file with the requested name,
-            %% increment the tstamp by 1 and try again. Conceptually,
-            %% this introduces some drift into the actual creation
+            %% check for the more recent timestamp and increment by
+            %% 1 and try again.
+            %% This introduces some drift into the actual creation
             %% time, but given that we only have at most 2 writers
             %% (writer + merger) for a given bitcask, it shouldn't be
             %% more than a few seconds. The alternative it to sleep
             %% until the next second rolls around -- but this
             %% introduces lengthy, unnecessary delays.
-            create_file_loop(DirName, Opts, Tstamp + 1)
+            %% This also handles the possibility of clock skew
+            MostRecentTS = most_recent_tstamp(DirName),
+            create_file_loop(DirName, Opts, MostRecentTS + 1)
     end.
 
 generate_hintfile(Filename, {FolderMod, FolderFn, FolderArgs}) ->
@@ -492,6 +507,14 @@ hintfile_entry(Key, Tstamp, {Offset, TotalSz}) ->
     KeySz = size(Key),
     [<<Tstamp:?TSTAMPFIELD>>, <<KeySz:?KEYSIZEFIELD>>,
      <<TotalSz:?TOTALSIZEFIELD>>, <<Offset:?OFFSETFIELD>>, Key].
+
+    
+%% Find the most recent timestamp for a .data file
+most_recent_tstamp(DirName) ->
+    lists:foldl(fun({TS,_},Acc) -> 
+                       erlang:max(TS, Acc)
+               end, 0, data_file_tstamps(DirName)).
+  
 
 temp_filename(Template) ->
     temp_filename(Template, now()).

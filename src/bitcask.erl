@@ -738,13 +738,9 @@ get_filestate(FileId,
 
 
 list_data_files(Dirname, WritingFile, Mergingfile) ->
-    %% Build a list of {tstamp, filename} for all files in the directory that
-    %% match our regex. Then reverse sort that list and extract the 
-    %% fully-qualified filename.
-    Files = filelib:fold_files(Dirname, "[0-9]+.bitcask.data", false,
-                               fun(F, Acc) ->
-                                    [{bitcask_fileops:file_tstamp(F), F} | Acc]
-                               end, []),
+    %% Get list of {tstamp, filename} for all files in the directory then
+    %% reverse sort that list and extract the fully-qualified filename.
+    Files = bitcask_fileops:data_file_tstamps(Dirname),
     [F || {_Tstamp, F} <- reverse_sort(Files),
           F /= WritingFile,
           F /= Mergingfile].
