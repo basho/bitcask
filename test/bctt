@@ -4,13 +4,52 @@
 %%
 %% Bitcask Torture Tests
 %% 
-%% Pre-populates a bitcask file with a known range of keys, the value for
+%% Pre-populates a bitcask with a known range of keys, the value for
 %% each key stores the key itself and a sequence number for the write
 %% (initially 1).
 %%
-%% The test itself consists of a writer continually rewriting all keys with
-%% the next sequence number while other processes read, fold over and merge
-%% the cask.
+%% The test then continually rewrites all keys with the next sequence number
+%% while other processes read, fold over and merge the cask.
+%%
+%% Parameters:
+%%
+%%   duration         - number of milliseconds to run the test for.  If 0 then
+%%                      only the initial write will take place. Default 0 ms.
+%%
+%%   max_file_size    - maximum file size within the bitcask in bytes.
+%%                      Default 10Mb.
+%%
+%%   stats_freq       - how often to output test status.  Interval in ms.  Default
+%%                      10,000 ms.
+%%
+%%   cask             - name of bitcask to open
+%%
+%%   num_keys         - number of keys used in test
+%%
+%%   readers          - number of threads reading from the bitcask. Default 0.
+%%
+%%   folders          - number of threads calling bitcask:fold.  Each fold checks
+%%                      all keys visited only once.  A new process is created for
+%%                      each fold.  Default 0.
+%%
+%%   foldkeys         - number of threads calling bitcask:fold.  Each fold checks
+%%                      all keys visited only once.  A new process is created for
+%%                      each fold.  Default 0.
+%%
+%%   mergers          - if non-zero run a single merge thread.  The merge thread
+%%                      is kicked by the writer thread if needs_merge returns
+%%                      true and passes the returned merge filenames. Default 0.
+%%
+%%   needs_merge_freq - writer thread calls needs_merge after needs_merge_freq
+%%                      writes to ensure files are closed after merges.
+%%                      Default 1000.
+%%   
+%%   frag_merge_trigger - bitcask app env variables - set before running
+%%   dead_bytes_merge_trigger
+%%   frag_threshold
+%%   dead_bytes_threshold
+%%   small_file_threshold
+
 %%
 
 -module(bctt).
@@ -21,6 +60,7 @@
                 folder_reps=0,
                 fold_keys_reps=0,
                 merger_reps=0,
+                merges_pending=0,
                 duration,
                 status_freq = 10000,
                 cask = "bctt.bc",
@@ -28,6 +68,12 @@
                 writer_pid,
                 restart_writer=false,
                 writers=1,
+                needs_merge_freq = 1000,
+                frag_merge_trigger,       % Env default trigger on 60% fragmentation
+                dead_bytes_merge_trigger, % Env default trigger on dead bytes > 512 MB
+                frag_threshold,           % Include merge >= 40% fragmentation
+                dead_bytes_threshold,     % Include merge dead bytes > 128 MB
+                small_file_threshold,     % Include merge file is < 10 MB
                 readers=0,
                 folders=0,
                 foldkeys=0,
@@ -56,6 +102,7 @@ main(Args) ->
                 print_params(State),
                 ensure_bitcask(),
                 ensure_deps(),
+                set_bitcask_env(State),
                 do_test(State);
             syntax ->
                 syntax(),
@@ -93,11 +140,11 @@ do_test(State0) ->
     %% Start continually rewriting the keys and optionally reading,
     %% folding and merging
     State = State1#state{seq = 1},
+    start_merger(State, State#state.mergers),
     kick_writer(State),
     start_readers(State, State#state.readers),
     start_folders(State, State#state.folders),
     start_fold_keys(State, State#state.foldkeys),
-    start_mergers(State, State#state.mergers),
     schedule_status(State),
     case State#state.duration of 
         undefined ->
@@ -116,10 +163,10 @@ restart_procs(State) ->
             io:format("Test ending...\n"),
             State;
         status ->
-            io:format("Writer seq: ~p  Readers=~p Folders=~p FoldKeys=~p Merges=~p\n",
+            io:format("Writer seq: ~p  Readers=~p Folders=~p FoldKeys=~p Merges=~p MergesPending=~p\n",
                       [State#state.seq, State#state.reader_reps, 
                        State#state.folder_reps, State#state.fold_keys_reps,
-                       State#state.merger_reps]),
+                       State#state.merger_reps, State#state.merges_pending]),
             schedule_status(State),
             restart_procs(State);
         {write_done, WriteSeq} ->
@@ -136,9 +183,11 @@ restart_procs(State) ->
             State1 = start_writer(State),
             kick_writer(State1),
             restart_procs(State1);
+        merge_pending ->
+            restart_procs(State#state{merges_pending = State#state.merges_pending+1});
         merge_done ->
-            start_mergers(State, 1),
-            restart_procs(State#state{merger_reps = State#state.merger_reps+1});
+            restart_procs(State#state{merges_pending = State#state.merges_pending-1,
+                                      merger_reps = State#state.merger_reps+1});
         {read_done, _ReadSeq} ->
             start_readers(State, 1),
             restart_procs(State#state{reader_reps = State#state.reader_reps+1});
@@ -158,6 +207,7 @@ restart_procs(State) ->
             State
     end.
 
+
 %% Wait for the initial writer to complete - the os:cmd call
 %% can generate an EXIT message
 wait_for_writer(State) ->
@@ -171,7 +221,8 @@ wait_for_writer(State) ->
             ok
     end.
 
-wait_for_procs(#state{writers = 0, readers = 0, folders = 0, foldkeys = 0, mergers = 0}) ->
+wait_for_procs(#state{writers = 0, readers = 0, folders = 0, foldkeys = 0, merges_pending = 0}) ->
+    catch merger ! exit,
     io:format("Test complete\n");
 wait_for_procs(State) ->
     receive
@@ -183,8 +234,11 @@ wait_for_procs(State) ->
             wait_for_procs(State#state{folders = State#state.folders - 1});
         {fold_keys_done, _FoldKeySeq} ->
             wait_for_procs(State#state{foldkeys = State#state.foldkeys - 1});
+        merge_pending -> %% The writer could still be adding them as we try to shut down.
+            wait_for_procs(State#state{merges_pending = State#state.merges_pending + 1});
         merge_done ->
-            wait_for_procs(State#state{mergers = State#state.mergers - 1});
+            wait_for_procs(State#state{merges_pending = State#state.merges_pending - 1,
+                                       merger_reps = State#state.merger_reps+1});
         {write_done, _WriteSeq} ->
             wait_for_procs(State);
         write_exit ->
@@ -209,8 +263,9 @@ start_writer(State) ->
     Caller = self(),
     Pid = spawn_link(fun() ->
                              Opts = writer_opts(State),
+                             %% Until closing stale file handles resolved
                              Ref = bitcask:open(State#state.cask, Opts),
-                             write_proc(Ref,  Caller)
+                             write_proc(Ref, Caller)
                      end),
 %%X    io:format("Started writer pid ~p\n", [Pid]),
     State#state{writer_pid = Pid}.
@@ -261,15 +316,18 @@ start_fold_keys(State, NumFoldKeys) ->
                end),
     start_fold_keys(State, NumFoldKeys - 1).
 
-start_mergers(_State, 0) ->
-    ok;
-start_mergers(State, NumMergers) ->
+start_merger(_State, 0) ->
+    ok; % no merger, messages to it will be dropped
+start_merger(State, _NumMergers) -> % non-zero mergers kicks it off
     Caller = self(),
-    spawn_link(fun() -> merge_proc(State#state.cask, Caller) end),
-    start_mergers(State, NumMergers - 1).
+    spawn_link(fun() ->
+                       register(merger, self()),
+                       merge_proc(State#state.cask, Caller)
+               end).
     
 kick_writer(State) ->
-    State#state.writer_pid ! {start, State#state.seq + 1, State#state.num_keys}.
+    State#state.writer_pid ! {start, State#state.seq + 1, State#state.num_keys,
+                              State#state.needs_merge_freq}.
 
 stop_writer(State) ->
 %%X    io:format("Stopping writer ~p\n", [State#state.writer_pid]),
@@ -280,26 +338,45 @@ stop_writer(State) ->
 %%X           io:format("Stopped writer ~p\n", [State#state.writer_pid]),
             ok
     after
-        10000 ->
+        60000 ->
             erlang:error({writer_pid_timeout, State#state.writer_pid})
     end.
         
+
 write_proc(Ref, Caller) ->
     receive
         stop ->
 %%X            io:format("Writer ~p received stop request\n", [self()]),
             Caller ! write_exit;
-        {start, Seq, NumKeys} ->
-            write(Ref, NumKeys, Seq),
+        {start, Seq, NumKeys, NeedsMergeFreq} ->
+%%            io:format("Writer starting\n"),
+            write(Ref, NumKeys, NeedsMergeFreq, Seq, Caller),
             Caller ! {write_done, Seq},
             write_proc(Ref, Caller)
     end.
 
-write(_Ref, 0, _Seq) ->
+write(_Ref, 0, _Seq, _NeedsMergeFreq, _Caller) ->
     ok;
-write(Ref, Key, Seq) ->
-    bitcask:put(Ref, <<Key:32>>, term_to_binary({Key, Seq})),
-    write(Ref, Key - 1, Seq).
+write(Ref, Key, Seq, NeedsMergeFreq, Caller) ->
+    try
+        case (Key rem NeedsMergeFreq) == 0 of
+            true ->
+                case bitcask:needs_merge(Ref) of
+                    {true, Filenames} ->
+                        Caller ! merge_pending,
+                        merger ! {kick_merge, Filenames};
+                    false ->
+                        ok
+                end;
+            _ ->
+                ok
+        end,
+        ok = bitcask:put(Ref, <<Key:32>>, term_to_binary({Key, Seq}))
+    catch
+        _:Err ->
+            io:format(user, "Put ~p: ~p\n", [Key, Err])
+    end,
+    write(Ref, Key - 1, Seq, NeedsMergeFreq, Caller).
 
 read_proc(Cask, NumKeys, Seq, Caller) ->
     Ref = bitcask:open(Cask),
@@ -310,9 +387,14 @@ read_proc(Cask, NumKeys, Seq, Caller) ->
 read(_Ref, 0, _Iter) ->
     ok;
 read(Ref, Key, MinSeq) ->
-    {ok, Bin} = bitcask:get(Ref, <<Key:32>>),
-    {Key, Seq} = binary_to_term(Bin),
-    true = (Seq >= MinSeq),
+    try
+        {ok, Bin} = bitcask:get(Ref, <<Key:32>>),
+        {Key, Seq} = binary_to_term(Bin),
+        true = (Seq >= MinSeq)
+    catch
+        _:Err ->
+            io:format(user, "Get ~p: ~p\n", [Key, Err])
+    end,
     read(Ref, Key - 1, MinSeq).
    
 fold_proc(Cask, NumKeys, Seq, Caller) ->
@@ -356,8 +438,20 @@ check_fold(Key1, _MaxKey, [_Key2 | _Rest]) ->
 
 
 merge_proc(Cask, Caller) ->
-    ok = bitcask:merge(Cask),
-    Caller ! merge_done.
+    receive
+        {kick_merge, Filenames} ->
+            try
+                ok = bitcask:merge(Cask, [], Filenames)
+            catch
+                %% Maybe keydir is being loaded
+                _:{error, not_ready} ->
+                    ok
+            end,
+            Caller ! merge_done,
+            merge_proc(Cask, Caller);
+        stop ->
+            ok
+    end.
 
 
 ensure_bitcask() ->
@@ -422,6 +516,21 @@ parent_dir(Dirs) ->
 bitcask_beam(Cwd) ->
     filename:join(Cwd, ["bitcask" ++ code:objfile_extension()]).
 
+set_bitcask_env(State) ->
+    application:load(bitcask),
+    set_env(frag_merge_trigger, State#state.frag_merge_trigger),
+    set_env(dead_bytes_merge_trigger, State#state.dead_bytes_merge_trigger),
+    set_env(frag_threshold,  State#state.frag_threshold),
+    set_env(dead_bytes_threshold, State#state.dead_bytes_threshold),
+    set_env(small_file_threshold, State#state.small_file_threshold),
+    io:format("Bitcask AppEnv:\n~p\n", [application:get_all_env(bitcask)]).
+
+set_env(_, undefined) ->
+    ok;
+set_env(Var, Val) ->
+    application:set_env(bitcask, Var, Val).
+
+
 process_args([], State) ->
     {ok, State};
 process_args([Arg | Rest], State) ->
@@ -442,7 +551,13 @@ process_arg({Name, Val}, State) when Name =:= duration;
                                      Name =:= foldkeys;
                                      Name =:= mergers;
                                      Name =:= max_file_size;
-                                     Name =:= open_timeout ->
+                                     Name =:= open_timeout;
+                                     Name =:= needs_merge_freq;
+                                     Name =:= frag_merge_trigger;
+                                     Name =:= dead_bytes_merge_trigger;
+                                     Name =:= frag_threshold;
+                                     Name =:= dead_bytes_threshold;
+                                     Name =:= small_file_threshold ->
     case is_integer(Val) of
         true ->
             {ok, setelement(get_state_index(Name), State, Val)};
@@ -495,15 +610,16 @@ get_state_index(Name, Index, [_OtherName | Rest]) ->
 
 print_params(State) ->
     io:format("Bitcask Test\n"),
-    io:format("duration:      ~s\n", [format_duration(State#state.duration)]),
-    io:format("cask:          ~s\n", [State#state.cask]),
-    io:format("num_keys:      ~b\n", [State#state.num_keys]),
-    io:format("readers:       ~b\n", [State#state.readers]),
-    io:format("folders:       ~b\n", [State#state.folders]),
-    io:format("foldkeys:      ~b\n", [State#state.foldkeys]),
-    io:format("mergers:       ~b\n", [State#state.mergers]),
-    io:format("max_file_size: ~s\n", [format_max_file_size(State#state.max_file_size)]),
-    io:format("open_timeout:  ~s\n", [format_timeout(State#state.open_timeout)]),
+    io:format("duration:         ~s\n", [format_duration(State#state.duration)]),
+    io:format("cask:             ~s\n", [State#state.cask]),
+    io:format("num_keys:         ~b\n", [State#state.num_keys]),
+    io:format("readers:          ~b\n", [State#state.readers]),
+    io:format("folders:          ~b\n", [State#state.folders]),
+    io:format("foldkeys:         ~b\n", [State#state.foldkeys]),
+    io:format("mergers:          ~b\n", [State#state.mergers]),
+    io:format("max_file_size:    ~s\n", [format_max_file_size(State#state.max_file_size)]),
+    io:format("needs_merge_freq: ~b\n", [State#state.needs_merge_freq]),
+    io:format("open_timeout:     ~s\n", [format_timeout(State#state.open_timeout)]),
     io:format("\n").
 
 format_duration(undefined) ->
