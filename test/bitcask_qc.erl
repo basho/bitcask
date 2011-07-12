@@ -34,6 +34,8 @@
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
+-record(m_fstats, {key_bytes=0, live_keys=0, live_bytes=0, total_keys=0, total_bytes=0}).
+
 qc(P) ->
     ?assert(eqc:quickcheck(?QC_OUT(P))).
 
@@ -46,14 +48,77 @@ values() ->
 ops(Keys, Values) ->
     {oneof([put, delete]), oneof(Keys), oneof(Values)}.
 
-apply_kv_ops([], _Ref, Acc0) ->
-    Acc0;
-apply_kv_ops([{put, K, V} | Rest], Ref, Acc0) ->
+apply_kv_ops([], Ref, KVs0, Fstats) ->
+    bitcask_nifs:keydir_itr_release(get_keydir(Ref)), % release any iterators
+    {KVs0, Fstats};
+apply_kv_ops([{put, K, V} | Rest], Ref, KVs0, Fstats0) ->
     ok = bitcask:put(Ref, K, V),
-    apply_kv_ops(Rest, Ref, orddict:store(K, V, Acc0));
-apply_kv_ops([{delete, K, _} | Rest], Ref, Acc0) ->
+    apply_kv_ops(Rest, Ref, orddict:store(K, V, KVs0),
+                 update_fstats(put, K ,orddict:find(K, KVs0), V, Fstats0));
+apply_kv_ops([{delete, K, _} | Rest], Ref, KVs0, Fstats0) ->
     ok = bitcask:delete(Ref, K),
-    apply_kv_ops(Rest, Ref, orddict:store(K, deleted, Acc0)).
+    apply_kv_ops(Rest, Ref, orddict:store(K, deleted, KVs0),
+                 update_fstats(delete, K, orddict:find(K, KVs0), ?TOMBSTONE, Fstats0)).
+
+
+update_fstats(delete, K, OldV, NewV, Fstats0) -> %% Delete existing key (i.e. write tombstone)
+    %% Delete issues a put with the tombstone
+    Fstats1 = update_fstats(put, K, OldV, NewV, Fstats0),
+    %% Then removes from the keydir
+    #m_fstats{key_bytes = KB, live_keys = LK, live_bytes = LB} = Fstats1,
+    TotalSz = total_sz(K, NewV), % remove the tombstone
+    Fstats1#m_fstats{key_bytes = KB - size(K),
+                     live_keys = LK - 1,
+                     live_bytes = LB - TotalSz};
+%% Update m_fstats record - this will be the aggregate of all files in the bitcask
+update_fstats(put, K, ErrDel, NewV,
+              #m_fstats{key_bytes = KB,
+                        live_keys = LK, live_bytes = LB, 
+                        total_keys = TK, total_bytes = TB} = Fstats)
+  when ErrDel =:= error; ErrDel =:= {ok, deleted} ->
+    %% Add for first time or update after deletion
+    NewTotalSz = total_sz(K, NewV),
+    Fstats#m_fstats{key_bytes = KB + size(K),
+                    live_keys = LK + 1, live_bytes = LB + NewTotalSz,
+                    total_keys = TK + 1, total_bytes = TB + NewTotalSz};
+update_fstats(put, K, {ok, OldV}, NewV, #m_fstats{live_bytes = LB, 
+                                                  total_keys = TK,
+                                                  total_bytes = TB} = Fstats) -> 
+    %% update existing key
+    OldTotalSz = total_sz(K, OldV),
+    NewTotalSz = total_sz(K, NewV),
+    Fstats#m_fstats{live_bytes = LB + NewTotalSz - OldTotalSz,
+                    total_keys = TK + 1, total_bytes = TB + NewTotalSz}.
+
+check_fstats(Ref, Expect) ->
+    Aggregate = fun({_FileId, FileLiveCount, FileTotalCount, FileLiveBytes, FileTotalBytes},
+                    {LiveCount0, TotalCount0, LiveBytes0, TotalBytes0}) ->
+                        {LiveCount0 + FileLiveCount, TotalCount0 + FileTotalCount, 
+                         LiveBytes0 + FileLiveBytes, TotalBytes0 + FileTotalBytes}
+                end,
+    {KeyCount, KeyBytes, Fstats} = bitcask_nifs:keydir_info(get_keydir(Ref)),
+    {LiveCount, TotalCount, LiveBytes, TotalBytes} =
+        lists:foldl(Aggregate, {0, 0, 0, 0}, Fstats),
+    ?assert(Expect#m_fstats.live_keys >= 0),
+    ?assert(Expect#m_fstats.key_bytes >= 0),
+    ?assert(Expect#m_fstats.live_keys >= 0),
+    ?assert(Expect#m_fstats.live_bytes >= 0),
+    ?assert(Expect#m_fstats.total_keys >= 0),
+    ?assert(Expect#m_fstats.total_bytes >= 0),
+
+    ?assertEqual(Expect#m_fstats.live_keys, KeyCount),
+    ?assertEqual(Expect#m_fstats.key_bytes, KeyBytes),
+    ?assertEqual(Expect#m_fstats.live_keys, LiveCount),
+    ?assertEqual(Expect#m_fstats.live_bytes, LiveBytes),
+    ?assertEqual(Expect#m_fstats.total_keys, TotalCount),
+    ?assertEqual(Expect#m_fstats.total_bytes, TotalBytes).
+
+total_sz(K, V) -> % Total size of bitcask entry in bytes
+    ((32 + % crc
+      32 + % tstamps
+      16 + % key size
+      32) div 8) + % val size
+        size(K) + size(V).
 
 prop_merge() ->
     ?LET({Keys, Values}, {keys(), values()},
@@ -66,7 +131,8 @@ prop_merge() ->
                      %% a model of what SHOULD be in the data.
                      Ref = bitcask:open("/tmp/bc.prop.merge",
                                         [read_write, {max_file_size, M1}]),
-                     Model = apply_kv_ops(Ops, Ref, []),
+                     {Model, Fstats} = apply_kv_ops(Ops, Ref, [], #m_fstats{}),
+                     check_fstats(Ref, Fstats),
 
                      %% Apply the merge -- note that we keep the
                      %% bitcask open so that a live keydir is
@@ -109,7 +175,8 @@ prop_fold() ->
                      Ref = bitcask:open("/tmp/bc.prop.fold",
                                         [read_write, {max_file_size, M1}]),
                      try
-                         Model = apply_kv_ops(Ops, Ref, []),
+                         {Model, Fstats} = apply_kv_ops(Ops, Ref, [], #m_fstats{}),
+                         check_fstats(Ref, Fstats),
 
                          %% Build a list of the K/V pairs available to fold
                          Actual = case FoldOp of
@@ -168,6 +235,9 @@ merge3_test() ->
 prop_fold_test_() ->
     {timeout, 3*60, fun() -> qc(prop_fold()) end}.
 
+
+get_keydir(Ref) ->
+    element(8, erlang:get(Ref)).    
 
 -endif.
 

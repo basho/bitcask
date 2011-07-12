@@ -151,8 +151,8 @@ write(Filestate=#filestate{fd = FD, hintfd = HintFD, ofs = Offset},
     Iolist = hintfile_entry(Key, Tstamp, {Offset, TotalSz}),
     ok = file:write(HintFD, Iolist),
     %% Record our final offset
-    FinalSz = iolist_size(Bytes),
-    {ok, Filestate#filestate{ofs = Offset + FinalSz}, Offset, FinalSz}.
+    TotalSz = iolist_size(Bytes),
+    {ok, Filestate#filestate{ofs = Offset + TotalSz}, Offset, TotalSz}.
 
 
 %% @doc Given an Offset and Size, get the corresponding k/v from Filename.
