@@ -52,13 +52,16 @@ static khint_t keydir_entry_equal(bitcask_keydir_entry* lhs,
                                   bitcask_keydir_entry* rhs);
 KHASH_INIT(entries, bitcask_keydir_entry*, char, 0, keydir_entry_hash, keydir_entry_equal);
 
+typedef enum { TOTAL = 0, LIVE = 1, PENDING = 2 } fstat_count_type;
+
 typedef struct
 {
     uint32_t file_id;
-    uint32_t live_keys;
-    uint32_t total_keys;
-    uint64_t live_bytes;
-    uint64_t total_bytes;
+    struct
+    {
+        uint64_t keys;
+        uint64_t bytes;
+    } counts[3]; 
 } bitcask_fstats_entry;
 
 KHASH_MAP_INIT_INT(fstats, bitcask_fstats_entry*);
@@ -307,8 +310,9 @@ ERL_NIF_TERM bitcask_nifs_keydir_mark_ready(ErlNifEnv* env, int argc, const ERL_
 
 static void update_fstats(ErlNifEnv* env, bitcask_keydir* keydir,
                           uint32_t file_id,
-                          int32_t live_increment, int32_t total_increment,
-                          int32_t live_bytes_increment, int32_t total_bytes_increment)
+                          fstat_count_type type,
+                          int32_t keys_increment, int32_t total_keys_increment,
+                          int32_t bytes_increment, int32_t total_bytes_increment)
 {
     bitcask_fstats_entry* entry = 0;
     khiter_t itr = kh_get(fstats, keydir->fstats, file_id);
@@ -326,10 +330,10 @@ static void update_fstats(ErlNifEnv* env, bitcask_keydir* keydir,
         entry = kh_val(keydir->fstats, itr);
     }
 
-    entry->live_keys   += live_increment;
-    entry->total_keys  += total_increment;
-    entry->live_bytes  += live_bytes_increment;
-    entry->total_bytes += total_bytes_increment;
+    entry->counts[TOTAL].keys += total_keys_increment;
+    entry->counts[TOTAL].bytes += total_bytes_increment;
+    entry->counts[type].keys += keys_increment;
+    entry->counts[type].bytes  += bytes_increment;
 }
 
 static khint_t keydir_entry_hash(bitcask_keydir_entry* entry)
@@ -416,7 +420,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
             keydir->key_bytes += key.size;
 
             // First entry for this key -- increment both live and total counters
-            update_fstats(env, keydir, entry.file_id, 1, 1,
+            update_fstats(env, keydir, entry.file_id, LIVE, 1, 1,
                           entry.total_sz, entry.total_sz);
 
             UNLOCK(keydir);
@@ -439,14 +443,14 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
             // same.
             if (old_entry->file_id != entry.file_id)
             {
-                update_fstats(env, keydir, old_entry->file_id, -1, 0,
+                update_fstats(env, keydir, old_entry->file_id, LIVE, -1, 0,
                               -1 * old_entry->total_sz, 0);
-                update_fstats(env, keydir, entry.file_id, 1, 1,
+                update_fstats(env, keydir, entry.file_id, LIVE, 1, 1,
                               entry.total_sz, entry.total_sz);
             }
             else // file_id is same, change live/total in one entry
             {
-                update_fstats(env, keydir, entry.file_id, 0, 1,
+                update_fstats(env, keydir, entry.file_id, LIVE, 0, 1,
                         entry.total_sz - old_entry->total_sz, entry.total_sz);
 
             }
@@ -471,7 +475,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
             {
                 // Increment the total # of keys and total size for the entry that
                 // was NOT stored in the keydir.
-                update_fstats(env, keydir, entry.file_id, 0, 1,
+                update_fstats(env, keydir, entry.file_id, LIVE, 0, 1,
                               0, entry.total_sz);
             }
 
@@ -569,7 +573,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
 
             // Update fstats for the current file id -- one less live
             // key is the assumption here.
-            update_fstats(env, keydir, entry->file_id, -1, 0,
+            update_fstats(env, keydir, entry->file_id, LIVE, -1, 0,
                           -1 * entry->total_sz, 0);
 
             // Update the stats
@@ -784,12 +788,13 @@ ERL_NIF_TERM bitcask_nifs_keydir_info(ErlNifEnv* env, int argc, const ERL_NIF_TE
             if (kh_exist(keydir->fstats, itr))
             {
                 curr_f = kh_val(keydir->fstats, itr);
-                ERL_NIF_TERM fstat = enif_make_tuple5(env,
-                                                      enif_make_uint(env, curr_f->file_id),
-                                                      enif_make_uint(env, curr_f->live_keys),
-                                                      enif_make_uint(env, curr_f->total_keys),
-                                                      enif_make_ulong(env, curr_f->live_bytes),
-                                                      enif_make_ulong(env, curr_f->total_bytes));
+                ERL_NIF_TERM fstat = 
+                    enif_make_tuple5(env,
+                                     enif_make_uint(env, curr_f->file_id),
+                                     enif_make_ulong(env, curr_f->counts[LIVE].keys),
+                                     enif_make_ulong(env, curr_f->counts[TOTAL].keys),
+                                     enif_make_ulong(env, curr_f->counts[LIVE].bytes),
+                                     enif_make_ulong(env, curr_f->counts[TOTAL].bytes));
                 fstats_list = enif_make_list_cell(env, fstat, fstats_list);
             }
         }
