@@ -376,6 +376,51 @@ static khiter_t find_keydir_entry(ErlNifEnv* env, bitcask_keydir* keydir, ErlNif
     }
 }
 
+
+// Update an entry with newer information and adjust statistics
+static void update_entry(ErlNifEnv* env, bitcask_keydir* keydir, 
+                         bitcask_keydir_entry* old_entry, 
+                         bitcask_keydir_entry* new_entry)
+{
+    // Entry already exists. Decrement live counter on the fstats entry
+    // for the old file ID and update both counters for new file. Note
+    // that this only needs to be done if the file_ids are not the
+    // same.
+    if (old_entry->file_id != new_entry->file_id)
+    {
+        update_fstats(env, keydir, old_entry->file_id, LIVE, -1, 0,
+                      -1 * old_entry->total_sz, 0);
+        update_fstats(env, keydir, new_entry->file_id, LIVE, 1, 1,
+                      new_entry->total_sz, new_entry->total_sz);
+    }
+    else // file_id is same, change live/total in one entry
+    {
+        update_fstats(env, keydir, new_entry->file_id, LIVE, 0, 1,
+                      new_entry->total_sz - old_entry->total_sz, new_entry->total_sz);
+
+    }
+
+    // Update the entry info. Note that if you do multiple updates in a
+    // second, the last one in wins!
+    // TODO: Safe?
+    old_entry->file_id = new_entry->file_id;
+    old_entry->total_sz = new_entry->total_sz;
+    old_entry->offset = new_entry->offset;
+    old_entry->tstamp = new_entry->tstamp;
+}
+
+static void remove_entry(ErlNifEnv* env, bitcask_keydir* keydir, khiter_t itr,
+                         bitcask_keydir_entry* entry)
+{
+    // Update fstats for the current file id -- one less live
+    // key is the assumption here.
+    update_fstats(env, keydir, entry->file_id, LIVE, -1, 0,
+                  -1 * entry->total_sz, 0);
+    
+    kh_del(entries, keydir->entries, itr);
+}
+
+
 ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     bitcask_keydir_handle* handle;
@@ -437,32 +482,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
              ((old_entry->file_id == entry.file_id) &&
               (old_entry->offset < entry.offset))))
         {
-            // Entry already exists. Decrement live counter on the fstats entry
-            // for the old file ID and update both counters for new file. Note
-            // that this only needs to be done if the file_ids are not the
-            // same.
-            if (old_entry->file_id != entry.file_id)
-            {
-                update_fstats(env, keydir, old_entry->file_id, LIVE, -1, 0,
-                              -1 * old_entry->total_sz, 0);
-                update_fstats(env, keydir, entry.file_id, LIVE, 1, 1,
-                              entry.total_sz, entry.total_sz);
-            }
-            else // file_id is same, change live/total in one entry
-            {
-                update_fstats(env, keydir, entry.file_id, LIVE, 0, 1,
-                        entry.total_sz - old_entry->total_sz, entry.total_sz);
-
-            }
-
-            // Update the entry info. Note that if you do multiple updates in a
-            // second, the last one in wins!
-            // TODO: Safe?
-            old_entry->file_id = entry.file_id;
-            old_entry->total_sz = entry.total_sz;
-            old_entry->offset = entry.offset;
-            old_entry->tstamp = entry.tstamp;
-
+            update_entry(env, keydir, old_entry, &entry);
             UNLOCK(keydir);
             return ATOM_OK;
         }
@@ -488,6 +508,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
         return enif_make_badarg(env);
     }
 }
+
 
 ERL_NIF_TERM bitcask_nifs_keydir_get_int(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
@@ -571,17 +592,12 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
                 }
             }
 
-            // Update fstats for the current file id -- one less live
-            // key is the assumption here.
-            update_fstats(env, keydir, entry->file_id, LIVE, -1, 0,
-                          -1 * entry->total_sz, 0);
-
-            // Update the stats
+            // Update the keydir stats
             keydir->key_count--;
             keydir->key_bytes -= entry->key_sz;
 
-            kh_del(entries, keydir->entries, itr);
-
+            // Remove the entry and update file stats
+            remove_entry(env, keydir, itr, entry);
             enif_free_compat(env, entry);
         }
 
