@@ -49,7 +49,7 @@ ops(Keys, Values) ->
     {oneof([put, delete]), oneof(Keys), oneof(Values)}.
 
 apply_kv_ops([], Ref, KVs0, Fstats) ->
-    bitcask_nifs:keydir_itr_release(get_keydir(Ref)), % release any iterators
+    %bitcask_nifs:keydir_itr_release(get_keydir(Ref)), % release any iterators
     {KVs0, Fstats};
 apply_kv_ops([{put, K, V} | Rest], Ref, KVs0, Fstats0) ->
     ok = bitcask:put(Ref, K, V),
@@ -113,6 +113,14 @@ check_fstats(Ref, Expect) ->
     ?assertEqual(Expect#m_fstats.total_keys, TotalCount),
     ?assertEqual(Expect#m_fstats.total_bytes, TotalBytes).
 
+check_model(Ref, Model) ->
+    F = fun({K, deleted}) ->
+                ?assertEqual(not_found, bitcask:get(Ref, K));
+           ({K, V}) ->
+                ?assertEqual({ok, V}, bitcask:get(Ref, K))
+        end,
+    lists:map(F, Model).
+
 total_sz(K, V) -> % Total size of bitcask entry in bytes
     ((32 + % crc
       32 + % tstamps
@@ -131,35 +139,48 @@ prop_merge() ->
                      %% a model of what SHOULD be in the data.
                      Ref = bitcask:open("/tmp/bc.prop.merge",
                                         [read_write, {max_file_size, M1}]),
-                     {Model, Fstats} = apply_kv_ops(Ops, Ref, [], #m_fstats{}),
-                     check_fstats(Ref, Fstats),
+                     try
+                         {Model, Fstats} = apply_kv_ops(Ops, Ref, [], #m_fstats{}),
+                         check_fstats(Ref, Fstats),
+                         check_model(Ref, Model),
 
-                     %% Apply the merge -- note that we keep the
-                     %% bitcask open so that a live keydir is
-                     %% available to the merge.
-                     ok = bitcask:merge("/tmp/bc.prop.merge",
-                                        [{max_file_size, M2}]),
-
-                     %% Call needs_merge to close any "dead" files
-                     bitcask:needs_merge(Ref),
-
-                     %% Traverse the model and verify that retrieving
-                     %% each key returns the expected value. It's
-                     %% important to note that the model keeps
-                     %% tombstones on deleted values so we can attempt
-                     %% to retrieve those deleted values and check the
-                     %% corresponding tombstone path in bitcask.
-                     %% Verify that the bitcask contains exactly what
-                     %% we expect
-                     F = fun({K, deleted}) ->
-                                 ?assertEqual(not_found, bitcask:get(Ref, K));
-                            ({K, V}) ->
-                                 ?assertEqual({ok, V}, bitcask:get(Ref, K))
+                         %% Apply the merge -- note that we keep the
+                         %% bitcask open so that a live keydir is
+                         %% available to the merge.  Run in a seperate 
+                         %% process so it gets cleaned up on crash
+                         %% so quickcheck can shrink correctly.
+                         Me = self(),
+                         proc_lib:spawn(
+                           fun() ->
+                                   try
+                                       Me ! bitcask:merge("/tmp/bc.prop.merge",
+                                                          [{max_file_size, M2}])
+                                   catch
+                                       _:Err ->
+                                           Me ! Err
+                                   end
+                           end),
+                         receive
+                             X ->
+                                 ?assertEqual(ok, X)
                          end,
-                     lists:map(F, Model),
 
-                     bitcask:close(Ref),
-                     true
+                         %% Call needs_merge to close any "dead" files
+                         bitcask:needs_merge(Ref),
+
+                         %% Traverse the model and verify that retrieving
+                         %% each key returns the expected value. It's
+                         %% important to note that the model keeps
+                         %% tombstones on deleted values so we can attempt
+                         %% to retrieve those deleted values and check the
+                         %% corresponding tombstone path in bitcask.
+                         %% Verify that the bitcask contains exactly what
+                         %% we expect
+                         check_model(Ref, Model),
+                         true
+                     after
+                         bitcask:close(Ref)
+                     end
                  end)).
 
 
