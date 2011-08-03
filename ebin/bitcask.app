@@ -55,6 +55,15 @@
          {dead_bytes_threshold, 134217728},     % Dead bytes > 128 MB
          {small_file_threshold, 10485760},      % File is < 10 MB
 
+         %% Fold keys thresholds.  max_fold_age will reuse the keydir if
+         %% another fold was started less than max_fold_age ago and there
+         %% were less than max_fold_puts updates.  Otherwise it will
+         %% wait until all current fold keys complete and then start.
+         %% Set either option to -1 to disable.
+         {max_fold_age, 1000000},               % age in micro seconds
+         {max_fold_puts, -1},                   % maximum number of updates
+
+         %% Data expiration can be caused by setting this to a
          %% Data expiration can be caused by setting this to a
          %% positive value.  If so, items older than the value
          %% will be discarded.

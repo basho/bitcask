@@ -37,7 +37,10 @@
 -record(m_fstats, {key_bytes=0, live_keys=0, live_bytes=0, total_keys=0, total_bytes=0}).
 
 qc(P) ->
-    ?assert(eqc:quickcheck(?QC_OUT(P))).
+    qc(P, 100).
+
+qc(P, NumTests) ->
+    ?assert(eqc:quickcheck(?QC_OUT(eqc:numtests(NumTests, P)))).
 
 keys() ->
     eqc_gen:non_empty(list(eqc_gen:non_empty(binary()))).
@@ -46,10 +49,10 @@ values() ->
     eqc_gen:non_empty(list(binary())).
 
 ops(Keys, Values) ->
-    {oneof([put, delete]), oneof(Keys), oneof(Values)}.
+    {oneof([put, delete, itr, itr_next, itr_release]), oneof(Keys), oneof(Values)}.
 
 apply_kv_ops([], Ref, KVs0, Fstats) ->
-    %bitcask_nifs:keydir_itr_release(get_keydir(Ref)), % release any iterators
+    bitcask_nifs:keydir_itr_release(get_keydir(Ref)), % release any iterators
     {KVs0, Fstats};
 apply_kv_ops([{put, K, V} | Rest], Ref, KVs0, Fstats0) ->
     ok = bitcask:put(Ref, K, V),
@@ -58,7 +61,19 @@ apply_kv_ops([{put, K, V} | Rest], Ref, KVs0, Fstats0) ->
 apply_kv_ops([{delete, K, _} | Rest], Ref, KVs0, Fstats0) ->
     ok = bitcask:delete(Ref, K),
     apply_kv_ops(Rest, Ref, orddict:store(K, deleted, KVs0),
-                 update_fstats(delete, K, orddict:find(K, KVs0), ?TOMBSTONE, Fstats0)).
+                 update_fstats(delete, K, orddict:find(K, KVs0), ?TOMBSTONE, Fstats0));
+apply_kv_ops([{itr, _K, _} | Rest], Ref, KVs, Fstats) ->
+    %% Don't care about result, just want to intermix with get/put
+    bitcask_nifs:keydir_itr(get_keydir(Ref), -1, -1),
+    apply_kv_ops(Rest, Ref, KVs, Fstats);
+apply_kv_ops([{itr_next, _K, _} | Rest], Ref, KVs, Fstats) ->
+    %% Don't care about result, just want to intermix with get/put
+    bitcask_nifs:keydir_itr_next(get_keydir(Ref)),
+    apply_kv_ops(Rest, Ref, KVs, Fstats);
+apply_kv_ops([{itr_release, _K, _} | Rest], Ref, KVs, Fstats) ->
+    %% Don't care about result, just want to intermix with get/put
+    bitcask_nifs:keydir_itr_release(get_keydir(Ref)),
+    apply_kv_ops(Rest, Ref, KVs, Fstats).
 
 
 update_fstats(delete, K, OldV, NewV, Fstats0) -> %% Delete existing key (i.e. write tombstone)
@@ -236,7 +251,7 @@ prop_fold() ->
 
 
 prop_merge_test_() ->
-    {timeout, 3*60, fun() -> qc(prop_merge()) end}.
+    {timeout, 300*60, fun() -> qc(prop_merge()) end}.
 
 merge1_test() ->
     ?assert(eqc:check(prop_merge(),
@@ -254,7 +269,7 @@ merge3_test() ->
                         1,1}])).
 
 prop_fold_test_() ->
-    {timeout, 3*60, fun() -> qc(prop_fold()) end}.
+    {timeout, 300*60, fun() -> qc(prop_fold()) end}.
 
 
 get_keydir(Ref) ->

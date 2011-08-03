@@ -30,7 +30,7 @@
          delete/2,
          sync/1,
          list_keys/1,
-         fold_keys/3,
+         fold_keys/3, fold_keys/5,
          fold/3,
          merge/1, merge/2, merge/3,
          needs_merge/1,
@@ -290,6 +290,18 @@ list_keys(Ref) ->
 -spec fold_keys(reference(), Fun::fun(), Acc::term()) ->
                                                        term() | {error, any()}.
 fold_keys(Ref, Fun, Acc0) ->
+    State = get_state(Ref),
+    MaxAge = get_opt(max_fold_age, State#bc_state.opts) * 1000, % convert from ms to us
+    MaxPuts = get_opt(max_fold_puts, State#bc_state.opts),
+    fold_keys(Ref, Fun, Acc0, MaxAge, MaxPuts).
+
+%% @doc Fold over all keys in a bitcask datastore with limits on how out of date
+%%      the keydir is allowed to be.
+%% Must be able to understand the bitcask_entry record form.
+-spec fold_keys(reference(), Fun::fun(), Acc::term(), non_neg_integer() | undefined,
+                non_neg_integer() | undefined) ->
+                                                term() | {error, any()}.
+fold_keys(Ref, Fun, Acc0, MaxAge, MaxPut) ->
     %% Fun should be of the form F(#bitcask_entry, A) -> A
     ExpiryTime = expiry_time((get_state(Ref))#bc_state.opts),
     RealFun = fun(BCEntry, Acc) ->
@@ -311,7 +323,7 @@ fold_keys(Ref, Fun, Acc0) ->
                 end
         end
     end,
-    bitcask_nifs:keydir_fold((get_state(Ref))#bc_state.keydir, RealFun, Acc0).
+    bitcask_nifs:keydir_fold((get_state(Ref))#bc_state.keydir, RealFun, Acc0, MaxAge, MaxPut).
 
 %% @doc fold over all K/V pairs in a bitcask datastore.
 %% Fun is expected to take F(K,V,Acc0) -> Acc
