@@ -350,7 +350,7 @@ write_proc(Ref, Caller) ->
             Caller ! write_exit;
         {start, Seq, NumKeys, NeedsMergeFreq} ->
 %%            io:format("Writer starting\n"),
-            write(Ref, NumKeys, NeedsMergeFreq, Seq, Caller),
+            write(Ref, NumKeys, Seq, NeedsMergeFreq, Caller),
             Caller ! {write_done, Seq},
             write_proc(Ref, Caller)
     end.
