@@ -384,15 +384,17 @@ static khint_t keydir_entry_equal(bitcask_keydir_entry* lhs,
     }
 }
 
-static khiter_t get_entries_hash(ErlNifEnv* env, entries_hash_t *hash, ErlNifBinary* key)
+static khiter_t get_entries_hash(ErlNifEnv* env, entries_hash_t *hash, ErlNifBinary* key,
+                                 khiter_t* itr_ptr, bitcask_keydir_entry** entry_ptr)
 {
+    khiter_t itr;
     if (key->size < (4096 - sizeof(bitcask_keydir_entry)))
     {
         char buf[4096];
         bitcask_keydir_entry* e = (bitcask_keydir_entry*)buf;
         e->key_sz = key->size;
         memcpy(e->key, key->data, key->size);
-        return kh_get(entries, hash, e);
+        itr = kh_get(entries, hash, e);
     }
     else
     {
@@ -400,44 +402,53 @@ static khiter_t get_entries_hash(ErlNifEnv* env, entries_hash_t *hash, ErlNifBin
                                                     key->size);
         e->key_sz = key->size;
         memcpy(e->key, key->data, key->size);
-        khiter_t itr = kh_get(entries, hash, e);
+        itr = kh_get(entries, hash, e);
         enif_free_compat(env, e);
-        return itr;
+    }
+  
+    if (itr != kh_end(hash)) 
+    {
+        if (itr_ptr != NULL)
+        {
+            *itr_ptr = itr;
+        }
+        if (entry_ptr != NULL)
+        {
+            *entry_ptr = kh_key(hash, itr);
+        }
+        return 1;
+    }
+    else
+    {
+        return 0;
     }
 }
 
-// Find an entry in the pending or entries keydir
+// Find an entry in the pending or entries keydir and update the hash/itr/entry pointers
+// if non-NULL.
 static int find_keydir_entry(ErlNifEnv* env, bitcask_keydir* keydir, ErlNifBinary* key,
                       entries_hash_t** hash_ptr, khiter_t* itr_ptr,
                       bitcask_keydir_entry** entry_ptr)
 {
-    khiter_t itr;
-
     // Search pending if present
     if (keydir->pending != NULL) 
     {
-        itr = get_entries_hash(env, keydir->pending, key);
-        if (itr != kh_end(keydir->pending))
+        if (get_entries_hash(env, keydir->pending, key, itr_ptr, entry_ptr))
         {
             if (hash_ptr != NULL) 
+            {
                 *hash_ptr = keydir->pending;
-            if (itr_ptr != NULL)
-                *itr_ptr = itr;
-            if (entry_ptr != NULL)
-                *entry_ptr = kh_key(keydir->pending, itr);
+            }
             return 1;
         }
     }
     // If not in pending, check normal entries
-    itr = get_entries_hash(env, keydir->entries, key);
-    if (itr != kh_end(keydir->entries))
+    if (get_entries_hash(env, keydir->entries, key, itr_ptr, entry_ptr))
     {
         if (hash_ptr != NULL) 
+        {
             *hash_ptr = keydir->entries;
-        if (itr_ptr != NULL)
-            *itr_ptr = itr;
-        if (entry_ptr != NULL)
-            *entry_ptr = kh_key(keydir->entries, itr);
+        }
         return 1;
     }
     
@@ -899,8 +910,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr(ErlNifEnv* env, int argc, const ERL_NIF_TER
         {
             // Grow the pending_awaken array if necessary
             if (keydir->pending_awaken_count == keydir->pending_awaken_size)
-            {
-                keydir->pending_awaken_size += 16;
+            {   // Grow 16-at-a-time, expect a single alloc
+                keydir->pending_awaken_size += 16;  
                 size_t size = keydir->pending_awaken_size * sizeof(keydir->pending_awaken[0]);
                 keydir->pending_awaken = enif_realloc_compat(env, keydir->pending_awaken, size);
             }
