@@ -1303,10 +1303,8 @@ static void msg_pending_awaken(ErlNifEnv* env, bitcask_keydir* keydir,
 // start iterating once we are merged.  keydir must be locked before calling.
 static void merge_pending_entries(ErlNifEnv* env, bitcask_keydir* keydir)
 {
-    /* DEBUG("merge skipped\r\n"); */
-    /* return; */
     DEBUG("before merge key count = %ld\r\n", keydir->key_count);
-    dump_fstats(keydir);
+    //dump_fstats(keydir);
 
     khiter_t pend_itr;
     for (pend_itr = kh_begin(keydir->pending); pend_itr != kh_end(keydir->pending); ++pend_itr)
@@ -1396,20 +1394,6 @@ static void merge_pending_entries(ErlNifEnv* env, bitcask_keydir* keydir)
         }
     }
     DEBUG("after merge key count = %ld\r\n", keydir->key_count);
-
-    // Check the keydirs are correct
-    dump_fstats(keydir);
-    bitcask_fstats_entry* curr_f;
-    khiter_t itr;
-    for (itr = kh_begin(keydir->fstats); itr != kh_end(keydir->fstats); ++itr)
-    {
-        if (kh_exist(keydir->fstats, itr))
-        {
-            curr_f = kh_val(keydir->fstats, itr);
-            //assert(curr_f->counts[PENDING].keys == 0);
-            //assert(curr_f->counts[PENDING].bytes == 0);
-        }
-    }
 
     // Wake up all sleeping pids
     msg_pending_awaken(env, keydir, ATOM_READY);
