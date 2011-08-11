@@ -730,7 +730,9 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
             {
                 // Increment the total # of keys and total size for the entry that
                 // was NOT stored in the keydir.
-                update_fstats(env, keydir, NULL, NO_STATS, &entry, LIVE);
+                //update_fstats(env, keydir, NULL, NO_STATS, &entry, LIVE);
+                update_fstatsX(env, keydir, entry.file_id, 
+                               0, 1, 0, entry.total_sz);            
             }
             UNLOCK(keydir);
             return ATOM_ALREADY_EXISTS;
@@ -839,9 +841,11 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
                 keydir->key_count--;
                 keydir->key_bytes -= entry->key_sz;
                 
-                // Remove the entry and update file stats
+                // Remove from entries and update file stats
+                update_fstatsX(env, keydir, entry->file_id,
+                               -1, 0, -entry->total_sz, 0);
                 remove_entry(env, keydir, itr, entry);
-                update_fstats(env, keydir, entry, LIVE, NULL, NO_STATS);
+                // update_fstats(env, keydir, entry, LIVE, NULL, NO_STATS);
                 enif_free_compat(env, entry);
             }
             // If found an entry in the pending hash, convert it to a tombstone
@@ -851,7 +855,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
                 if (!is_pending_tombstone(entry))
                 {
                     set_pending_tombstone(entry);
-                    update_fstats(env, keydir, entry, PENDING, NULL, NO_STATS);
+                    /* update_fstats(env, keydir, entry, PENDING, NULL, NO_STATS); */
                 }
             }
             // Otherwise add a tombstone to the pending hash (iteration must have 
@@ -862,7 +866,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
             else
             {
                 bitcask_keydir_entry* pending_entry =
-                    add_entry(env, keydir,keydir->pending, NO_STATS, &key, entry);
+                    add_entry(env, keydir, keydir->pending, NO_STATS, &key, entry);
                 set_pending_tombstone(pending_entry);
             }
   
