@@ -380,6 +380,34 @@ static bitcask_fstats_entry* lookup_fstats(ErlNifEnv* env, bitcask_keydir* keydi
     return entry;
 }
 
+static void update_fstatsX(ErlNifEnv* env, bitcask_keydir* keydir,
+                          uint32_t file_id,
+                          int32_t live_increment, int32_t total_increment,
+                          int32_t live_bytes_increment, int32_t total_bytes_increment)
+{
+    bitcask_fstats_entry* entry = 0;
+    khiter_t itr = kh_get(fstats, keydir->fstats, file_id);
+    if (itr == kh_end(keydir->fstats))
+    {
+        // Need to initialize new entry and add to the table
+        entry = enif_alloc_compat(env, sizeof(bitcask_fstats_entry));
+        memset(entry, '\0', sizeof(bitcask_fstats_entry));
+        entry->file_id = file_id;
+
+        kh_put2(fstats, keydir->fstats, file_id, entry);
+    }
+    else
+    {
+        entry = kh_val(keydir->fstats, itr);
+    }
+
+    entry->live_keys   += live_increment;
+    entry->total_keys  += total_increment;
+    entry->live_bytes  += live_bytes_increment;
+    entry->total_bytes += total_bytes_increment;
+}
+
+
 static void update_fstats(ErlNifEnv* env, bitcask_keydir* keydir,
                            bitcask_keydir_entry* cur_entry,
                            fstat_count_type cur_type,
@@ -636,12 +664,16 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
                 keydir->key_count++;
                 keydir->key_bytes += key.size;
 
-                update_fstats(env, keydir, NULL, NO_STATS, &entry, LIVE);
+                //update_fstats(env, keydir, NULL, NO_STATS, &entry, LIVE)
+                // Update entries - increment live and total stats.
+                update_fstatsX(env, keydir, entry.file_id, 1, 1, entry.total_sz, entry.total_sz);
                 add_entry(env, keydir, keydir->entries, LIVE, &key, &entry);
             }
             else
             {
-                update_fstats(env, keydir, NULL, NO_STATS, &entry, PENDING);
+                //update_fstats(env, keydir, NULL, NO_STATS, &entry, PENDING);
+                // Update pending - only increment total stats
+                update_fstatsX(env, keydir, entry.file_id, 0, 1, 0, entry.total_sz);
                 add_entry(env, keydir, keydir->pending, PENDING, &key, &entry);
 
             }
@@ -661,20 +693,29 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
             // not folding
             if (keydir->pending == NULL)
             {
-                update_fstats(env, keydir, old_entry, LIVE, &entry, LIVE);
+                //update_fstats(env, keydir, old_entry, LIVE, &entry, LIVE);
+                // Remove the old live entry and add the new
+                update_fstatsX(env, keydir, old_entry->file_id, 
+                               -1, 0, -old_entry->total_sz, 0);
+                update_fstatsX(env, keydir, entry.file_id,
+                               1, 1, entry.total_sz, entry.total_sz);
                 update_entry(env, keydir, old_entry, &entry);
 
             }
             else if (old_hash == keydir->pending) //  the old_entry already in pending
             {
-                update_fstats(env, keydir, old_entry, PENDING, &entry, PENDING);
+                //update_fstats(env, keydir, old_entry, PENDING, &entry, PENDING);
+                // Update pending entry - just update totals
+                update_fstatsX(env, keydir, entry.file_id,
+                               0, 1, 0, entry.total_sz);
                 update_entry(env, keydir, old_entry, &entry);
             }
             else
             {
                 // old_entry is in entries - add to keydir->pending and update
-                // live fstats
-                update_fstats(env, keydir, old_entry, LIVE, &entry, PENDING);
+                // total fstats
+                //update_fstats(env, keydir, old_entry, LIVE, &entry, PENDING);
+                update_fstatsX(env, keydir, entry.file_id, 0, 1, 0, entry.total_sz);                
                 add_entry(env, keydir, keydir->pending, PENDING, &key, &entry);
             }
             UNLOCK(keydir);
