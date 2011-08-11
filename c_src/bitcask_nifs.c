@@ -69,8 +69,6 @@ static khint_t keydir_entry_equal(bitcask_keydir_entry* lhs,
                                   bitcask_keydir_entry* rhs);
 KHASH_INIT(entries, bitcask_keydir_entry*, char, 0, keydir_entry_hash, keydir_entry_equal);
 
-typedef enum { TOTAL = 0, LIVE = 1, PENDING = 2, NO_STATS = -1 } fstat_count_type;
-
 typedef struct
 {
     uint32_t file_id;
@@ -467,7 +465,7 @@ static int find_keydir_entry(ErlNifEnv* env, bitcask_keydir* keydir, ErlNifBinar
 
 // Allocate, populate and add entry to the keydir hash based on the key and entry structure
 static bitcask_keydir_entry* add_entry(ErlNifEnv* env, bitcask_keydir* keydir,
-                      entries_hash_t* hash, fstat_count_type type,
+                      entries_hash_t* hash,
                       ErlNifBinary* key, bitcask_keydir_entry* entry)
 {
     bitcask_keydir_entry* new_entry = enif_alloc_compat(env,
@@ -548,13 +546,13 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
 
                 // Update entries - increment live and total stats.
                 update_fstats(env, keydir, entry.file_id, 1, 1, entry.total_sz, entry.total_sz);
-                add_entry(env, keydir, keydir->entries, LIVE, &key, &entry);
+                add_entry(env, keydir, keydir->entries, &key, &entry);
             }
             else
             {
                 // Update pending - only increment total stats
                 update_fstats(env, keydir, entry.file_id, 0, 1, 0, entry.total_sz);
-                add_entry(env, keydir, keydir->pending, PENDING, &key, &entry);
+                add_entry(env, keydir, keydir->pending, &key, &entry);
 
             }
             UNLOCK(keydir);
@@ -602,7 +600,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
                 // old_entry is in entries - add to keydir->pending and update
                 // total fstats
                 update_fstats(env, keydir, entry.file_id, 0, 1, 0, entry.total_sz);                
-                add_entry(env, keydir, keydir->pending, PENDING, &key, &entry);
+                add_entry(env, keydir, keydir->pending, &key, &entry);
             }
             UNLOCK(keydir);
             return ATOM_OK;
@@ -749,7 +747,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
             else
             {
                 bitcask_keydir_entry* pending_entry =
-                    add_entry(env, keydir, keydir->pending, NO_STATS, &key, entry);
+                    add_entry(env, keydir, keydir->pending, &key, entry);
                 set_pending_tombstone(pending_entry);
             }
   
