@@ -81,12 +81,13 @@ typedef struct
 KHASH_MAP_INIT_INT(fstats, bitcask_fstats_entry*);
 
 typedef khash_t(entries) entries_hash_t;
+typedef khash_t(fstats) fstats_hash_t;
 
 typedef struct
 {
     entries_hash_t* entries;
     entries_hash_t* pending;  // pending keydir entries during keydir folding
-    khash_t(fstats)*  fstats;
+    fstats_hash_t*  fstats;
     size_t        key_count;
     size_t        key_bytes;
     unsigned int  refcount;
