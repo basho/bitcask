@@ -408,100 +408,100 @@ static void update_fstatsX(ErlNifEnv* env, bitcask_keydir* keydir,
 }
 
 
-static void update_fstats(ErlNifEnv* env, bitcask_keydir* keydir,
-                           bitcask_keydir_entry* cur_entry,
-                           fstat_count_type cur_type,
-                           bitcask_keydir_entry* upd_entry,
-                           fstat_count_type upd_type)
-{
-    bitcask_fstats_entry* cur_fstats;
-    bitcask_fstats_entry* upd_fstats;
+/* static void update_fstats(ErlNifEnv* env, bitcask_keydir* keydir, */
+/*                            bitcask_keydir_entry* cur_entry, */
+/*                            fstat_count_type cur_type, */
+/*                            bitcask_keydir_entry* upd_entry, */
+/*                            fstat_count_type upd_type) */
+/* { */
+/*     bitcask_fstats_entry* cur_fstats; */
+/*     bitcask_fstats_entry* upd_fstats; */
 
-    if (cur_entry != NULL)
-        cur_fstats = lookup_fstats(env, keydir, cur_entry->file_id);
-    else
-        cur_fstats = NULL;
+/*     if (cur_entry != NULL) */
+/*         cur_fstats = lookup_fstats(env, keydir, cur_entry->file_id); */
+/*     else */
+/*         cur_fstats = NULL; */
 
-    if (upd_entry == NULL)
-        upd_fstats = NULL;
-    else if (cur_entry != NULL && upd_entry->file_id == cur_entry->file_id)
-        upd_fstats = cur_fstats;
-    else
-        upd_fstats = lookup_fstats(env, keydir, upd_entry->file_id);
+/*     if (upd_entry == NULL) */
+/*         upd_fstats = NULL; */
+/*     else if (cur_entry != NULL && upd_entry->file_id == cur_entry->file_id) */
+/*         upd_fstats = cur_fstats; */
+/*     else */
+/*         upd_fstats = lookup_fstats(env, keydir, upd_entry->file_id); */
 
-    DEBUG("fstats cur_entry->file_id=%d cur_type=%d upd_entry->file_id=%d upd_type=%d\r\n",
-          cur_entry == NULL ? -1 : cur_entry->file_id, cur_type,
-          upd_entry == NULL ? -1 : upd_entry->file_id, upd_type);
+/*     DEBUG("fstats cur_entry->file_id=%d cur_type=%d upd_entry->file_id=%d upd_type=%d\r\n", */
+/*           cur_entry == NULL ? -1 : cur_entry->file_id, cur_type, */
+/*           upd_entry == NULL ? -1 : upd_entry->file_id, upd_type); */
 
-    // Remove an entry
-    if (upd_entry == NULL)
-    {
-        if (cur_type == LIVE)
-        {
-            cur_fstats->live_keys--;
-            cur_fstats->live_bytes -= cur_entry->total_sz;
-        }
-    }
-    // Add an entry (or update a pending tomstone)
-    else if (cur_entry == NULL || is_pending_tombstone(cur_entry))
-    {
-        if (upd_type == LIVE)
-        {
-            upd_fstats->live_keys++;
-            upd_fstats->live_bytes += upd_entry->total_sz;
-        }
-        upd_fstats->total_keys++;
-        upd_fstats->total_bytes += upd_entry->total_sz;
-    }
-    // Updating or moving an entry
-    else
-    {
-        // If both live, both pending or updating during pending merge
-        // then update the totals
-        if (cur_type == upd_type && upd_type == LIVE)
-        {
-            cur_fstats->live_keys--;
-            cur_fstats->live_bytes -= cur_entry->total_sz;
-            upd_fstats->live_keys++;
-            upd_fstats->live_bytes += upd_entry->total_sz;
-        }
-        else if (upd_type == LIVE) // Merge pending into live
-        {
-            // assert(cur_type == PENDING);
+/*     // Remove an entry */
+/*     if (upd_entry == NULL) */
+/*     { */
+/*         if (cur_type == LIVE) */
+/*         { */
+/*             cur_fstats->live_keys--; */
+/*             cur_fstats->live_bytes -= cur_entry->total_sz; */
+/*         } */
+/*     } */
+/*     // Add an entry (or update a pending tomstone) */
+/*     else if (cur_entry == NULL || is_pending_tombstone(cur_entry)) */
+/*     { */
+/*         if (upd_type == LIVE) */
+/*         { */
+/*             upd_fstats->live_keys++; */
+/*             upd_fstats->live_bytes += upd_entry->total_sz; */
+/*         } */
+/*         upd_fstats->total_keys++; */
+/*         upd_fstats->total_bytes += upd_entry->total_sz; */
+/*     } */
+/*     // Updating or moving an entry */
+/*     else */
+/*     { */
+/*         // If both live, both pending or updating during pending merge */
+/*         // then update the totals */
+/*         if (cur_type == upd_type && upd_type == LIVE) */
+/*         { */
+/*             cur_fstats->live_keys--; */
+/*             cur_fstats->live_bytes -= cur_entry->total_sz; */
+/*             upd_fstats->live_keys++; */
+/*             upd_fstats->live_bytes += upd_entry->total_sz; */
+/*         } */
+/*         else if (upd_type == LIVE) // Merge pending into live */
+/*         { */
+/*             // assert(cur_type == PENDING); */
 
-            // Adjust live count that was frozen when iteration started if
-            // not a move.
-            if (cur_entry != upd_entry)
-            {
-                upd_fstats->live_keys--;
-                upd_fstats->live_bytes -= upd_entry->total_sz;
-            }
+/*             // Adjust live count that was frozen when iteration started if */
+/*             // not a move. */
+/*             if (cur_entry != upd_entry) */
+/*             { */
+/*                 upd_fstats->live_keys--; */
+/*                 upd_fstats->live_bytes -= upd_entry->total_sz; */
+/*             } */
 
-            // Convert pending to live
-            /* cur_fstats->counts[PENDING].keys--; */
-            /* cur_fstats->counts[PENDING].bytes -= cur_entry->total_sz; */
-            cur_fstats->live_keys++;
-            cur_fstats->live_bytes += cur_entry->total_sz;
-        }
-        else // Adding first entry to pending - live counts cannot change
-        {
-            // assert(cur_type == LIVE);
-            // assert(upd_type == PENDING);
-            /* upd_fstats->counts[PENDING].keys++; */
-            /* upd_fstats->counts[PENDING].bytes += upd_entry->total_sz; */
-        }
+/*             // Convert pending to live */
+/*             /\* cur_fstats->counts[PENDING].keys--; *\/ */
+/*             /\* cur_fstats->counts[PENDING].bytes -= cur_entry->total_sz; *\/ */
+/*             cur_fstats->live_keys++; */
+/*             cur_fstats->live_bytes += cur_entry->total_sz; */
+/*         } */
+/*         else // Adding first entry to pending - live counts cannot change */
+/*         { */
+/*             // assert(cur_type == LIVE); */
+/*             // assert(upd_type == PENDING); */
+/*             /\* upd_fstats->counts[PENDING].keys++; *\/ */
+/*             /\* upd_fstats->counts[PENDING].bytes += upd_entry->total_sz; *\/ */
+/*         } */
 
-        // If an update (not a move or merge), totals changed
-        if (cur_entry != upd_entry &&  // a move
-            !(cur_type == PENDING && upd_type == LIVE)) // NOT a pending merge
-        {
-            upd_fstats->total_keys++;
-            upd_fstats->total_bytes += upd_entry->total_sz;
-        }
-    }
+/*         // If an update (not a move or merge), totals changed */
+/*         if (cur_entry != upd_entry &&  // a move */
+/*             !(cur_type == PENDING && upd_type == LIVE)) // NOT a pending merge */
+/*         { */
+/*             upd_fstats->total_keys++; */
+/*             upd_fstats->total_bytes += upd_entry->total_sz; */
+/*         } */
+/*     } */
 
-    dump_fstats(keydir);
-}
+/*     dump_fstats(keydir); */
+/* } */
 
 
 static khint_t keydir_entry_hash(bitcask_keydir_entry* entry)
@@ -1459,7 +1459,10 @@ static void merge_pending_entries(ErlNifEnv* env, bitcask_keydir* keydir)
                     keydir->key_count++;
                     keydir->key_bytes += pending_entry->key_sz;
 
-                    update_fstats(env, keydir, pending_entry, PENDING, pending_entry, LIVE);
+                    //update_fstats(env, keydir, pending_entry, PENDING, pending_entry, LIVE);
+                    // Mark the bytes as live
+                    update_fstatsX(env, keydir, pending_entry->file_id, 
+                                   1, 0, pending_entry->total_sz, 0);
                     move_pending_entry(env, keydir, pend_itr, pending_entry);
                     // do not free - now in entries
                 }
@@ -1481,7 +1484,10 @@ static void merge_pending_entries(ErlNifEnv* env, bitcask_keydir* keydir)
                     keydir->key_count--;
                     keydir->key_bytes -= pending_entry->key_sz;
 
-                    update_fstats(env, keydir, entries_entry, LIVE, NULL, NO_STATS);
+                    // Remove the live count for the entry
+                    /* update_fstats(env, keydir, entries_entry, LIVE, NULL, NO_STATS); */
+                    update_fstatsX(env, keydir, entries_entry->file_id, 
+                                   -1, 0, -entries_entry->total_sz, 0);
                     remove_entry(env, keydir, ent_itr, entries_entry);
                     enif_free_compat(env, entries_entry);
                 }
@@ -1490,7 +1496,11 @@ static void merge_pending_entries(ErlNifEnv* env, bitcask_keydir* keydir)
                 {
                     // adjust key/byte counts on the main entry then subtract from pending
                     // so it can be checked at the end of merge.
-                    update_fstats(env, keydir, pending_entry, PENDING, entries_entry, LIVE);
+                    /* update_fstats(env, keydir, pending_entry, PENDING, entries_entry, LIVE); */
+                    update_fstatsX(env, keydir, entries_entry->file_id, 
+                                   -1, 0, -entries_entry->total_sz, 0);
+                    update_fstatsX(env, keydir, pending_entry->file_id,
+                                   1, 0, pending_entry->total_sz, 0);
                     update_entry(env, keydir, entries_entry, pending_entry);
                 }
                 enif_free_compat(env, pending_entry);
