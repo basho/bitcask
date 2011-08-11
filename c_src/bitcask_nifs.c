@@ -338,25 +338,6 @@ ERL_NIF_TERM bitcask_nifs_keydir_mark_ready(ErlNifEnv* env, int argc, const ERL_
     }
 }
 
-static void dump_fstats(bitcask_keydir* keydir)
-{
-    bitcask_fstats_entry* curr_f;
-    khiter_t itr;
-    for (itr = kh_begin(keydir->fstats); itr != kh_end(keydir->fstats); ++itr)
-    {
-        if (kh_exist(keydir->fstats, itr))
-        {
-            curr_f = kh_val(keydir->fstats, itr);
-            DEBUG("fstats %d live=(%d,%d) total=(%d,%d)\r\n",
-                    (int) curr_f->file_id,
-                    (int) curr_f->live_keys,
-                    (int) curr_f->live_bytes,
-                    (int) curr_f->total_keys,
-                    (int) curr_f->total_bytes);
-        }
-    }
-}
-
 static void update_fstats(ErlNifEnv* env, bitcask_keydir* keydir,
                           uint32_t file_id,
                           int32_t live_increment, int32_t total_increment,
@@ -1527,6 +1508,27 @@ static void bitcask_nifs_lock_resource_cleanup(ErlNifEnv* env, void* arg)
     bitcask_lock_handle* handle = (bitcask_lock_handle*)arg;
     lock_release(handle);
 }
+
+#ifdef BITCASK_DEBUG
+static void dump_fstats(bitcask_keydir* keydir)
+{
+    bitcask_fstats_entry* curr_f;
+    khiter_t itr;
+    for (itr = kh_begin(keydir->fstats); itr != kh_end(keydir->fstats); ++itr)
+    {
+        if (kh_exist(keydir->fstats, itr))
+        {
+            curr_f = kh_val(keydir->fstats, itr);
+            DEBUG("fstats %d live=(%d,%d) total=(%d,%d)\r\n",
+                    (int) curr_f->file_id,
+                    (int) curr_f->live_keys,
+                    (int) curr_f->live_bytes,
+                    (int) curr_f->total_keys,
+                    (int) curr_f->total_bytes);
+        }
+    }
+}
+#endif BITCASK_DEBUG
 
 static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
 {
