@@ -578,7 +578,7 @@ keydir_itr_many_out_of_date_test() ->
                 end
         end,
     %% Check the pending_awaken array grows nicely
-    Pids = [proc_lib:spawn_link(F) || X <- lists:seq(1, 100)],
+    Pids = [proc_lib:spawn_link(F) || _X <- lists:seq(1, 100)],
     ?assertEqual(lists:usort([receive {ready, Pid} -> ready
                               after 500 -> {timeout, Pid}
                               end || Pid <- Pids]), [ready]),

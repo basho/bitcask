@@ -72,10 +72,10 @@ KHASH_INIT(entries, bitcask_keydir_entry*, char, 0, keydir_entry_hash, keydir_en
 typedef struct
 {
     uint32_t file_id;
-    uint64_t live_keys;
-    uint64_t live_bytes;
-    uint64_t total_keys;
-    uint64_t total_bytes;
+    uint64_t live_keys;   // number of 'live' keys in entries and pending
+    uint64_t live_bytes;  // number of 'live' bytes
+    uint64_t total_keys;  // total number of keys written to file
+    uint64_t total_bytes; // total number of bytes written to file
 } bitcask_fstats_entry;
 
 KHASH_MAP_INIT_INT(fstats, bitcask_fstats_entry*);
@@ -519,7 +519,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
         enif_get_uint(env, argv[5], &(entry.tstamp)))
     {
         khiter_t itr;
-        entries_hash_t* old_hash;
+        entries_hash_t* hash;
         bitcask_keydir_entry* old_entry;
         bitcask_keydir* keydir = handle->keydir;
         LOCK(keydir);
@@ -528,30 +528,40 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
               (int) entry.file_id, (int) entry.offset,
               (int)entry.total_sz);
 
-        // Now that we've marshalled everything, see if the tstamp for this key is >=
-        // to what's already in the hash. Otherwise, we don't bother with the update.
-        if (!find_keydir_entry(env, keydir, &key, &old_hash, &itr, &old_entry))
-        {
-            if (keydir->pending == NULL)
-            {
-                keydir->key_count++;
-                keydir->key_bytes += key.size;
 
-                // Update entries - increment live and total stats.
-                update_fstats(env, keydir, entry.file_id, 1, 1, entry.total_sz, entry.total_sz);
-                add_entry(env, keydir, keydir->entries, &key, &entry);
+        // Check for put on a new key or updating a pending tombstone
+        int tombstone = 0;
+        int found = find_keydir_entry(env, keydir, &key, &hash, &itr, &old_entry);
+        if (found == 1 && hash == keydir->pending && is_pending_tombstone(old_entry))
+        {
+            found = 0;
+            tombstone = 1;
+        }
+
+        if (!found)
+        {
+            keydir->key_count++;
+            keydir->key_bytes += key.size;
+
+            // Increment live and total stats.
+            update_fstats(env, keydir, entry.file_id,
+                          1, 1, entry.total_sz, entry.total_sz);
+            if (tombstone)
+            {
+                update_entry(env, keydir, old_entry, &entry);
             }
             else
             {
-                // Update pending - only increment total stats
-                update_fstats(env, keydir, entry.file_id, 0, 1, 0, entry.total_sz);
-                add_entry(env, keydir, keydir->pending, &key, &entry);
-
+                hash = keydir->pending == NULL ? keydir->entries : keydir->pending;
+                add_entry(env, keydir, hash, &key, &entry);
             }
+
             UNLOCK(keydir);
             return ATOM_OK;
         }
 
+        // Now that we've marshalled everything, see if the tstamp for this key is >=
+        // to what's already in the hash. Otherwise, we don't bother with the update.
         if ((old_entry->tstamp < entry.tstamp) ||
 
             ((old_entry->tstamp == entry.tstamp) &&
@@ -561,40 +571,31 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
              ((old_entry->file_id == entry.file_id) &&
               (old_entry->offset < entry.offset))))
         {
-            // not folding
-            if (keydir->pending == NULL)
+            // Remove the stats for the old entry and add the new
+            if (old_entry->file_id != entry.file_id) // different files
             {
-                // Remove the old live entry and add the new
-                if (old_entry->file_id != entry.file_id)
-                {
-                    update_fstats(env, keydir, old_entry->file_id, -1, 0,
-                                  -old_entry->total_sz, 0);
-                    update_fstats(env, keydir, entry.file_id, 1, 1,
-                                  entry.total_sz, entry.total_sz);
-                }
-                else // file_id is same, change live/total in one entry
-                {
-                    update_fstats(env, keydir, entry.file_id, 0, 1,
-                                  entry.total_sz - old_entry->total_sz, entry.total_sz);
-                    
-                }
-                update_entry(env, keydir, old_entry, &entry);
+                update_fstats(env, keydir, old_entry->file_id, -1, 0,
+                              -old_entry->total_sz, 0);
+                update_fstats(env, keydir, entry.file_id, 1, 1,
+                              entry.total_sz, entry.total_sz);
+            }
+            else // file_id is same, change live/total in one entry
+            {
+                update_fstats(env, keydir, entry.file_id, 0, 1,
+                              entry.total_sz - old_entry->total_sz,
+                              entry.total_sz);
+            }
 
-            }
-            else if (old_hash == keydir->pending) //  the old_entry already in pending
+            if (keydir->pending == NULL || // not folding
+                hash == keydir->pending)   // or the old_entry already in pending
             {
-                // Update pending entry - just update totals
-                update_fstats(env, keydir, entry.file_id,
-                               0, 1, 0, entry.total_sz);
                 update_entry(env, keydir, old_entry, &entry);
             }
-            else
+            else  // old_entry is in entries, add new to pending
             {
-                // old_entry is in entries - add to keydir->pending and update
-                // total fstats
-                update_fstats(env, keydir, entry.file_id, 0, 1, 0, entry.total_sz);                
                 add_entry(env, keydir, keydir->pending, &key, &entry);
             }
+
             UNLOCK(keydir);
             return ATOM_OK;
         }
@@ -709,17 +710,17 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
                 }
             }
 
-            // If found an entry in the entries hash and not folding,
-            // remove it and update stats
+            // Remove the key from the keydir stats
+            keydir->key_count--;
+            keydir->key_bytes -= entry->key_sz;
+
+            // Remove from file stats
+            update_fstats(env, keydir, entry->file_id,
+                          -1, 0, -entry->total_sz, 0);
+
+            // If found an entry in the entries hash and not folding, remove it
             if (keydir->pending == NULL)
             {
-                // Update the keydir stats
-                keydir->key_count--;
-                keydir->key_bytes -= entry->key_sz;
-                
-                // Remove from entries and update file stats
-                update_fstats(env, keydir, entry->file_id,
-                               -1, 0, -entry->total_sz, 0);
                 remove_entry(env, keydir, itr, entry);
                 enif_free_compat(env, entry);
             }
@@ -734,9 +735,6 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
             }
             // Otherwise add a tombstone to the pending hash (iteration must have 
             // started between put/remove call in bitcask:delete.
-            // No stats to log as nothing is written to any files and the
-            // on-disk tombstone was already written by put_int so is already
-            // accounted for.
             else
             {
                 bitcask_keydir_entry* pending_entry =
@@ -1296,9 +1294,6 @@ static void msg_pending_awaken(ErlNifEnv* env, bitcask_keydir* keydir,
 // start iterating once we are merged.  keydir must be locked before calling.
 static void merge_pending_entries(ErlNifEnv* env, bitcask_keydir* keydir)
 {
-    DEBUG("before merge key count = %ld\r\n", keydir->key_count);
-    //dump_fstats(keydir);
-
     khiter_t pend_itr;
     for (pend_itr = kh_begin(keydir->pending); pend_itr != kh_end(keydir->pending); ++pend_itr)
     {
@@ -1327,13 +1322,6 @@ static void merge_pending_entries(ErlNifEnv* env, bitcask_keydir* keydir)
                 /* entries: empty, pending:value */
                 else
                 {
-                    // Update the keydir stats
-                    keydir->key_count++;
-                    keydir->key_bytes += pending_entry->key_sz;
-
-                    // Mark the bytes as live
-                    update_fstats(env, keydir, pending_entry->file_id, 
-                                   1, 0, pending_entry->total_sz, 0);
                     move_pending_entry(env, keydir, pend_itr, pending_entry);
                     // do not free - now in entries
                 }
@@ -1351,42 +1339,18 @@ static void merge_pending_entries(ErlNifEnv* env, bitcask_keydir* keydir)
                 /* entries: present, pending:tombstone */
                 if (is_pending_tombstone(pending_entry))
                 {
-                    // Update the keydir stats
-                    keydir->key_count--;
-                    keydir->key_bytes -= pending_entry->key_sz;
-
-                    // Remove the live count for the entry
-                    update_fstats(env, keydir, entries_entry->file_id, 
-                                   -1, 0, -entries_entry->total_sz, 0);
                     remove_entry(env, keydir, ent_itr, entries_entry);
                     enif_free_compat(env, entries_entry);
                 }
                 /* entries: present, pending:value */
                 else
                 {
-                    // adjust key/byte counts on the main entry then subtract from pending
-                    // so it can be checked at the end of merge.
-                    if (entries_entry->file_id != pending_entry->file_id)
-                    {
-                        update_fstats(env, keydir, entries_entry->file_id, -1, 0,
-                                      -entries_entry->total_sz, 0);
-                        update_fstats(env, keydir, pending_entry->file_id, 1, 0,
-                                      pending_entry->total_sz, 0);
-                    }
-                    else // file_id is same, change live/total in one entry
-                    {
-                        update_fstats(env, keydir, pending_entry->file_id, 0, 0,
-                                      pending_entry->total_sz - entries_entry->total_sz,
-                                      0);
-                        
-                    }
                     update_entry(env, keydir, entries_entry, pending_entry);
                 }
                 enif_free_compat(env, pending_entry);
             }
         }
     }
-    DEBUG("after merge key count = %ld\r\n", keydir->key_count);
 
     // Wake up all sleeping pids
     msg_pending_awaken(env, keydir, ATOM_READY);
@@ -1402,7 +1366,7 @@ static void merge_pending_entries(ErlNifEnv* env, bitcask_keydir* keydir)
     keydir->pending_awaken_count = 0;
     keydir->pending_awaken_size = 0;
 
-    DEBUG("Merge completed\r\n");
+    DEBUG("Merge pending entries completed\r\n");
 }
 
 
