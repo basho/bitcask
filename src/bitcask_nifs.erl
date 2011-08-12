@@ -543,6 +543,85 @@ keydir_multi_put_during_itr_test() ->
     bitcask_nifs:keydir_put(Ref, <<"k">>, 123, 4, 30, 4),
     bitcask_nifs:keydir_itr_release(Ref).
 
+keydir_itr_out_of_date_test() ->
+    Name = "keydir_itr_out_of_date_test",
+    {not_ready, Ref1} = bitcask_nifs:keydir_new(Name),
+    bitcask_nifs:keydir_mark_ready(Ref1),
+    ok = bitcask_nifs:keydir_itr_int(Ref1, <<1000000:64/unsigned-native>>, 0, 0),
+    {ready, Ref2} = bitcask_nifs:keydir_new(Name),
+    %% now() will have ensured a new usecs for keydir_itr/3 - check out of date immediately
+    ?assertEqual(out_of_date, bitcask_nifs:keydir_itr_int(Ref2, <<1000001:64/unsigned-native>>,
+                                                          0, 0)),
+    keydir_itr_release(Ref1),
+    ?assertEqual(ok, receive
+                         ready ->
+                             ok
+                     after
+                         1000 ->
+                             timeout
+                     end).
+
+keydir_itr_many_out_of_date_test() ->
+    Name = "keydir_itr_many_out_of_date_test",
+    {not_ready, Ref1} = bitcask_nifs:keydir_new(Name),
+    bitcask_nifs:keydir_mark_ready(Ref1),
+    ok = bitcask_nifs:keydir_itr_int(Ref1, <<1000000:64/unsigned-native>>, 0, 0),
+    Me = self(),
+    F = fun() ->
+                {ready, Ref2} = bitcask_nifs:keydir_new(Name),
+                Me ! {ready, self()},
+                out_of_date = bitcask_nifs:keydir_itr_int(Ref2, <<1000001:64/unsigned-native>>,
+                                                          0, 0),
+                receive
+                    ready ->
+                        Me ! {done, self()}
+                end
+        end,
+    %% Check the pending_awaken array grows nicely
+    Pids = [proc_lib:spawn_link(F) || X <- lists:seq(1, 100)],
+    ?assertEqual(lists:usort([receive {ready, Pid} -> ready
+                              after 500 -> {timeout, Pid}
+                              end || Pid <- Pids]), [ready]),
+    %% Wake them up and check them.
+    keydir_itr_release(Ref1),
+    ?assertEqual(lists:usort([receive {done, Pid} -> ok
+                              after 500 -> {timeout, Pid}
+                              end || Pid <- Pids]), [ok]).
+
+keydir_wait_pending_test() ->
+    Name = "keydir_wait_pending_test",
+    {not_ready, Ref1} = keydir_new(Name),
+    keydir_mark_ready(Ref1),
+
+    %% Begin iterating
+    ok = bitcask_nifs:keydir_itr(Ref1, 0, 0),
+
+    %% Spawn a process to wait on pending
+    Me = self(),
+    F = fun() ->
+                {ready, Ref2} = keydir_new(Name),
+                Me ! waiting,
+                keydir_wait_pending(Ref2),
+                Me ! waited
+        end,
+    spawn(F),
+
+    %% Make sure it starts
+    ok = receive waiting -> ok
+         after   1000 -> start_err
+         end,
+    %% Give it a chance to call keydir_wait_pending then blocks
+    timer:sleep(100),
+    nothing = receive Msg -> {msg, Msg}
+              after  1000 -> nothing
+        end,
+
+    %% End iterating - make sure the waiter wakes up
+    keydir_itr_release(Ref1),
+    ok = receive waited -> ok
+         after  1000 -> timeout_err
+         end.
+
 create_file_test() ->
     Fname = "/tmp/bitcask_nifs.createfile.test",
     file:delete(Fname),

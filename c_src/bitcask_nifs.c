@@ -1576,6 +1576,7 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
     ATOM_NOT_FOUND = enif_make_atom(env, "not_found");
     ATOM_NOT_READY = enif_make_atom(env, "not_ready");
     ATOM_OK = enif_make_atom(env, "ok");
+    ATOM_OUT_OF_DATE = enif_make_atom(env, "out_of_date");
     ATOM_PREAD_ERROR = enif_make_atom(env, "pread_error");
     ATOM_PWRITE_ERROR = enif_make_atom(env, "pwrite_error");
     ATOM_READY = enif_make_atom(env, "ready");
