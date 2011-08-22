@@ -489,9 +489,6 @@ static void update_entry(ErlNifEnv* env, bitcask_keydir* keydir,
                          bitcask_keydir_entry* cur_entry,
                          bitcask_keydir_entry* upd_entry)
 {
-    // Update the entry info. Note that if you do multiple updates in a
-    // second, the last one in wins!
-    // TODO: Safe?
     cur_entry->file_id = upd_entry->file_id;
     cur_entry->total_sz = upd_entry->total_sz;
     cur_entry->offset = upd_entry->offset;
@@ -548,10 +545,13 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
                           1, 1, entry.total_sz, entry.total_sz);
             if (tombstone)
             {
+                // If a pending tombstone, update to be an active entry again
                 update_entry(env, keydir, old_entry, &entry);
             }
             else
             {
+                // Add entry to the pending hash if iterating, otherwise
+                // add it to the main keydir
                 hash = keydir->pending == NULL ? keydir->entries : keydir->pending;
                 add_entry(env, keydir, hash, &key, &entry);
             }
@@ -589,6 +589,9 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
             if (keydir->pending == NULL || // not folding
                 hash == keydir->pending)   // or the old_entry already in pending
             {
+                // Update the entry info. Note that if you do multiple updates in a
+                // second, the last one in wins!
+                // TODO: Safe?
                 update_entry(env, keydir, old_entry, &entry);
             }
             else  // old_entry is in entries, add new to pending
