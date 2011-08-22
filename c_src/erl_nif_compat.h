@@ -31,6 +31,7 @@ extern "C" {
 #define enif_release_resource_compat enif_release_resource
 #define enif_alloc_binary_compat enif_alloc_binary
 #define enif_alloc_compat enif_alloc
+#define enif_realloc_compat enif_realloc
 #define enif_free_compat enif_free
 #define enif_cond_create erl_drv_cond_create
 #define enif_cond_destroy erl_drv_cond_destroy
@@ -56,6 +57,9 @@ extern "C" {
 
 #define enif_alloc_compat(E, S) \
     enif_alloc(S)
+
+#define enif_realloc_compat(E, P, S) \
+    enif_realloc(P, S)
 
 #define enif_free_compat(E, P) \
     enif_free(P)
