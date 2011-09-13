@@ -556,6 +556,11 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
                 add_entry(env, keydir, hash, &key, &entry);
             }
 
+            if (keydir->pending != NULL)
+            {
+                keydir->pending_updated++;
+            }
+
             UNLOCK(keydir);
             return ATOM_OK;
         }
@@ -597,6 +602,11 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
             else  // old_entry is in entries, add new to pending
             {
                 add_entry(env, keydir, keydir->pending, &key, &entry);
+            }
+
+            if (keydir->pending != NULL)
+            {
+                keydir->pending_updated++;
             }
 
             UNLOCK(keydir);
@@ -846,10 +856,15 @@ ERL_NIF_TERM bitcask_nifs_keydir_copy(ErlNifEnv* env, int argc, const ERL_NIF_TE
 
 // Helper for bitcask_nifs_keydir_itr to decide if it is valid to iterate over entries.
 // Check the number of updates since pending was created is less than the maximum
-// and that the current view is not too old
+// and that the current view is not too old.
+// Call with ts set to zero to force a wait on any pending keydir.
+// Set maxage or maxputs negative to ignore them.  Set both negative to force
+// using the keydir - useful when a process has waited once and needs to run 
+// next time.
 static int can_itr_keydir(bitcask_keydir* keydir, uint64_t ts, int maxage, int maxputs)
 {
-    if (keydir->pending == NULL)
+    if (keydir->pending == NULL ||   // not frozen or caller wants to reuse 
+        (maxage < 0 && maxputs < 0)) // the exiting freeze
     {
         return 1;
     }
@@ -860,8 +875,8 @@ static int can_itr_keydir(bitcask_keydir* keydir, uint64_t ts, int maxage, int m
     else
     {
         uint64_t age = ts - keydir->pending_start;
-        return (maxage < 0 || age <= maxage) &&
-            (keydir->pending_updated < 0 || keydir->pending_updated <= maxputs);
+        return ((maxage < 0 || age <= maxage) && 
+                (maxputs < 0 || keydir->pending_updated <= maxputs));
     }
 }
 
