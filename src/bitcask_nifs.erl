@@ -84,7 +84,7 @@
 -spec keydir_copy(reference()) ->
         {ok, reference()}.
 -spec keydir_itr(reference(), integer(), integer()) ->
-        ok | {error, iteration_not_permitted}.
+        ok | out_of_date | {error, iteration_in_process}.
 -spec keydir_itr_next(reference()) ->
         #bitcask_entry{} |
         {error, iteration_not_started} | allocation_error | not_found.
