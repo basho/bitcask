@@ -1522,7 +1522,7 @@ static void dump_fstats(bitcask_keydir* keydir)
         }
     }
 }
-#endif BITCASK_DEBUG
+#endif
 
 static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
 {
