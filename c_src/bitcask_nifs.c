@@ -425,13 +425,13 @@ static khiter_t get_entries_hash(ErlNifEnv* env, entries_hash_t *hash, ErlNifBin
 }
 
 // Find an entry in the pending or entries keydir and update the hash/itr/entry pointers
-// if non-NULL.
+// if non-NULL.  If iterating is true, restrict search to the frozen keydir.
 static int find_keydir_entry(ErlNifEnv* env, bitcask_keydir* keydir, ErlNifBinary* key,
-                      entries_hash_t** hash_ptr, khiter_t* itr_ptr,
-                      bitcask_keydir_entry** entry_ptr)
+                             entries_hash_t** hash_ptr, khiter_t* itr_ptr,
+                             bitcask_keydir_entry** entry_ptr, int iterating)
 {
     // Search pending if present
-    if (keydir->pending != NULL) 
+    if (keydir->pending != NULL && !iterating) 
     {
         if (get_entries_hash(env, keydir->pending, key, itr_ptr, entry_ptr))
         {
@@ -528,7 +528,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
 
         // Check for put on a new key or updating a pending tombstone
         int tombstone = 0;
-        int found = find_keydir_entry(env, keydir, &key, &hash, &itr, &old_entry);
+        int found = find_keydir_entry(env, keydir, &key, &hash, &itr, &old_entry, 0);
         if (found == 1 && hash == keydir->pending && is_pending_tombstone(old_entry))
         {
             found = 0;
@@ -649,7 +649,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_get_int(ErlNifEnv* env, int argc, const ERL_NIF
 
         DEBUG("+++ Get issued\r\n");
 
-        if (find_keydir_entry(env, keydir, &key, NULL, NULL, &entry) &&
+        if (find_keydir_entry(env, keydir, &key, NULL, NULL, &entry, handle->iterating) &&
             !is_pending_tombstone(entry))
         {
             ERL_NIF_TERM result = enif_make_tuple6(env,
@@ -693,7 +693,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
 
         DEBUG("+++ Remove\r\n");
 
-        if (find_keydir_entry(env, keydir, &key, &hash, &itr, &entry))
+        if (find_keydir_entry(env, keydir, &key, &hash, &itr, &entry, 0))
         {
             // If this call has 5 arguments, this is a conditional removal. We
             // only want to actually remove the entry if the tstamp, fileid and
