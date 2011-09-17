@@ -61,7 +61,7 @@
          %% wait until all current fold keys complete and then start.
          %% Set either option to -1 to disable.
          {max_fold_age, 1000000},               % age in micro seconds
-         {max_fold_puts, -1},                   % maximum number of updates
+         {max_fold_puts, 0},                    % maximum number of updates
 
          %% Data expiration can be caused by setting this to a
          %% Data expiration can be caused by setting this to a

@@ -74,7 +74,7 @@
                 frag_threshold,           % Include merge >= 40% fragmentation
                 dead_bytes_threshold,     % Include merge dead bytes > 128 MB
                 small_file_threshold,     % Include merge file is < 10 MB
-                max_fold_age = -1,        % Allow any age frozen keydir
+                max_fold_age = 1000000,   % Allow keydir up to 1s old
                 max_fold_puts = 0,        % as long as there are no updates
                 readers=0,
                 folders=0,
@@ -195,13 +195,13 @@ restart_procs(State) ->
             merge_done ->
                 restart_procs(State#state{merges_pending = State#state.merges_pending-1,
                                           merger_reps = State#state.merger_reps+1});
-            {read_done, _ReadSeq} ->
+            read_done ->
                 start_readers(State, 1),
                 restart_procs(State#state{reader_reps = State#state.reader_reps+1});
-            {fold_done, _FoldSeq} ->
+            fold_done ->
                 start_folders(State, 1),
                 restart_procs(State#state{folder_reps = State#state.folder_reps+1});
-            {fold_keys_done, _FoldSeq} ->
+            fold_keys_done ->
                 start_fold_keys(State, 1),
                 restart_procs(State#state{fold_keys_reps = State#state.fold_keys_reps+1});
             {'EXIT', _From, normal} ->
@@ -242,11 +242,11 @@ wait_for_procs(State) ->
             wait_for_procs(State);
         status ->
             wait_for_procs(State);
-        {read_done, _ReadSeq} ->
+        read_done ->
             wait_for_procs(State#state{readers = State#state.readers - 1});
-        {fold_done, _FoldSeq} ->
+        fold_done ->
             wait_for_procs(State#state{folders = State#state.folders - 1});
-        {fold_keys_done, _FoldKeySeq} ->
+        fold_keys_done ->
             wait_for_procs(State#state{foldkeys = State#state.foldkeys - 1});
         merge_pending -> %% The writer could still be adding them as we try to shut down.
             wait_for_procs(State#state{merges_pending = State#state.merges_pending + 1});
@@ -306,8 +306,7 @@ start_readers(State, NumReaders) ->
     Caller = self(),
     spawn_worker(reader, 
                  fun() ->
-                         read_proc(State#state.cask, State#state.num_keys,
-                                   State#state.seq, Caller)
+                         read_proc(State#state.cask, State#state.num_keys, Caller)
                  end),
     start_readers(State, NumReaders - 1).
 
@@ -318,7 +317,7 @@ start_folders(State, NumFolders) ->
     spawn_worker(folder, 
                  fun() ->
                          fold_proc(State#state.cask, State#state.num_keys,
-                                   State#state.seq, Caller)
+                                   Caller)
                  end),
     start_folders(State, NumFolders - 1).
 
@@ -329,7 +328,7 @@ start_fold_keys(State, NumFoldKeys) ->
     spawn_worker(fold_keys,
                   fun() ->
                           fold_keys_proc(State#state.cask, State#state.num_keys,
-                                         State#state.seq, Caller)
+                                         Caller)
                   end),
     start_fold_keys(State, NumFoldKeys - 1).
 
@@ -382,6 +381,7 @@ write_proc(Ref, Caller) ->
         {start, Seq, NumKeys, NeedsMergeFreq} ->
 %%            io:format("Writer starting\n"),
             write(Ref, NumKeys, Seq, NeedsMergeFreq, Caller),
+            application:set_env(bitcask, minseq, Seq),
             Caller ! {write_done, Seq},
             write_proc(Ref, Caller)
     end.
@@ -416,36 +416,44 @@ write(Ref, Key, Seq, NeedsMergeFreq, Caller) ->
     end,
     write(Ref, Key - 1, Seq, NeedsMergeFreq, Caller).
 
-read_proc(Cask, NumKeys, Seq, Caller) ->
+read_proc(Cask, NumKeys, Caller) ->
     Ref = bitcask:open(Cask),
+    {ok, Seq} = application:get_env(bitcask, minseq),
+    %io:format("read_proc starting: minseq=~p\n", [Seq]),
     read(Ref, NumKeys, Seq),
     bitcask:close(Ref),
-    Caller ! {read_done, Seq}.
+    Caller ! read_done.
 
-read(_Ref, 0, _Iter) ->
+read(_Ref, 0, _MinSeq) ->
     ok;
 read(Ref, Key, MinSeq) ->
     try
         {ok, Bin} = bitcask:get(Ref, <<Key:32>>),
         {Key, Seq} = binary_to_term(Bin),
-        true = (Seq >= MinSeq)
+        case Seq >= MinSeq of
+            true ->
+                ok;
+            false ->
+                io:format("Read ~p Got: ~p Expected(>=): ~p\n", [Key, Seq, MinSeq])
+        end
     catch
         _:Err ->
             io:format(user, "Get ~p: ~p\n", [Key, Err])
     end,
     read(Ref, Key - 1, MinSeq).
    
-fold_proc(Cask, NumKeys, Seq, Caller) ->
+fold_proc(Cask, NumKeys, Caller) ->
     Ref = bitcask:open(Cask),
-    fold(Ref, NumKeys, Seq),
+    fold(Ref, NumKeys),
     bitcask:close(Ref),
-    Caller ! {fold_done, Seq}.    
+    Caller ! fold_done.
 
-fold(Ref, NumKeys, MinSeq) ->
-    %% Race on sequence number - m
+fold(Ref, NumKeys) ->
+    {ok, MinSeq} = application:get_env(bitcask, minseq),
     Folder = fun(<<Key:32>>, Bin, Keys) ->
-                     {Key, Seq} = binary_to_term(Bin),
-                     case Seq >= MinSeq - 1 of % allow for race
+                     %% Lookup minium sequence on first pass through
+                      {Key, Seq} = binary_to_term(Bin),
+                     case Seq >= MinSeq of 
                          true ->
                              ok;
                          _ ->
@@ -458,11 +466,11 @@ fold(Ref, NumKeys, MinSeq) ->
     FoldedKeys = bitcask:fold(Ref, Folder, []),
     check_fold(1, NumKeys, lists:sort(FoldedKeys)).
 
-fold_keys_proc(Cask, NumKeys, Seq, Caller) ->
+fold_keys_proc(Cask, NumKeys, Caller) ->
     Ref = bitcask:open(Cask),
     fold_keys(Ref, NumKeys),
     bitcask:close(Ref),
-    Caller ! {fold_keys_done, Seq}.    
+    Caller ! fold_keys_done.
 
 fold_keys(Ref, NumKeys) ->
     Folder = fun(#bitcask_entry{key = <<Key:32>>}, Keys) ->
@@ -569,6 +577,9 @@ set_bitcask_env(State) ->
     set_env(frag_threshold,  State#state.frag_threshold),
     set_env(dead_bytes_threshold, State#state.dead_bytes_threshold),
     set_env(small_file_threshold, State#state.small_file_threshold),
+    set_env(max_fold_age, State#state.max_fold_age),
+    set_env(max_fold_puts, State#state.max_fold_puts),
+
     io:format("Bitcask AppEnv:\n~p\n", [application:get_all_env(bitcask)]).
 
 set_env(_, undefined) ->
