@@ -31,7 +31,7 @@
          sync/1,
          list_keys/1,
          fold_keys/3, fold_keys/5,
-         fold/3,
+         fold/3, fold/5,
          merge/1, merge/2, merge/3,
          needs_merge/1,
          status/1]).
@@ -330,45 +330,60 @@ fold_keys(Ref, Fun, Acc0, MaxAge, MaxPut) ->
 -spec fold(reference(), fun((binary(), binary(), any()) -> any()), any()) -> any() | {error, any()}.
 fold(Ref, Fun, Acc0) ->
     State = get_state(Ref),
+    MaxAge = get_opt(max_fold_age, State#bc_state.opts) * 1000, % convert from ms to us
+    MaxPuts = get_opt(max_fold_puts, State#bc_state.opts),
+    fold(Ref, Fun, Acc0, MaxAge, MaxPuts).
 
-    case open_fold_files(State#bc_state.dirname, 3) of
-        {ok, Files} ->
-            ExpiryTime = expiry_time(State#bc_state.opts),
-            SubFun = fun(K,V,TStamp,{_FN,FTS,Offset,_Sz},Acc) ->
-                             case (TStamp < ExpiryTime) of
-                                 true ->
-                                     Acc;
-                                 false ->
-                                     case bitcask_nifs:keydir_get(
-                                            State#bc_state.keydir, K) of
-                                         not_found ->
-                                             Acc;
-                                         E when is_record(E, bitcask_entry) ->
-                                             case
-                                              Offset =:= E#bitcask_entry.offset
-                                               andalso
-                                              TStamp =:= E#bitcask_entry.tstamp
-                                               andalso
-                                              FTS =:= E#bitcask_entry.file_id of
-                                                 false ->
-                                                     Acc;
-                                                 true ->
-                                                     case V =:= ?TOMBSTONE of
-                                                         true ->
-                                                             Acc;
-                                                         false ->
-                                                             Fun(K,V,Acc)
-                                                     end
-                                             end
-                                     end
-                             end
-                     end,
-            subfold(SubFun,Files,Acc0);
-
-        {error, Reason} ->
-            {error, Reason}
-    end.
-
+%% @doc fold over all K/V pairs in a bitcask datastore specifying max age/updates of
+%% the frozen keystore.
+%% Fun is expected to take F(K,V,Acc0) -> Acc
+-spec fold(reference(), fun((binary(), binary(), any()) -> any()), any(),
+          non_neg_integer() | undefined, non_neg_integer() | undefined) -> 
+                  any() | {error, any()}.
+fold(Ref, Fun, Acc0, MaxAge, MaxPut) ->
+    State = get_state(Ref),
+    FrozenFun = 
+        fun() ->
+                case open_fold_files(State#bc_state.dirname, 3) of
+                    {ok, Files} ->
+                        ExpiryTime = expiry_time(State#bc_state.opts),
+                        SubFun = fun(K,V,TStamp,{_FN,FTS,Offset,_Sz},Acc) ->
+                                         case (TStamp < ExpiryTime) of
+                                             true ->
+                                                 Acc;
+                                             false ->
+                                                 case bitcask_nifs:keydir_get(
+                                                        State#bc_state.keydir, K) of
+                                                     not_found ->
+                                                         Acc;
+                                                     E when is_record(E, bitcask_entry) ->
+                                                         case
+                                                             Offset =:= E#bitcask_entry.offset
+                                                             andalso
+                                                             TStamp =:= E#bitcask_entry.tstamp
+                                                             andalso
+                                                             FTS =:= E#bitcask_entry.file_id of
+                                                             false ->
+                                                                 Acc;
+                                                             true ->
+                                                                 case V =:= ?TOMBSTONE of
+                                                                     true ->
+                                                                         Acc;
+                                                                     false ->
+                                                                         Fun(K,V,Acc)
+                                                                 end
+                                                         end
+                                                 end
+                                         end
+                                 end,
+                        subfold(SubFun,Files,Acc0);
+                    {error, Reason} ->
+                        {error, Reason}
+                end
+        end,
+    KeyDir = State#bc_state.keydir,
+    bitcask_nifs:keydir_frozen(KeyDir, FrozenFun, MaxAge, MaxPut).
+    
 %%
 %% Get a list of readable files and attempt to open them for a fold. If we can't
 %% open any one of the files, get a fresh list of files and try again.
@@ -986,6 +1001,80 @@ fold_test() ->
     ?assertEqual(default_dataset(), lists:reverse(L)),
     close(B).
 
+%%
+%% Check that fold visits the objects at the point the keydir
+%% was frozen.  Check with and without wrapping the cask.
+%%
+fold_visits_frozen_test_() ->
+    [?_test(fold_visits_frozen_test(false)),
+     ?_test(fold_visits_frozen_test(true))].
+
+fold_visits_frozen_test(RollOver) ->
+    Cask = "/tmp/bc.test.frozenfold",
+    B = init_dataset(Cask, default_dataset()),
+    try
+        Ref = (get_state(B))#bc_state.keydir,
+        Me = self(),
+        
+        %% Freeze the keydir with default_dataset written
+        FrozenFun = fun() ->
+                            Me ! frozen,
+                            receive
+                                done ->
+                                ok
+                            end
+                    end,
+        FreezeWaiter = proc_lib:spawn_link(
+                         fun() ->
+                                 B2 = bitcask:open(Cask, [read]),
+                                 Ref2 = (get_state(B2))#bc_state.keydir,
+                                 %% Start a function that waits in a frozen keydir for a message
+                                 %% so the test fold can guarantee a frozen keydir
+                                 ok = bitcask_nifs:keydir_frozen(Ref2, FrozenFun, -1, -1),
+                                 bitcask:close(B2)
+                         end),
+        receive
+            frozen ->
+                ok
+        after 
+            1000 ->
+                ?assert(keydir_not_frozen)
+        end,
+
+        %% If checking file rollover, update the state so the next write will 
+        %% trigger a 'wrap' return.
+        case RollOver of
+            true ->
+                State = get_state(B),
+                put_state(B, State#bc_state{max_file_size = 0});
+            _ ->
+                ok
+        end,
+        
+        %% A delete, an update and an insert
+        ok = delete(B, <<"k">>),
+        ok = put(B, <<"k2">>, <<"v2-2">>),
+        ok = put(B, <<"k4">>, <<"v4">>),
+
+        CollectAll = fun(K, V, Acc) ->
+                             [{K, V} | Acc]
+                     end,
+        L = fold(B, CollectAll, [], -1, -1),
+        ?assertEqual(default_dataset(), lists:sort(L)),
+
+        %% Unfreeze the keydir, waiting until complete
+        FreezeWaiter ! done,
+        bitcask_nifs:keydir_wait_pending(Ref),
+
+        %% Check we see the updated fold
+        L2 = fold(B, CollectAll, [], -1, -1),
+        ?assertEqual([{<<"k2">>,<<"v2-2">>},
+                      {<<"k3">>,<<"v3">>},
+                      {<<"k4">>,<<"v4">>}], lists:sort(L2))
+    after
+        bitcask:close(B)
+    end.
+    
 open_test() ->
     close(init_dataset("/tmp/bc.test.open", default_dataset())),
 
