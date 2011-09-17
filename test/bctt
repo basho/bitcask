@@ -74,7 +74,7 @@
                 frag_threshold,           % Include merge >= 40% fragmentation
                 dead_bytes_threshold,     % Include merge dead bytes > 128 MB
                 small_file_threshold,     % Include merge file is < 10 MB
-                max_fold_age = 1000000,   % Allow keydir up to 1s old
+                max_fold_age = -1,        % Frozen keydir can be as old as you like
                 max_fold_puts = 0,        % as long as there are no updates
                 readers=0,
                 folders=0,
