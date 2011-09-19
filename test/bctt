@@ -74,6 +74,8 @@
                 frag_threshold,           % Include merge >= 40% fragmentation
                 dead_bytes_threshold,     % Include merge dead bytes > 128 MB
                 small_file_threshold,     % Include merge file is < 10 MB
+                max_fold_age = -1,        % Frozen keydir can be as old as you like
+                max_fold_puts = 0,        % as long as there are no updates
                 readers=0,
                 folders=0,
                 foldkeys=0,
@@ -88,7 +90,7 @@ test() ->
 test(Opts) ->
     {ok, State} = process_args(Opts, #state{}),
     print_params(State),
-    spawn(fun() -> do_test(State) end).
+    proc_lib:spawn(fun() -> do_test(State) end).
 
 %% Escript version
 main() ->
@@ -158,56 +160,65 @@ do_test(State0) ->
     wait_for_procs(EndState).   
 
 restart_procs(State) ->
-    receive
-        stop ->
-            io:format("Test ending...\n"),
-            State;
-        status ->
-            io:format("Writer seq: ~p  Readers=~p Folders=~p FoldKeys=~p Merges=~p MergesPending=~p\n",
-                      [State#state.seq, State#state.reader_reps, 
-                       State#state.folder_reps, State#state.fold_keys_reps,
-                       State#state.merger_reps, State#state.merges_pending]),
-            schedule_status(State),
-            restart_procs(State);
-        {write_done, WriteSeq} ->
-            true = (State#state.seq+1 =:= WriteSeq),
-            NewState = State#state{seq = WriteSeq},
-            case State#state.restart_writer of
-                true ->
-                    stop_writer(State);
-                false ->
-                    kick_writer(NewState)
-            end,
-            restart_procs(NewState);
-        write_exit ->
-            State1 = start_writer(State),
-            kick_writer(State1),
-            restart_procs(State1);
-        merge_pending ->
-            restart_procs(State#state{merges_pending = State#state.merges_pending+1});
-        merge_done ->
-            restart_procs(State#state{merges_pending = State#state.merges_pending-1,
-                                      merger_reps = State#state.merger_reps+1});
-        {read_done, _ReadSeq} ->
-            start_readers(State, 1),
-            restart_procs(State#state{reader_reps = State#state.reader_reps+1});
-        {fold_done, _FoldSeq} ->
-            start_folders(State, 1),
-            restart_procs(State#state{folder_reps = State#state.folder_reps+1});
-        {fold_keys_done, _FoldSeq} ->
-            start_fold_keys(State, 1),
-            restart_procs(State#state{fold_keys_reps = State#state.fold_keys_reps+1});
-        {'EXIT', _From, normal} ->
-            restart_procs(State);
-        {'EXIT', From, Reason} ->
-            io:format("Test process ~p died\n~p\n", [From, Reason]),
-            State;
-        Other ->
-            io:format("Restart procs got unexpected message\n~p\n", [Other]),
+    receive 
+        Msg ->
+            ok
+    end,
+    try
+        case Msg of
+            stop ->
+                io:format("Test ending...\n"),
+                State;
+            status ->
+                io:format("Writer seq: ~p  Readers=~p Folders=~p FoldKeys=~p Merges=~p MergesPending=~p\n",
+                          [State#state.seq, State#state.reader_reps, 
+                           State#state.folder_reps, State#state.fold_keys_reps,
+                           State#state.merger_reps, State#state.merges_pending]),
+                schedule_status(State),
+                restart_procs(State);
+            {write_done, WriteSeq} ->
+                true = (State#state.seq+1 =:= WriteSeq),
+                NewState = State#state{seq = WriteSeq},
+                case State#state.restart_writer of
+                    true ->
+                        stop_writer(State);
+                    false ->
+                        kick_writer(NewState)
+                end,
+                restart_procs(NewState);
+            write_exit ->
+                State1 = start_writer(State),
+                kick_writer(State1),
+                restart_procs(State1);
+            merge_pending ->
+                restart_procs(State#state{merges_pending = State#state.merges_pending+1});
+            merge_done ->
+                restart_procs(State#state{merges_pending = State#state.merges_pending-1,
+                                          merger_reps = State#state.merger_reps+1});
+            read_done ->
+                start_readers(State, 1),
+                restart_procs(State#state{reader_reps = State#state.reader_reps+1});
+            fold_done ->
+                start_folders(State, 1),
+                restart_procs(State#state{folder_reps = State#state.folder_reps+1});
+            fold_keys_done ->
+                start_fold_keys(State, 1),
+                restart_procs(State#state{fold_keys_reps = State#state.fold_keys_reps+1});
+            {'EXIT', _From, normal} ->
+                restart_procs(State);
+            {'EXIT', From, Reason} ->
+                io:format("Test process ~p died: ~p\nState: ~p\n", [From, Reason, State]),
+                State;
+            Other ->
+                io:format("Restart procs got unexpected message: ~p\n", [Other]),
+                State
+        end
+    catch
+        What:Err ->
+            io:format("restart_proc: ~p ~p\nMsg: ~p\nState: ~p\n", [What, Err, Msg, State]),
             State
     end.
-
-
+                
 %% Wait for the initial writer to complete - the os:cmd call
 %% can generate an EXIT message
 wait_for_writer(State) ->
@@ -226,13 +237,16 @@ wait_for_procs(#state{writers = 0, readers = 0, folders = 0, foldkeys = 0, merge
     io:format("Test complete\n");
 wait_for_procs(State) ->
     receive
+        stop ->
+            io:format("Wait for procs got stop message pid ~p\n", [self()]),
+            wait_for_procs(State);
         status ->
             wait_for_procs(State);
-        {read_done, _ReadSeq} ->
+        read_done ->
             wait_for_procs(State#state{readers = State#state.readers - 1});
-        {fold_done, _FoldSeq} ->
+        fold_done ->
             wait_for_procs(State#state{folders = State#state.folders - 1});
-        {fold_keys_done, _FoldKeySeq} ->
+        fold_keys_done ->
             wait_for_procs(State#state{foldkeys = State#state.foldkeys - 1});
         merge_pending -> %% The writer could still be adding them as we try to shut down.
             wait_for_procs(State#state{merges_pending = State#state.merges_pending + 1});
@@ -248,7 +262,7 @@ wait_for_procs(State) ->
         {'EXIT', From, Reason} ->
             io:format("Test process ~p died\n~p\n", [From, Reason]);
         Other ->
-            io:format("Wait for procs got unexpected message\n~p\n", [Other])
+            io:format("Wait for procs got unexpected message: ~p\n", [Other])
     end.
 
 schedule_status(State) ->
@@ -261,7 +275,7 @@ schedule_status(State) ->
             
 start_writer(State) ->
     Caller = self(),
-    Pid = spawn_link(fun() ->
+    Pid = proc_lib:spawn_link(fun() ->
                              Opts = writer_opts(State),
                              %% Until closing stale file handles resolved
                              Ref = bitcask:open(State#state.cask, Opts),
@@ -290,41 +304,57 @@ start_readers(_State, 0) ->
     ok;
 start_readers(State, NumReaders) ->
     Caller = self(),
-    spawn_link(fun() ->
-                       read_proc(State#state.cask, State#state.num_keys,
-                                 State#state.seq, Caller)
-               end),
+    spawn_worker(reader, 
+                 fun() ->
+                         read_proc(State#state.cask, State#state.num_keys, Caller)
+                 end),
     start_readers(State, NumReaders - 1).
 
 start_folders(_State, 0) ->
     ok;
 start_folders(State, NumFolders) ->
     Caller = self(),
-    spawn_link(fun() ->
-                       fold_proc(State#state.cask, State#state.num_keys,
-                                 State#state.seq, Caller)
-               end),
+    spawn_worker(folder, 
+                 fun() ->
+                         fold_proc(State#state.cask, State#state.num_keys,
+                                   Caller)
+                 end),
     start_folders(State, NumFolders - 1).
 
 start_fold_keys(_State, 0) ->
     ok;
 start_fold_keys(State, NumFoldKeys) ->
     Caller = self(),
-    spawn_link(fun() ->
-                       fold_keys_proc(State#state.cask, State#state.num_keys,
-                                      State#state.seq, Caller)
-               end),
+    spawn_worker(fold_keys,
+                  fun() ->
+                          fold_keys_proc(State#state.cask, State#state.num_keys,
+                                         Caller)
+                  end),
     start_fold_keys(State, NumFoldKeys - 1).
 
 start_merger(_State, 0) ->
     ok; % no merger, messages to it will be dropped
 start_merger(State, _NumMergers) -> % non-zero mergers kicks it off
     Caller = self(),
-    spawn_link(fun() ->
-                       register(merger, self()),
-                       merge_proc(State#state.cask, Caller)
-               end).
-    
+    spawn_worker(merger,
+                 fun() ->
+                         register(merger, self()),
+                         merge_proc(State#state.cask, Caller)
+                 end).
+
+spawn_worker(Type, Fun) ->
+    proc_lib:spawn(fun() ->
+                           try
+                               Fun()
+                           catch
+                               _:Err ->
+                                   io:format("~p CRASHED ~p: ~p\n", 
+                                             [Type, self(), Err]),
+                                   throw(Err)
+                           end
+                   end).
+                              
+
 kick_writer(State) ->
     State#state.writer_pid ! {start, State#state.seq + 1, State#state.num_keys,
                               State#state.needs_merge_freq}.
@@ -351,6 +381,7 @@ write_proc(Ref, Caller) ->
         {start, Seq, NumKeys, NeedsMergeFreq} ->
 %%            io:format("Writer starting\n"),
             write(Ref, NumKeys, Seq, NeedsMergeFreq, Caller),
+            application:set_env(bitcask, minseq, Seq),
             Caller ! {write_done, Seq},
             write_proc(Ref, Caller)
     end.
@@ -364,59 +395,82 @@ write(Ref, Key, Seq, NeedsMergeFreq, Caller) ->
                 case bitcask:needs_merge(Ref) of
                     {true, Filenames} ->
                         Caller ! merge_pending,
-                        merger ! {kick_merge, Filenames};
+                        %% Try and kick the merger, may
+                        %% not be configured to run.
+                        catch merger ! {kick_merge, Filenames};
                     false ->
                         ok
                 end;
             _ ->
                 ok
-        end,
+        end
+    catch
+        _:Err1 ->
+            io:format(user, "NeedsMerge ~p: ~p\n", [Key, Err1])
+    end,
+    try
         ok = bitcask:put(Ref, <<Key:32>>, term_to_binary({Key, Seq}))
     catch
-        _:Err ->
-            io:format(user, "Put ~p: ~p\n", [Key, Err])
+        _:Err2 ->
+            io:format(user, "Put ~p: ~p\n", [Key, Err2])
     end,
     write(Ref, Key - 1, Seq, NeedsMergeFreq, Caller).
 
-read_proc(Cask, NumKeys, Seq, Caller) ->
+read_proc(Cask, NumKeys, Caller) ->
     Ref = bitcask:open(Cask),
+    {ok, Seq} = application:get_env(bitcask, minseq),
+    %io:format("read_proc starting: minseq=~p\n", [Seq]),
     read(Ref, NumKeys, Seq),
     bitcask:close(Ref),
-    Caller ! {read_done, Seq}.
+    Caller ! read_done.
 
-read(_Ref, 0, _Iter) ->
+read(_Ref, 0, _MinSeq) ->
     ok;
 read(Ref, Key, MinSeq) ->
     try
         {ok, Bin} = bitcask:get(Ref, <<Key:32>>),
         {Key, Seq} = binary_to_term(Bin),
-        true = (Seq >= MinSeq)
+        case Seq >= MinSeq of
+            true ->
+                ok;
+            false ->
+                io:format("Read ~p Got: ~p Expected(>=): ~p\n", [Key, Seq, MinSeq])
+        end
     catch
         _:Err ->
             io:format(user, "Get ~p: ~p\n", [Key, Err])
     end,
     read(Ref, Key - 1, MinSeq).
    
-fold_proc(Cask, NumKeys, Seq, Caller) ->
+fold_proc(Cask, NumKeys, Caller) ->
     Ref = bitcask:open(Cask),
-    fold(Ref, NumKeys, Seq),
+    fold(Ref, NumKeys),
     bitcask:close(Ref),
-    Caller ! {fold_done, Seq}.    
+    Caller ! fold_done.
 
-fold(Ref, NumKeys, MinSeq) ->
-    Folder = fun(<<Key:32>>, Bin, {MinSeq2, Keys}) ->
-                     {Key, Seq} = binary_to_term(Bin),
-                     true = (Seq >= MinSeq2),
-                     {MinSeq2, [Key | Keys]}
+fold(Ref, NumKeys) ->
+    {ok, MinSeq} = application:get_env(bitcask, minseq),
+    Folder = fun(<<Key:32>>, Bin, Keys) ->
+                     %% Lookup minium sequence on first pass through
+                      {Key, Seq} = binary_to_term(Bin),
+                     case Seq >= MinSeq of 
+                         true ->
+                             ok;
+                         _ ->
+                             io:format("fold returned early seq for ~p. "
+                                       "MinExpected: ~p Returned: ~p\n",
+                                       [Key, MinSeq, Seq])
+                     end,
+                     [Key | Keys]
              end,
-    {MinSeq, FoldedKeys} = bitcask:fold(Ref, Folder, {MinSeq, []}),
+    FoldedKeys = bitcask:fold(Ref, Folder, []),
     check_fold(1, NumKeys, lists:sort(FoldedKeys)).
 
-fold_keys_proc(Cask, NumKeys, Seq, Caller) ->
+fold_keys_proc(Cask, NumKeys, Caller) ->
     Ref = bitcask:open(Cask),
     fold_keys(Ref, NumKeys),
     bitcask:close(Ref),
-    Caller ! {fold_keys_done, Seq}.    
+    Caller ! fold_keys_done.
 
 fold_keys(Ref, NumKeys) ->
     Folder = fun(#bitcask_entry{key = <<Key:32>>}, Keys) ->
@@ -523,6 +577,9 @@ set_bitcask_env(State) ->
     set_env(frag_threshold,  State#state.frag_threshold),
     set_env(dead_bytes_threshold, State#state.dead_bytes_threshold),
     set_env(small_file_threshold, State#state.small_file_threshold),
+    set_env(max_fold_age, State#state.max_fold_age),
+    set_env(max_fold_puts, State#state.max_fold_puts),
+
     io:format("Bitcask AppEnv:\n~p\n", [application:get_all_env(bitcask)]).
 
 set_env(_, undefined) ->

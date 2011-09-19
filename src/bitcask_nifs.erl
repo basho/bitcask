@@ -31,6 +31,7 @@
          keydir_remove/2, keydir_remove/5,
          keydir_copy/1,
          keydir_fold/5,
+         keydir_frozen/4,
          keydir_wait_pending/1,
          keydir_info/1,
          keydir_release/1,
@@ -83,7 +84,7 @@
 -spec keydir_copy(reference()) ->
         {ok, reference()}.
 -spec keydir_itr(reference(), integer(), integer()) ->
-        ok | {error, iteration_not_permitted}.
+        ok | out_of_date | {error, iteration_in_process}.
 -spec keydir_itr_next(reference()) ->
         #bitcask_entry{} |
         {error, iteration_not_started} | allocation_error | not_found.
@@ -242,24 +243,29 @@ keydir_itr_release(_Ref) ->
     ok.
 
 keydir_fold(Ref, Fun, Acc0, MaxAge, MaxPuts) ->
+    FrozenFun = fun() -> keydir_fold_cont(keydir_itr_next(Ref), Ref, Fun, Acc0) end,
+    keydir_frozen(Ref, FrozenFun, MaxAge, MaxPuts).
+
+%% Execute the function once the keydir is frozen
+keydir_frozen(Ref, FrozenFun, MaxAge, MaxPuts) ->
     case keydir_itr(Ref, MaxAge, MaxPuts) of
         out_of_date ->
             receive
                 ready -> % fold no matter what on second attempt
-                    keydir_fold(Ref, Fun, Acc0, -1, -1);
+                    keydir_frozen(Ref, FrozenFun, -1, -1);
                 error ->
                     {error, shutdown}
             end;
         ok ->
             try
-                keydir_fold_cont(keydir_itr_next(Ref), Ref, Fun, Acc0)
+                FrozenFun()
             after
                 keydir_itr_release(Ref)
             end;
         {error, Reason} ->
             {error, Reason}
     end.
-
+    
 %% Wait for any pending interation to complete
 keydir_wait_pending(Ref) ->
     %% Create an iterator, passing a zero timestamp to force waiting for
