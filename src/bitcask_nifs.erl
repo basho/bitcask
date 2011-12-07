@@ -40,7 +40,15 @@
          lock_acquire/2,
          lock_release/1,
          lock_readdata/1,
-         lock_writedata/2]).
+         lock_writedata/2,
+         file_open/1,
+         file_close/1,
+         file_sync/1,
+         file_pread/3,
+         file_pwrite/3,
+         file_read/2,
+         file_write/2,
+         file_seekbof/1]).
 
 -on_load(init/0).
 
@@ -342,6 +350,31 @@ lock_writedata(_Ref, _Data) ->
         669 -> {error, lock_not_writable};
         _   -> exit("NIF library not loaded")
     end.
+
+file_open(_Filename) ->
+    erlang:nif_error({error, not_loaded}).
+
+file_close(_Ref) ->
+    erlang:nif_error({error, not_loaded}).
+
+file_sync(_Ref) ->
+    erlang:nif_error({error, not_loaded}).
+
+file_pread(_Ref, _Offset, _Size) ->
+    erlang:nif_error({error, not_loaded}).
+
+file_pwrite(_Ref, _Offset, _Bytes) ->
+    erlang:nif_error({error, not_loaded}).
+
+file_read(_Ref, _Size) ->
+    erlang:nif_error({error, not_loaded}).
+
+file_write(_Ref, _Bytes) ->
+    erlang:nif_error({error, not_loaded}).
+
+file_seekbof(_Ref) ->
+    erlang:nif_error({error, not_loaded}).
+
 
 %% ===================================================================
 %% Internal functions

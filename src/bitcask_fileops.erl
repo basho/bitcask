@@ -71,7 +71,7 @@ create_file(DirName, Opts) ->
 %% Called with fully-qualified filename.
 -spec open_file(Filename :: string()) -> {ok, #filestate{}} | {error, any()}.
 open_file(Filename) ->
-    case file:open(Filename, [read, raw, binary, read_ahead]) of
+    case bitcask_nifs:file_open(Filename) of
         {ok, FD} ->
             {ok, #filestate{mode = read_only,
                             filename = Filename, tstamp = file_tstamp(Filename),
@@ -85,12 +85,12 @@ open_file(Filename) ->
 close(fresh) -> ok;
 close(undefined) -> ok;
 close(#filestate{ fd = FD, hintfd = HintFd }) ->
-    file:close(FD),
+    bitcask_nifs:file_close(FD),
     case HintFd of
         undefined ->
             ok;
         _ ->
-            file:close(HintFd)
+            bitcask_nifs:file_close(HintFd)
     end,
     ok.
 
@@ -100,9 +100,9 @@ close_for_writing(fresh) -> ok;
 close_for_writing(undefined) -> ok;
 close_for_writing(State = 
                   #filestate{ mode = read_write, fd = Fd, hintfd = HintFd }) ->
-    file:sync(Fd),
-    file:sync(HintFd),
-    file:close(HintFd),
+    bitcask_nifs:file_sync(Fd),
+    bitcask_nifs:file_sync(HintFd),
+    bitcask_nifs:file_close(HintFd),
     State#filestate { mode = read_only, hintfd = undefined }.
 
 %% Build a list of {tstamp, filename} for all files in the directory that
@@ -145,11 +145,11 @@ write(Filestate=#filestate{fd = FD, hintfd = HintFD, ofs = Offset},
               <<ValueSz:?VALSIZEFIELD>>, Key, Value],
     Bytes  = [<<(erlang:crc32(Bytes0)):?CRCSIZEFIELD>> | Bytes0],
     %% Store the full entry in the data file
-    ok = file:pwrite(FD, Offset, Bytes),
+    ok = bitcask_nifs:file_pwrite(FD, Offset, Bytes),
     %% Create and store the corresponding hint entry
     TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
     Iolist = hintfile_entry(Key, Tstamp, {Offset, TotalSz}),
-    ok = file:write(HintFD, Iolist),
+    ok = bitcask_nifs:file_write(HintFD, Iolist),
     %% Record our final offset
     TotalSz = iolist_size(Bytes),
     {ok, Filestate#filestate{ofs = Offset + TotalSz}, Offset, TotalSz}.
@@ -168,7 +168,7 @@ read(Filename, Offset, Size) when is_list(Filename) ->
             {error, Reason}
     end;
 read(#filestate { fd = FD }, Offset, Size) ->
-    case file:pread(FD, Offset, Size) of
+    case bitcask_nifs:file_pread(FD, Offset, Size) of
         {ok, <<Crc32:?CRCSIZEFIELD/unsigned, Bytes/binary>>} ->
             %% Unpack the actual data
             <<_Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD, ValueSz:?VALSIZEFIELD,
@@ -190,8 +190,8 @@ read(#filestate { fd = FD }, Offset, Size) ->
 %% @doc Call the OS's fsync(2) system call on the cask and hint files.
 -spec sync(#filestate{}) -> ok.
 sync(#filestate { mode = read_write, fd = Fd, hintfd = HintFd }) ->
-    ok = file:sync(Fd),
-    ok = file:sync(HintFd).
+    ok = bitcask_nifs:file_sync(Fd),
+    ok = bitcask_nifs:file_sync(HintFd).
 
 -spec fold(fresh | #filestate{},
            fun((binary(), binary(), integer(),
@@ -201,8 +201,9 @@ sync(#filestate { mode = read_write, fd = Fd, hintfd = HintFd }) ->
 fold(fresh, _Fun, Acc) -> Acc;
 fold(#filestate { fd=Fd, filename=Filename, tstamp=FTStamp }, Fun, Acc) ->
     %% TODO: Add some sort of check that this is a read-only file
-    {ok, _} = file:position(Fd, bof),
-    case file:read(Fd, ?HEADER_SIZE) of
+    %% TODO: Need to position+read?!
+    ok = bitcask_nifs:file_seekbof(Fd),
+    case bitcask_nifs:file_read(Fd, ?HEADER_SIZE) of
         {ok, <<_Crc:?CRCSIZEFIELD, _Tstamp:?TSTAMPFIELD, _KeySz:?KEYSIZEFIELD,
               _ValueSz:?VALSIZEFIELD>> = H} ->
             fold_loop(Fd, Filename, FTStamp, H, 0, Fun, Acc);
@@ -256,7 +257,7 @@ create_hintfile(Filename) when is_list(Filename) ->
 create_hintfile(State) when is_record(State, filestate) ->
     F = fun(K, Tstamp, {Offset, TotalSz}, HintFd) ->
                 Iolist = hintfile_entry(K, Tstamp, {Offset, TotalSz}),
-                case file:write(HintFd, Iolist) of
+                case bitcask_nifs:file_write(HintFd, Iolist) of
                     ok ->
                         HintFd;
                     {error, Reason} ->
@@ -321,7 +322,7 @@ fold_loop(Fd, Filename, FTStamp, Header, Offset, Fun, Acc0) ->
      ValueSz:?VALSIZEFIELD>> = Header,
     <<_:4/binary, HeaderMinusCRC/binary>> = Header,
     TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
-    case file:read(Fd, TotalSz) of
+    case bitcask_nifs:file_read(Fd, TotalSz) of
         {ok, <<Key:KeySz/bytes, Value:ValueSz/bytes, Rest/binary>>} ->
             case erlang:crc32([HeaderMinusCRC, Key, Value]) of
                 Crc32 ->
@@ -346,7 +347,7 @@ fold_loop(Fd, Filename, FTStamp, Header, Offset, Fun, Acc0) ->
     end.
 
 fold_keys_loop(Fd, Offset, Fun, Acc0) ->
-    case file:pread(Fd, Offset, ?HEADER_SIZE) of
+    case bitcask_nifs:file_pread(Fd, Offset, ?HEADER_SIZE) of
         {ok, Header} when erlang:size(Header) =:= ?HEADER_SIZE ->
             <<_Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
               ValueSz:?VALSIZEFIELD>> = Header,
@@ -354,7 +355,7 @@ fold_keys_loop(Fd, Offset, Fun, Acc0) ->
             PosInfo = {Offset, TotalSz},
             %% NOTE: We are intentionally *not* reading the value blob,
             %%       so we cannot check the checksum.
-            case file:pread(Fd, Offset + ?HEADER_SIZE, KeySz) of
+            case bitcask_nifs:file_pread(Fd, Offset + ?HEADER_SIZE, KeySz) of
                 {ok, Key} when erlang:size(Key) =:= KeySz ->
                     Acc = Fun(Key, Tstamp, PosInfo, Acc0),
                     fold_keys_loop(Fd, Offset + TotalSz, Fun, Acc);
@@ -377,13 +378,12 @@ fold_keys_loop(Fd, Offset, Fun, Acc0) ->
 
 
 fold_hintfile(State, Fun, Acc) ->
-    case file:open(hintfile_name(State), [read, raw, binary, read_ahead]) of
+    case bitcask_nifs:file_open(hintfile_name(State)) of
         {ok, HintFd} ->
             try
                 {ok, DataI} = file:read_file_info(State#filestate.filename),
                 DataSize = DataI#file_info.size,
-                {ok, _} = file:position(HintFd, bof),
-                case file:read(HintFd, ?HINT_RECORD_SZ) of
+                case bitcask_nifs:file_read(HintFd, ?HINT_RECORD_SZ) of
                     {ok, <<H:?HINT_RECORD_SZ/bytes>>} ->
                         fold_hintfile_loop(DataSize, hintfile_name(State),
                                            HintFd, H, Fun, Acc);
@@ -400,7 +400,7 @@ fold_hintfile(State, Fun, Acc) ->
                         {error, {fold_hintfile, Reason}}
                 end
             after
-                file:close(HintFd)
+                bitcask_nifs:file_close(HintFd)
             end;
         {error, Reason} ->
             {error, {fold_hintfile, Reason}}
@@ -410,7 +410,7 @@ fold_hintfile_loop(DataSize, HintFile, Fd, HintRecord, Fun, Acc0) ->
     <<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
       TotalSz:?TOTALSIZEFIELD, Offset:?OFFSETFIELD>> = HintRecord,
     ReadSz = KeySz + ?HINT_RECORD_SZ,
-    case file:read(Fd, ReadSz) of
+    case bitcask_nifs:file_read(Fd, ReadSz) of
         {ok, <<Key:KeySz/bytes, Rest/binary>>} when
                                                Offset + TotalSz =< DataSize ->
             PosInfo = {Offset, TotalSz},
@@ -441,34 +441,15 @@ create_file_loop(DirName, Opts, Tstamp) ->
     ok = filelib:ensure_dir(Filename),
     case bitcask_nifs:create_file(Filename) of
         true ->
-            {ok, FD} = file:open(Filename, [read, write, raw, binary, read_ahead]),
-            {ok, HintFD} = file:open(hintfile_name(Filename),
-                                     [read, write, raw, binary, read_ahead]),
-            %% If o_sync is specified in the options, try to set that
-            %% flag on the underlying file descriptor
-            case bitcask:get_opt(sync_strategy, Opts) of
-                o_sync ->
-                    %% Make a hacky assumption here that if we open a
-                    %% raw file, we get back a specific tuple from the
-                    %% Erlang VM. The tradeoff is that we can set the
-                    %% O_SYNC flag on the fd, thus improving
-                    %% performance rather dramatically.
-                    {file_descriptor, prim_file, {_Port, RealFd}} = FD,
-                    case bitcask_nifs:set_osync(RealFd) of
-                        ok ->
-                            {ok, #filestate{mode = read_write,
-                                            filename = Filename,
-                                            tstamp = file_tstamp(Filename),
-                                            hintfd = HintFD, fd = FD, ofs = 0}};
-                        {error, Reason} ->
-                            {error, Reason}
-                    end;
-                _ ->
-                    {ok, #filestate{mode = read_write,
-                                    filename = Filename,
-                                    tstamp = file_tstamp(Filename),
-                                    hintfd = HintFD, fd = FD, ofs = 0}}
-            end;
+            {ok, FD} = bitcask_nifs:file_open(Filename),
+            {ok, HintFD} = bitcask_nifs:file_open(hintfile_name(Filename)),
+
+            %% TODO: Reinstate O_SYNC support
+            {ok, #filestate{mode = read_write,
+                            filename = Filename,
+                            tstamp = file_tstamp(Filename),
+                            hintfd = HintFD, fd = FD, ofs = 0}};
+
         false ->
             %% Couldn't create a new file with the requested name,
             %% check for the more recent timestamp and increment by
@@ -487,7 +468,7 @@ create_file_loop(DirName, Opts, Tstamp) ->
 generate_hintfile(Filename, {FolderMod, FolderFn, FolderArgs}) ->
     %% Create the temp file that we will write records out to.
     TmpFilename = temp_filename(Filename ++ ".~w"),
-    {ok, Fd} = file:open(TmpFilename, [read, write, raw, binary, read_ahead]),
+    {ok, Fd} = bitcask_nifs:file_open(TmpFilename),
 
     %% Run the provided fold function over whatever the dataset is. The function
     %% is passed the Fd as the accumulator argument, and must return the same
@@ -500,7 +481,7 @@ generate_hintfile(Filename, {FolderMod, FolderFn, FolderArgs}) ->
             {error, Reason}
     after
         file:delete(TmpFilename),
-        file:close(Fd)
+        bitcask_nifs:file_close(Fd)
     end.
 
 hintfile_entry(Key, Tstamp, {Offset, TotalSz}) ->

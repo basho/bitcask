@@ -53,6 +53,13 @@ static ErlNifResourceType* bitcask_keydir_RESOURCE;
 
 static ErlNifResourceType* bitcask_lock_RESOURCE;
 
+static ErlNifResourceType* bitcask_file_RESOURCE;
+
+typedef struct
+{
+    int fd;
+} bitcask_file_handle;
+
 typedef struct
 {
     uint32_t file_id;
@@ -167,6 +174,7 @@ static ERL_NIF_TERM ATOM_PWRITE_ERROR;
 static ERL_NIF_TERM ATOM_READY;
 static ERL_NIF_TERM ATOM_SETFL_ERROR;
 static ERL_NIF_TERM ATOM_TRUE;
+static ERL_NIF_TERM ATOM_EOF;
 
 // Prototypes
 ERL_NIF_TERM bitcask_nifs_keydir_new0(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
@@ -192,6 +200,15 @@ ERL_NIF_TERM bitcask_nifs_lock_release(ErlNifEnv* env, int argc, const ERL_NIF_T
 ERL_NIF_TERM bitcask_nifs_lock_readdata(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_lock_writedata(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
+ERL_NIF_TERM bitcask_nifs_file_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_file_close(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_file_sync(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_file_pread(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_file_pwrite(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_file_read(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_file_write(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_file_seekbof(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+
 ERL_NIF_TERM errno_atom(ErlNifEnv* env, int error);
 ERL_NIF_TERM errno_error_tuple(ErlNifEnv* env, ERL_NIF_TERM key, int error);
 
@@ -199,6 +216,7 @@ static void merge_pending_entries(ErlNifEnv* env, bitcask_keydir* keydir);
 static void lock_release(bitcask_lock_handle* handle);
 
 static void bitcask_nifs_keydir_resource_cleanup(ErlNifEnv* env, void* arg);
+static void bitcask_nifs_file_resource_cleanup(ErlNifEnv* env, void* arg);
 
 static ErlNifFunc nif_funcs[] =
 {
@@ -223,7 +241,16 @@ static ErlNifFunc nif_funcs[] =
     {"lock_acquire",   2, bitcask_nifs_lock_acquire},
     {"lock_release",   1, bitcask_nifs_lock_release},
     {"lock_readdata",  1, bitcask_nifs_lock_readdata},
-    {"lock_writedata", 2, bitcask_nifs_lock_writedata}
+    {"lock_writedata", 2, bitcask_nifs_lock_writedata},
+
+    {"file_open",   1, bitcask_nifs_file_open},
+    {"file_close",  1, bitcask_nifs_file_close},
+    {"file_sync",   1, bitcask_nifs_file_sync},
+    {"file_pread",  3, bitcask_nifs_file_pread},
+    {"file_pwrite", 3, bitcask_nifs_file_pwrite},
+    {"file_read",   2, bitcask_nifs_file_read},
+    {"file_write",  2, bitcask_nifs_file_write},
+    {"file_seekbof", 1, bitcask_nifs_file_seekbof}
 };
 
 ERL_NIF_TERM bitcask_nifs_keydir_new0(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -1281,6 +1308,295 @@ ERL_NIF_TERM bitcask_nifs_lock_writedata(ErlNifEnv* env, int argc, const ERL_NIF
     }
 }
 
+
+ERL_NIF_TERM bitcask_nifs_file_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    char filename[4096];
+    if (enif_get_string(env, argv[0], filename, sizeof(filename), ERL_NIF_LATIN1) > 0)
+    {
+        // Try to open the provided filename exclusively.
+        int fd = open(filename, O_CREAT | O_RDWR, S_IREAD | S_IWRITE);
+        if (fd > -1)
+        {
+            // Setup a resource for our handle
+            bitcask_file_handle* handle = enif_alloc_resource_compat(env,
+                                                                     bitcask_file_RESOURCE,
+                                                                     sizeof(bitcask_file_handle));
+            memset(handle, '\0', sizeof(bitcask_file_handle));
+            handle->fd = fd;
+
+            ERL_NIF_TERM result = enif_make_resource(env, handle);
+            enif_release_resource_compat(env, handle);
+            return enif_make_tuple2(env, ATOM_OK, result);
+        }
+        else
+        {
+            ERL_NIF_TERM error = enif_make_tuple2(env, ATOM_ERROR,
+                                                  enif_make_atom(env, erl_errno_id(errno)));
+            return enif_make_tuple2(env, ATOM_ERROR, error);
+        }
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
+ERL_NIF_TERM bitcask_nifs_file_close(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_file_handle* handle;
+    if (enif_get_resource(env, argv[0], bitcask_file_RESOURCE, (void**)&handle))
+    {
+        if (handle->fd > 0)
+        {
+            /* TODO: Check for EIO */
+            close(handle->fd);
+            handle->fd = -1;
+        }
+        return ATOM_OK;
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
+ERL_NIF_TERM bitcask_nifs_file_sync(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_file_handle* handle;
+    if (enif_get_resource(env, argv[0], bitcask_file_RESOURCE, (void**)&handle))
+    {
+        int rc = fsync(handle->fd);
+        if (rc != -1)
+        {
+            return ATOM_OK;
+        }
+        else
+        {
+            ERL_NIF_TERM error = enif_make_tuple2(env, ATOM_ERROR,
+                                                  enif_make_atom(env, erl_errno_id(errno)));
+            return enif_make_tuple2(env, ATOM_ERROR, error);
+        }
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
+ERL_NIF_TERM bitcask_nifs_file_pread(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_file_handle* handle;
+    off_t offset;
+    size_t count;
+
+    if (enif_get_resource(env, argv[0], bitcask_file_RESOURCE, (void**)&handle) &&
+        enif_get_ulong(env, argv[1], (unsigned long*)&offset) && /* Offset */
+        enif_get_ulong(env, argv[2], (unsigned long*)&count))    /* Count */
+    {
+        ErlNifBinary bin;
+        if (!enif_alloc_binary(count, &bin))
+        {
+            return enif_make_tuple2(env, ATOM_ERROR, ATOM_ALLOCATION_ERROR);
+        }
+
+        ssize_t bytes_read = pread(handle->fd, bin.data, count, offset);
+        if (bytes_read == count)
+        {
+            /* Good read; return {ok, Bin} */
+            return enif_make_tuple2(env, ATOM_OK, enif_make_binary(env, &bin));
+        }
+        else if (bytes_read > 0)
+        {
+            /* Partial read; need to resize our binary (bleh) and return {ok, Bin} */
+            if (enif_realloc_binary(&bin, bytes_read))
+            {
+                return enif_make_tuple2(env, ATOM_OK, enif_make_binary(env, &bin));
+            }
+            else
+            {
+                /* Realloc failed; cleanup and bail */
+                enif_release_binary(&bin);
+                return enif_make_tuple2(env, ATOM_ERROR, ATOM_ALLOCATION_ERROR);
+            }
+        }
+        else if (bytes_read == 0)
+        {
+            /* EOF */
+            enif_release_binary(&bin);
+            return ATOM_EOF;
+        }
+        else
+        {
+            /* Read failed altogether */
+            ERL_NIF_TERM error = enif_make_tuple2(env, ATOM_ERROR,
+                                                  enif_make_atom(env, erl_errno_id(errno)));
+            return enif_make_tuple2(env, ATOM_ERROR, error);
+        }
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
+ERL_NIF_TERM bitcask_nifs_file_pwrite(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_file_handle* handle;
+    off_t offset;
+    ErlNifBinary bin;
+
+    if (enif_get_resource(env, argv[0], bitcask_file_RESOURCE, (void**)&handle) &&
+        enif_get_ulong(env, argv[1], (unsigned long*)&offset) && /* Offset */
+        enif_inspect_iolist_as_binary(env, argv[2], &bin)) /* Bytes to write */
+    {
+        unsigned char* buf = bin.data;
+        ssize_t bytes_written = 0;
+        ssize_t count = bin.size;
+        while (count > 0)
+        {
+            bytes_written = pwrite(handle->fd, buf, count, offset);
+            if (bytes_written > 0)
+            {
+                count -= bytes_written;
+                offset += bytes_written;
+                buf += bytes_written;
+            }
+            else
+            {
+                /* Write failed altogether */
+                ERL_NIF_TERM error = enif_make_tuple2(env, ATOM_ERROR,
+                                                      enif_make_atom(env, erl_errno_id(errno)));
+                return enif_make_tuple2(env, ATOM_ERROR, error);
+            }
+        }
+
+        /* Write done */
+        return ATOM_OK;
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
+ERL_NIF_TERM bitcask_nifs_file_read(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_file_handle* handle;
+    size_t count;
+
+    if (enif_get_resource(env, argv[0], bitcask_file_RESOURCE, (void**)&handle) &&
+        enif_get_ulong(env, argv[1], &count))    /* Count */
+    {
+        ErlNifBinary bin;
+        if (!enif_alloc_binary(count, &bin))
+        {
+            return enif_make_tuple2(env, ATOM_ERROR, ATOM_ALLOCATION_ERROR);
+        }
+
+        ssize_t bytes_read = read(handle->fd, bin.data, count);
+        if (bytes_read == count)
+        {
+            /* Good read; return {ok, Bin} */
+            return enif_make_tuple2(env, ATOM_OK, enif_make_binary(env, &bin));
+        }
+        else if (bytes_read > 0)
+        {
+            /* Partial read; need to resize our binary (bleh) and return {ok, Bin} */
+            if (enif_realloc_binary(&bin, bytes_read))
+            {
+                return enif_make_tuple2(env, ATOM_OK, enif_make_binary(env, &bin));
+            }
+            else
+            {
+                /* Realloc failed; cleanup and bail */
+                enif_release_binary(&bin);
+                return enif_make_tuple2(env, ATOM_ERROR, ATOM_ALLOCATION_ERROR);
+            }
+        }
+        else if (bytes_read == 0)
+        {
+            /* EOF */
+            enif_release_binary(&bin);
+            return ATOM_EOF;
+        }
+        else
+        {
+            /* Read failed altogether */
+            ERL_NIF_TERM error = enif_make_tuple2(env, ATOM_ERROR,
+                                                  enif_make_atom(env, erl_errno_id(errno)));
+            return enif_make_tuple2(env, ATOM_ERROR, error);
+        }
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
+ERL_NIF_TERM bitcask_nifs_file_write(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_file_handle* handle;
+    off_t offset;
+    ErlNifBinary bin;
+
+    if (enif_get_resource(env, argv[0], bitcask_file_RESOURCE, (void**)&handle) &&
+        enif_inspect_iolist_as_binary(env, argv[1], &bin)) /* Bytes to write */
+    {
+        unsigned char* buf = bin.data;
+        ssize_t bytes_written = 0;
+        ssize_t count = bin.size;
+        while (count > 0)
+        {
+            bytes_written = write(handle->fd, buf, count);
+            if (bytes_written > 0)
+            {
+                count -= bytes_written;
+                buf += bytes_written;
+            }
+            else
+            {
+                /* Write failed altogether */
+                ERL_NIF_TERM error = enif_make_tuple2(env, ATOM_ERROR,
+                                                      enif_make_atom(env, erl_errno_id(errno)));
+                return enif_make_tuple2(env, ATOM_ERROR, error);
+            }
+        }
+
+        /* Write done */
+        return ATOM_OK;
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
+ERL_NIF_TERM bitcask_nifs_file_seekbof(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_file_handle* handle;
+
+    if (enif_get_resource(env, argv[0], bitcask_file_RESOURCE, (void**)&handle))
+    {
+        if (lseek(handle->fd, 0, SEEK_SET) != -1)
+        {
+            return ATOM_OK;
+        }
+        else
+        {
+            /* Write failed altogether */
+            ERL_NIF_TERM error = enif_make_tuple2(env, ATOM_ERROR,
+                                                  enif_make_atom(env, erl_errno_id(errno)));
+            return enif_make_tuple2(env, ATOM_ERROR, error);
+        }
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
+
 ERL_NIF_TERM errno_atom(ErlNifEnv* env, int error)
 {
     return enif_make_atom(env, erl_errno_id(error));
@@ -1503,6 +1819,16 @@ static void bitcask_nifs_lock_resource_cleanup(ErlNifEnv* env, void* arg)
     lock_release(handle);
 }
 
+static void bitcask_nifs_file_resource_cleanup(ErlNifEnv* env, void* arg)
+{
+    bitcask_file_handle* handle = (bitcask_file_handle*)arg;
+    if (handle->fd > -1)
+    {
+        close(handle->fd);
+    }
+}
+
+
 #ifdef BITCASK_DEBUG
 static void dump_fstats(bitcask_keydir* keydir)
 {
@@ -1535,6 +1861,12 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
                                                     &bitcask_nifs_lock_resource_cleanup,
                                                     ERL_NIF_RT_CREATE | ERL_NIF_RT_TAKEOVER,
                                                     0);
+
+    bitcask_file_RESOURCE = enif_open_resource_type_compat(env, "bitcask_file_resource",
+                                                    &bitcask_nifs_file_resource_cleanup,
+                                                    ERL_NIF_RT_CREATE | ERL_NIF_RT_TAKEOVER,
+                                                    0);
+
     // Initialize shared keydir hashtable
     bitcask_priv_data* priv = enif_alloc_compat(env, sizeof(bitcask_priv_data));
     priv->global_keydirs = kh_init(global_keydirs);
@@ -1564,6 +1896,7 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
     ATOM_READY = enif_make_atom(env, "ready");
     ATOM_SETFL_ERROR = enif_make_atom(env, "setfl_error");
     ATOM_TRUE = enif_make_atom(env, "true");
+    ATOM_EOF = enif_make_atom(env, "eof");
 
     return 0;
 }
