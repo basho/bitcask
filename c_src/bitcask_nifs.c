@@ -1429,6 +1429,7 @@ ERL_NIF_TERM bitcask_nifs_file_pread(ErlNifEnv* env, int argc, const ERL_NIF_TER
         else
         {
             /* Read failed altogether */
+            enif_release_binary(&bin);
             ERL_NIF_TERM error = enif_make_tuple2(env, ATOM_ERROR,
                                                   enif_make_atom(env, erl_errno_id(errno)));
             return enif_make_tuple2(env, ATOM_ERROR, error);
@@ -1523,6 +1524,7 @@ ERL_NIF_TERM bitcask_nifs_file_read(ErlNifEnv* env, int argc, const ERL_NIF_TERM
         else
         {
             /* Read failed altogether */
+            enif_release_binary(&bin);
             ERL_NIF_TERM error = enif_make_tuple2(env, ATOM_ERROR,
                                                   enif_make_atom(env, erl_errno_id(errno)));
             return enif_make_tuple2(env, ATOM_ERROR, error);
