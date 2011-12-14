@@ -175,6 +175,8 @@ static ERL_NIF_TERM ATOM_READY;
 static ERL_NIF_TERM ATOM_SETFL_ERROR;
 static ERL_NIF_TERM ATOM_TRUE;
 static ERL_NIF_TERM ATOM_EOF;
+static ERL_NIF_TERM ATOM_CREATE;
+static ERL_NIF_TERM ATOM_READONLY;
 
 // Prototypes
 ERL_NIF_TERM bitcask_nifs_keydir_new0(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
@@ -190,10 +192,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_release(ErlNifEnv* env, int argc, const ERL
 ERL_NIF_TERM bitcask_nifs_keydir_info(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_release(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
-ERL_NIF_TERM bitcask_nifs_create_file(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_create_tmp_file(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
-
-ERL_NIF_TERM bitcask_nifs_set_osync(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
 ERL_NIF_TERM bitcask_nifs_lock_acquire(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_lock_release(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
@@ -234,16 +233,12 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_info", 1, bitcask_nifs_keydir_info},
     {"keydir_release", 1, bitcask_nifs_keydir_release},
 
-    {"create_file", 1, bitcask_nifs_create_file},
-
-    {"set_osync", 1, bitcask_nifs_set_osync},
-
     {"lock_acquire",   2, bitcask_nifs_lock_acquire},
     {"lock_release",   1, bitcask_nifs_lock_release},
     {"lock_readdata",  1, bitcask_nifs_lock_readdata},
     {"lock_writedata", 2, bitcask_nifs_lock_writedata},
 
-    {"file_open",   1, bitcask_nifs_file_open},
+    {"file_open",   2, bitcask_nifs_file_open},
     {"file_close",  1, bitcask_nifs_file_close},
     {"file_sync",   1, bitcask_nifs_file_sync},
     {"file_pread",  3, bitcask_nifs_file_pread},
@@ -1117,65 +1112,6 @@ ERL_NIF_TERM bitcask_nifs_keydir_release(ErlNifEnv* env, int argc, const ERL_NIF
     }
 }
 
-ERL_NIF_TERM bitcask_nifs_create_file(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
-{
-    char filename[4096];
-    if (enif_get_string(env, argv[0], filename, sizeof(filename), ERL_NIF_LATIN1) > 0)
-    {
-        // Try to open the provided filename exclusively.
-        int fd = open(filename, O_CREAT | O_EXCL, S_IREAD | S_IWRITE);
-        if (fd > -1)
-        {
-            close(fd);
-            return ATOM_TRUE;
-        }
-        else
-        {
-            return ATOM_FALSE;
-        }
-    }
-    else
-    {
-        return enif_make_badarg(env);
-    }
-}
-
-
-ERL_NIF_TERM bitcask_nifs_set_osync(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
-{
-    int fd;
-    if (enif_get_int(env, argv[0], &fd))
-    {
-        // Get the current flags for the file handle in question
-        int flags = fcntl(fd, F_GETFL, 0);
-        if (flags != -1)
-        {
-            if (fcntl(fd, F_SETFL, flags | O_SYNC) != -1)
-            {
-                return ATOM_OK;
-            }
-            else
-            {
-                ERL_NIF_TERM error = enif_make_tuple2(env, ATOM_SETFL_ERROR,
-                                                      enif_make_atom(env, erl_errno_id(errno)));
-                return enif_make_tuple2(env, ATOM_ERROR, error);
-            }
-        }
-        else
-        {
-            ERL_NIF_TERM error = enif_make_tuple2(env, ATOM_GETFL_ERROR,
-                                                  enif_make_atom(env, erl_errno_id(errno)));
-            return enif_make_tuple2(env, ATOM_ERROR, error);
-        }
-
-    }
-    else
-    {
-        return enif_make_badarg(env);
-    }
-}
-
-
 ERL_NIF_TERM bitcask_nifs_lock_acquire(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     char filename[4096];
@@ -1308,14 +1244,35 @@ ERL_NIF_TERM bitcask_nifs_lock_writedata(ErlNifEnv* env, int argc, const ERL_NIF
     }
 }
 
+int get_file_open_flags(ErlNifEnv* env, ERL_NIF_TERM list)
+{
+    int flags = -1;
+    ERL_NIF_TERM head, tail;
+    while (enif_get_list_cell(env, list, &head, &tail))
+    {
+        if (head == ATOM_CREATE)
+        {
+            flags = O_CREAT | O_EXCL | O_RDWR | O_APPEND;
+        }
+        else if (head == ATOM_READONLY)
+        {
+            flags = O_RDONLY;
+        }
+
+        list = tail;
+    }
+    return flags;
+}
+
 
 ERL_NIF_TERM bitcask_nifs_file_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     char filename[4096];
-    if (enif_get_string(env, argv[0], filename, sizeof(filename), ERL_NIF_LATIN1) > 0)
+    if (enif_get_string(env, argv[0], filename, sizeof(filename), ERL_NIF_LATIN1) &&
+        enif_is_list(env, argv[1]))
     {
-        // Try to open the provided filename exclusively.
-        int fd = open(filename, O_CREAT | O_RDWR, S_IREAD | S_IWRITE);
+        int flags = get_file_open_flags(env, argv[1]);
+        int fd = open(filename, flags, S_IREAD | S_IWRITE);
         if (fd > -1)
         {
             // Setup a resource for our handle
@@ -1898,6 +1855,8 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
     ATOM_SETFL_ERROR = enif_make_atom(env, "setfl_error");
     ATOM_TRUE = enif_make_atom(env, "true");
     ATOM_EOF = enif_make_atom(env, "eof");
+    ATOM_CREATE = enif_make_atom(env, "create");
+    ATOM_READONLY = enif_make_atom(env, "readonly");
 
     return 0;
 }

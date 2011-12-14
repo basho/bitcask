@@ -65,13 +65,13 @@
 -spec create_file(Dirname :: string(), Opts :: [any()]) -> {ok, #filestate{}}.
 create_file(DirName, Opts) ->
     TS = erlang:max(most_recent_tstamp(DirName) + 1, tstamp()),
-    create_file_loop(DirName, Opts, TS).
+    create_file_loop(DirName, [create] ++ Opts, TS).
 
 %% @doc Open an existing file for reading.
 %% Called with fully-qualified filename.
 -spec open_file(Filename :: string()) -> {ok, #filestate{}} | {error, any()}.
 open_file(Filename) ->
-    case bitcask_nifs:file_open(Filename) of
+    case bitcask_nifs:file_open(Filename, [readonly]) of
         {ok, FD} ->
             {ok, #filestate{mode = read_only,
                             filename = Filename, tstamp = file_tstamp(Filename),
@@ -378,7 +378,7 @@ fold_keys_loop(Fd, Offset, Fun, Acc0) ->
 
 
 fold_hintfile(State, Fun, Acc) ->
-    case bitcask_nifs:file_open(hintfile_name(State)) of
+    case bitcask_nifs:file_open(hintfile_name(State), [readonly]) of
         {ok, HintFd} ->
             try
                 {ok, DataI} = file:read_file_info(State#filestate.filename),
@@ -439,10 +439,9 @@ fold_hintfile_loop(DataSize, HintFile, Fd, HintRecord, Fun, Acc0) ->
 create_file_loop(DirName, Opts, Tstamp) ->
     Filename = mk_filename(DirName, Tstamp),
     ok = filelib:ensure_dir(Filename),
-    case bitcask_nifs:create_file(Filename) of
-        true ->
-            {ok, FD} = bitcask_nifs:file_open(Filename),
-            {ok, HintFD} = bitcask_nifs:file_open(hintfile_name(Filename)),
+    case bitcask_nifs:file_open(Filename, Opts) of
+        {ok, FD} ->
+            {ok, HintFD} = bitcask_nifs:file_open(hintfile_name(Filename), Opts),
 
             %% TODO: Reinstate O_SYNC support
             {ok, #filestate{mode = read_write,
@@ -450,7 +449,7 @@ create_file_loop(DirName, Opts, Tstamp) ->
                             tstamp = file_tstamp(Filename),
                             hintfd = HintFD, fd = FD, ofs = 0}};
 
-        false ->
+        {error, _} ->
             %% Couldn't create a new file with the requested name,
             %% check for the more recent timestamp and increment by
             %% 1 and try again.
@@ -468,7 +467,7 @@ create_file_loop(DirName, Opts, Tstamp) ->
 generate_hintfile(Filename, {FolderMod, FolderFn, FolderArgs}) ->
     %% Create the temp file that we will write records out to.
     TmpFilename = temp_filename(Filename ++ ".~w"),
-    {ok, Fd} = bitcask_nifs:file_open(TmpFilename),
+    {ok, Fd} = bitcask_nifs:file_open(TmpFilename, [create]),
 
     %% Run the provided fold function over whatever the dataset is. The function
     %% is passed the Fd as the accumulator argument, and must return the same
