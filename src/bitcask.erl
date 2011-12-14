@@ -241,7 +241,7 @@ put(Ref, Key, Value) ->
                                              write_lock = WriteLock };
                 {error, Reason} ->
                     State2 = undefined,
-                    throw({error, {write_locked, Reason}})
+                    throw({error, {write_locked, Reason, State#bc_state.dirname}})
             end;
 
         ok ->
@@ -466,7 +466,7 @@ merge1(Dirname, Opts, FilesToMerge) ->
             ok;
         {error, Reason} ->
             Lock = undefined,
-            throw({error, {merge_locked, Reason}})
+            throw({error, {merge_locked, Reason, Dirname}})
     end,
 
     %% Get the live keydir
