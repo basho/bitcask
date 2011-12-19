@@ -35,12 +35,18 @@
          keydir_wait_pending/1,
          keydir_info/1,
          keydir_release/1,
-         create_file/1,
-         set_osync/1,
          lock_acquire/2,
          lock_release/1,
          lock_readdata/1,
-         lock_writedata/2]).
+         lock_writedata/2,
+         file_open/2,
+         file_close/1,
+         file_sync/1,
+         file_pread/3,
+         file_pwrite/3,
+         file_read/2,
+         file_write/2,
+         file_seekbof/1]).
 
 -on_load(init/0).
 
@@ -98,10 +104,6 @@
          [{integer(), integer(), integer(), integer(), integer()}]}.
 -spec keydir_release(reference()) ->
         ok.
--spec create_file(string()) ->
-        true | false.
--spec set_osync(integer()) ->
-        ok | {error, {setfl_error, eio}} | {error, {getfl_error, eio}}.
 -spec lock_acquire(string(), integer()) ->
         {ok, reference()} | {error, atom()}.
 -spec lock_release(reference()) ->
@@ -295,20 +297,6 @@ keydir_release(_Ref) ->
         _   -> exit("NIF library not loaded")
     end.
 
-create_file(_Filename) ->
-    case random:uniform(999999999999) of
-        666 -> true;
-        667 -> false;
-        _   -> exit("NIF library not loaded")
-    end.
-
-set_osync(_Filehandle) ->
-    case random:uniform(999999999999) of
-        666 -> ok;
-        667 -> {error, {setfl_error, eio}};
-        668 -> {error, {getfl_error, eio}};
-        _   -> exit("NIF library not loaded")
-    end.
 
 lock_acquire(_Filename, _IsWriteLock) ->
     case random:uniform(999999999999) of
@@ -342,6 +330,31 @@ lock_writedata(_Ref, _Data) ->
         669 -> {error, lock_not_writable};
         _   -> exit("NIF library not loaded")
     end.
+
+file_open(_Filename, _Opts) ->
+    erlang:nif_error({error, not_loaded}).
+
+file_close(_Ref) ->
+    erlang:nif_error({error, not_loaded}).
+
+file_sync(_Ref) ->
+    erlang:nif_error({error, not_loaded}).
+
+file_pread(_Ref, _Offset, _Size) ->
+    erlang:nif_error({error, not_loaded}).
+
+file_pwrite(_Ref, _Offset, _Bytes) ->
+    erlang:nif_error({error, not_loaded}).
+
+file_read(_Ref, _Size) ->
+    erlang:nif_error({error, not_loaded}).
+
+file_write(_Ref, _Bytes) ->
+    erlang:nif_error({error, not_loaded}).
+
+file_seekbof(_Ref) ->
+    erlang:nif_error({error, not_loaded}).
+
 
 %% ===================================================================
 %% Internal functions
@@ -656,12 +669,6 @@ keydir_wait_pending_test() ->
     ok = receive waited -> ok
          after  1000 -> timeout_err
          end.
-
-create_file_test() ->
-    Fname = "/tmp/bitcask_nifs.createfile.test",
-    file:delete(Fname),
-    true = create_file(Fname),
-    false = create_file(Fname).
 
 
 -ifdef(EQC).
