@@ -177,6 +177,7 @@ static ERL_NIF_TERM ATOM_TRUE;
 static ERL_NIF_TERM ATOM_EOF;
 static ERL_NIF_TERM ATOM_CREATE;
 static ERL_NIF_TERM ATOM_READONLY;
+static ERL_NIF_TERM ATOM_O_SYNC;
 
 // Prototypes
 ERL_NIF_TERM bitcask_nifs_keydir_new0(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
@@ -1258,6 +1259,10 @@ int get_file_open_flags(ErlNifEnv* env, ERL_NIF_TERM list)
         {
             flags = O_RDONLY;
         }
+        else if (head == ATOM_O_SYNC)
+        {
+            flags |= O_SYNC;
+        }
 
         list = tail;
     }
@@ -1857,6 +1862,7 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
     ATOM_EOF = enif_make_atom(env, "eof");
     ATOM_CREATE = enif_make_atom(env, "create");
     ATOM_READONLY = enif_make_atom(env, "readonly");
+    ATOM_O_SYNC = enif_make_atom(env, "o_sync");
 
     return 0;
 }
