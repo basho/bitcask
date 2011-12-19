@@ -439,11 +439,18 @@ fold_hintfile_loop(DataSize, HintFile, Fd, HintRecord, Fun, Acc0) ->
 create_file_loop(DirName, Opts, Tstamp) ->
     Filename = mk_filename(DirName, Tstamp),
     ok = filelib:ensure_dir(Filename),
-    case bitcask_nifs:file_open(Filename, Opts) of
-        {ok, FD} ->
-            {ok, HintFD} = bitcask_nifs:file_open(hintfile_name(Filename), Opts),
 
-            %% TODO: Reinstate O_SYNC support
+    %% Check for o_sync strategy and add to opts
+    FinalOpts = case bitcask:get_opt(sync_strategy, Opts) of
+                    o_sync ->
+                        [o_sync | Opts];
+                    _ ->
+                        Opts
+                end,
+
+    case bitcask_nifs:file_open(Filename, FinalOpts) of
+        {ok, FD} ->
+            {ok, HintFD} = bitcask_nifs:file_open(hintfile_name(Filename), FinalOpts),
             {ok, #filestate{mode = read_write,
                             filename = Filename,
                             tstamp = file_tstamp(Filename),
@@ -466,8 +473,7 @@ create_file_loop(DirName, Opts, Tstamp) ->
 
 generate_hintfile(Filename, {FolderMod, FolderFn, FolderArgs}) ->
     %% Create the temp file that we will write records out to.
-    TmpFilename = temp_filename(Filename ++ ".~w"),
-    {ok, Fd} = bitcask_nifs:file_open(TmpFilename, [create]),
+    {ok, Fd, TmpFilename} = temp_file(Filename ++ ".~w"),
 
     %% Run the provided fold function over whatever the dataset is. The function
     %% is passed the Fd as the accumulator argument, and must return the same
@@ -496,17 +502,17 @@ most_recent_tstamp(DirName) ->
                end, 0, data_file_tstamps(DirName)).
   
 
-temp_filename(Template) ->
-    temp_filename(Template, now()).
+temp_file(Template) ->
+    temp_file(Template, now()).
 
-temp_filename(Template, Seed0) ->
+temp_file(Template, Seed0) ->
     {Int, Seed} = random:uniform_s(65536, Seed0),
     Filename = ?FMT(Template, [Int]),
-    case bitcask_nifs:create_file(Filename) of
-        true ->
-            Filename;
-        false ->
-            temp_filename(Template, Seed)
+    case bitcask_nifs:file_open(Filename, [create]) of
+        {ok, FD} ->
+            {ok, FD, Filename};
+        {error, eexists} ->
+            temp_file(Template, Seed)
     end.
 
 %% ===================================================================
