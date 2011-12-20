@@ -14,6 +14,12 @@
                     hintfd,   % File handle for hints
                     ofs }).   % Current offset for writing
 
+-record(file_status, { filename,
+                       fragmented,
+                       dead_bytes,
+                       total_bytes,
+                       oldest_tstamp }).
+
 
 -define(FMT(Str, Args), lists:flatten(io_lib:format(Str, Args))).
 

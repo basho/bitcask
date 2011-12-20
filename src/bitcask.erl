@@ -552,7 +552,7 @@ merge1(Dirname, Opts, FilesToMerge) ->
 -spec needs_merge(reference()) -> {true, [string()]} | false.
 needs_merge(Ref) ->
     State = get_state(Ref),
-    {_KeyCount, Summary} = status(Ref),
+    {_KeyCount, Summary} = summary_info(Ref),
 
     %% Review all the files we currently have open in read_files and
     %% see if any no longer exist by name (i.e. have been deleted by
@@ -573,12 +573,15 @@ needs_merge(Ref) ->
     %%
     %% frag_merge_trigger - Any file exceeds this % fragmentation
     %% dead_bytes_merge_trigger - Any file has more than this # of dead bytes
+    %% expiry_secs - Any file has an expired key
     %%
     FragTrigger = get_opt(frag_merge_trigger, State#bc_state.opts),
     DeadBytesTrigger = get_opt(dead_bytes_merge_trigger, State#bc_state.opts),
-    NeedsMerge = lists:any(fun({_FileName, Frag, DeadBytes, _}) ->
-                                   (Frag >= FragTrigger)
-                                       or (DeadBytes >= DeadBytesTrigger)
+    ExpirationTime = expiry_time(State#bc_state.opts),
+    NeedsMerge = lists:any(fun(F) ->
+                                   (F#file_status.fragmented >= FragTrigger)
+                                       or (F#file_status.dead_bytes >= DeadBytesTrigger)
+                                       or (F#file_status.oldest_tstamp < ExpirationTime)
                            end, Summary),
 
     case NeedsMerge of
@@ -589,6 +592,7 @@ needs_merge(Ref) ->
             %% frag_threshold - At least this % fragmented
             %% dead_bytes_threshold - At least this # of dead bytes
             %% small_file_threshold - Any file < this # of bytes
+            %% expiry_secs - Any file has a expired key
             %%
             FragThreshold = get_opt(frag_threshold,
                                     State#bc_state.opts),
@@ -596,11 +600,13 @@ needs_merge(Ref) ->
                                          State#bc_state.opts),
             SmallFileThreshold = get_opt(small_file_threshold,
                                          State#bc_state.opts),
-            FileNames = [FileName ||
-                          {FileName, Frag, DeadBytes, TotalBytes} <- Summary,
-                            (Frag >= FragThreshold)
-                                or (DeadBytes >= DeadBytesThreshold)
-                                or (TotalBytes < SmallFileThreshold)],
+            Filter = fun(F) ->
+                             (F#file_status.fragmented >= FragThreshold)
+                                 or (F#file_status.dead_bytes >= DeadBytesThreshold)
+                                 or (F#file_status.total_bytes < SmallFileThreshold)
+                                 or (F#file_status.oldest_tstamp < ExpirationTime)
+                     end,
+            FileNames = [F#file_status.filename || F <- Summary, Filter(F)],
             {true, FileNames};
         false ->
             false
@@ -608,13 +614,23 @@ needs_merge(Ref) ->
 
 -spec status(reference()) -> {integer(), [{string(), integer(), integer(), integer()}]}.
 status(Ref) ->
+    %% Rewrite the new, record-style status from status_info into a backwards-compatible
+    %% call.
+    %% TODO: Next major revision should remove this variation on status
+    {KeyCount, Summary} = summary_info(Ref),
+    {KeyCount, [{F#file_status.filename, F#file_status.fragmented,
+                 F#file_status.dead_bytes, F#file_status.total_bytes} || F <- Summary]}.
+
+
+-spec summary_info(reference()) -> {integer(), [#file_status{}]}.
+summary_info(Ref) ->
     State = get_state(Ref),
 
     %% Pull current info for the bitcask. In particular, we want
     %% the file stats so we can determine how much fragmentation
     %% is present
     %%
-    %% Fstat has form: [{FileId, LiveCount, TotalCount, LiveBytes, TotalBytes}]
+    %% Fstat has form: [{FileId, LiveCount, TotalCount, LiveBytes, TotalBytes, OldestTstamp}]
     %% and is only an estimate/snapshot.
     {KeyCount, _KeyBytes, Fstats} = bitcask_nifs:keydir_info(
                                       State#bc_state.keydir),
@@ -628,18 +644,16 @@ status(Ref) ->
             WritingFileId = bitcask_fileops:file_tstamp(Filename)
     end,
 
-    %% Convert fstats list into a list with details we're interested in,
-    %% specifically:
-    %% [{FileName, % Fragmented, Dead Bytes, Total Bytes}]
+    %% Convert fstats list into a list of #file_status
     %%
     %% Note that we also, filter the WritingFileId from any further
     %% consideration.
     Summary0 = [summarize(State#bc_state.dirname, S) ||
-                   S <- Fstats, element(1, S) /= WritingFileId],
+                   S <- Fstats, element(2, S) /= WritingFileId],
 
     %% Remove any files that don't exist from the initial summary
     Summary = lists:keysort(1, [S || S <- Summary0,
-                                     filelib:is_file(element(1, S))]),
+                                     filelib:is_file(element(2, S))]),
     {KeyCount, Summary}.
 
 
@@ -647,11 +661,12 @@ status(Ref) ->
 %% Internal functions
 %% ===================================================================
 
-summarize(Dirname, {FileId, LiveCount, TotalCount, LiveBytes, TotalBytes}) ->
-    Fragmented = trunc((1 - LiveCount/TotalCount) * 100),
-    DeadBytes = TotalBytes - LiveBytes,
-    {bitcask_fileops:mk_filename(Dirname, FileId), 
-     Fragmented, DeadBytes, TotalBytes}.
+summarize(Dirname, {FileId, LiveCount, TotalCount, LiveBytes, TotalBytes, OldestTstamp}) ->
+    #file_status { filename = bitcask_fileops:mk_filename(Dirname, FileId),
+                   fragmented = trunc((1 - LiveCount/TotalCount) * 100),
+                   dead_bytes = TotalBytes - LiveBytes,
+                   total_bytes = TotalBytes,
+                   oldest_tstamp = OldestTstamp }.
 
 expiry_time(Opts) ->
     ExpirySecs = get_opt(expiry_secs, Opts),
