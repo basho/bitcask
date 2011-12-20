@@ -248,7 +248,7 @@ put(Ref, Key, Value) ->
             State2 = State
     end,
 
-    Tstamp = bitcask_fileops:tstamp(),
+    Tstamp = bitcask_time:tstamp(),
     {ok, WriteFile2, Offset, Size} = bitcask_fileops:write(
                                        State2#bc_state.write_file,
                                        Key, Value, Tstamp),
@@ -656,7 +656,7 @@ summarize(Dirname, {FileId, LiveCount, TotalCount, LiveBytes, TotalBytes}) ->
 expiry_time(Opts) ->
     ExpirySecs = get_opt(expiry_secs, Opts),
     case ExpirySecs > 0 of
-        true -> bitcask_fileops:tstamp() - ExpirySecs;
+        true -> bitcask_time:tstamp() - ExpirySecs;
         false -> 0
     end.
 
