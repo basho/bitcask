@@ -1,16 +1,8 @@
 {application, bitcask,
  [
   {description, ""},
-  {vsn, "1.4.0"},
-  {modules, [
-             bitcask,
-             bitcask_app,
-             bitcask_merge_worker,
-             bitcask_nifs,
-             bitcask_lockops,
-             bitcask_fileops,
-             bitcask_sup
-            ]},
+  {vsn, "1.3.0"},
+  {modules, []},
   {registered, []},
   {applications, [
                   kernel,
