@@ -42,7 +42,6 @@
          filename/1,
          hintfile_name/1,
          file_tstamp/1,
-         tstamp/0,
          check_write/4]).
 
 -include_lib("kernel/include/file.hrl").
@@ -64,8 +63,7 @@
 %% Called on a Dirname, will open a fresh file in that directory.
 -spec create_file(Dirname :: string(), Opts :: [any()]) -> {ok, #filestate{}}.
 create_file(DirName, Opts) ->
-    TS = erlang:max(most_recent_tstamp(DirName) + 1, tstamp()),
-    create_file_loop(DirName, [create] ++ Opts, TS).
+    create_file_loop(DirName, [create] ++ Opts, most_recent_tstamp(DirName) + 1).
 
 %% @doc Open an existing file for reading.
 %% Called with fully-qualified filename.
@@ -310,12 +308,6 @@ has_hintfile(#filestate { filename = Fname }) ->
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
-
-%% @private
-tstamp() ->
-    {Mega, Sec, _Micro} = now(),
-    (Mega * 1000000) + Sec.
-
 
 fold_loop(Fd, Filename, FTStamp, Header, Offset, Fun, Acc0) ->
     <<Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
