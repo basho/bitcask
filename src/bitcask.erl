@@ -187,7 +187,10 @@ get(Ref, Key, TryNum) ->
             not_found;
         E when is_record(E, bitcask_entry) ->
             case E#bitcask_entry.tstamp < expiry_time(State#bc_state.opts) of
-                true -> not_found;
+                true ->
+                    %% Expired entry; remove from keydir and free up memory
+                    ok = bitcask_nifs:keydir_remove(State#bc_state.keydir, Key),
+                    not_found;
                 false ->
                     %% HACK: Use a fully-qualified call to get_filestate/2 so that
                     %% we can intercept calls w/ Pulse tests.
