@@ -667,6 +667,10 @@ dead_bytes_threshold(Opts) ->
     end.
 
 small_file_threshold(Opts) ->
+    %% We need to do a special check on small_file_threshold for non-integer
+    %% values since it is using a less-than check. Other thresholds typically
+    %% do a greater-than check and can take advantage of fact that integers
+    %% are always greater than an atom.
     case get_opt(small_file_threshold, Opts) of
         Threshold when is_integer(Threshold) ->
             fun(F) ->
@@ -727,7 +731,7 @@ summary_info(Ref) ->
     %% Note that we also, filter the WritingFileId from any further
     %% consideration.
     Summary0 = [summarize(State#bc_state.dirname, S) ||
-                   S <- Fstats, element(2, S) /= WritingFileId],
+                   S <- Fstats, element(1, S) /= WritingFileId],
 
     %% Remove any files that don't exist from the initial summary
     Summary = lists:keysort(1, [S || S <- Summary0,
