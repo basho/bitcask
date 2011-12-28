@@ -324,7 +324,11 @@ fold_loop(Fd, Filename, FTStamp, Header, Offset, Fun, Acc0) ->
                         <<NextHeader:?HEADER_SIZE/bytes>> ->
                             fold_loop(Fd, Filename, FTStamp, NextHeader,
                                       Offset + TotalSz, Fun, Acc);
-                        _ ->
+                        <<>> ->
+                            Acc;
+                        Tail ->
+                            error_logger:error_msg("Trailing data, discarding"
+                                " (~p bytes)\n", [size(Tail)]),
                             Acc
                     end;
                 _ ->
@@ -333,6 +337,10 @@ fold_loop(Fd, Filename, FTStamp, Header, Offset, Fun, Acc0) ->
         {ok, X} ->
             error_logger:error_msg("Bad datafile entry, discarding"
                                    "(~p/~p bytes)\n", [size(X),TotalSz]),
+            Acc0;
+        eof ->
+            error_logger:error_msg("Unexpected EOF, ignore (~p bytes)\n",
+                [TotalSz]),
             Acc0;
         {error, Reason} ->
             {error, Reason}
