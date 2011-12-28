@@ -1098,6 +1098,39 @@ fold_test() ->
     ?assertEqual(default_dataset(), lists:reverse(L)),
     close(B).
 
+fold_corrupt_file_test() ->
+    TestDir = "/tmp/bc.test.fold_corrupt_file_test",
+    TestDataFile = TestDir ++ "/1.bitcask.data",
+
+    os:cmd("rm -rf " ++ TestDir),
+    B = bitcask:open(TestDir, [read_write]),
+    ok = bitcask:put(B,<<"k">>,<<"v">>),
+    close(B),
+
+    DataList = [{<<"k">>, <<"v">>}],
+    FoldFun = fun (K, V, Acc) -> [{K, V} | Acc] end,
+
+    B2 = bitcask:open(TestDir),
+    ?assertEqual(DataList, bitcask:fold(B2, FoldFun,[])),
+    close(B2),
+
+    % Incomplete header
+    {ok, F} = file:open(TestDataFile, [append, raw, binary]),
+    ok = file:write(F, <<100:32, 100:32, 100:16>>),
+    file:close(F),
+    B3 = bitcask:open(TestDir),
+    ?assertEqual(DataList, bitcask:fold(B3, FoldFun,[])),
+    close(B3),
+
+    % Header without any data
+    {ok, F2} = file:open(TestDataFile, [append, raw, binary]),
+    ok = file:write(F2, <<100:32>>),
+    file:close(F2),
+    B4 = bitcask:open(TestDir),
+    ?assertEqual(DataList, bitcask:fold(B4, FoldFun,[])),
+    close(B4),
+    ok.
+
 %%
 %% Check that fold visits the objects at the point the keydir
 %% was frozen.  Check with and without wrapping the cask.
