@@ -1360,14 +1360,15 @@ ERL_NIF_TERM bitcask_nifs_file_sync(ErlNifEnv* env, int argc, const ERL_NIF_TERM
 ERL_NIF_TERM bitcask_nifs_file_pread(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     bitcask_file_handle* handle;
-    off_t offset;
-    size_t count;
-
+    unsigned long offset_ul;
+    unsigned long count_ul;
     if (enif_get_resource(env, argv[0], bitcask_file_RESOURCE, (void**)&handle) &&
-        enif_get_ulong(env, argv[1], (unsigned long*)&offset) && /* Offset */
-        enif_get_ulong(env, argv[2], (unsigned long*)&count))    /* Count */
+        enif_get_ulong(env, argv[1], &offset_ul) && /* Offset */
+        enif_get_ulong(env, argv[2], &count_ul))    /* Count */
     {
         ErlNifBinary bin;
+        off_t offset = offset_ul;
+        size_t count = count_ul;
         if (!enif_alloc_binary(count, &bin))
         {
             return enif_make_tuple2(env, ATOM_ERROR, ATOM_ALLOCATION_ERROR);
@@ -1417,16 +1418,18 @@ ERL_NIF_TERM bitcask_nifs_file_pread(ErlNifEnv* env, int argc, const ERL_NIF_TER
 ERL_NIF_TERM bitcask_nifs_file_pwrite(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     bitcask_file_handle* handle;
-    off_t offset;
+    unsigned long offset_ul;
     ErlNifBinary bin;
 
     if (enif_get_resource(env, argv[0], bitcask_file_RESOURCE, (void**)&handle) &&
-        enif_get_ulong(env, argv[1], (unsigned long*)&offset) && /* Offset */
+        enif_get_ulong(env, argv[1], &offset_ul) && /* Offset */
         enif_inspect_iolist_as_binary(env, argv[2], &bin)) /* Bytes to write */
     {
         unsigned char* buf = bin.data;
         ssize_t bytes_written = 0;
         ssize_t count = bin.size;
+        off_t offset = offset_ul;
+
         while (count > 0)
         {
             bytes_written = pwrite(handle->fd, buf, count, offset);
