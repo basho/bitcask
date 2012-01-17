@@ -168,13 +168,12 @@ read(Filename, Offset, Size) when is_list(Filename) ->
 read(#filestate { fd = FD }, Offset, Size) ->
     case bitcask_nifs:file_pread(FD, Offset, Size) of
         {ok, <<Crc32:?CRCSIZEFIELD/unsigned, Bytes/binary>>} ->
-            %% Unpack the actual data
-            <<_Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD, ValueSz:?VALSIZEFIELD,
-             Key:KeySz/bytes, Value:ValueSz/bytes>> = Bytes,
-
-            %% Verify the CRC of the data
             case erlang:crc32(Bytes) of
                 Crc32 ->
+                    %% Unpack the actual data -- CRC validation ensures this
+                    %% will unpack as expected
+                    <<_Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD, ValueSz:?VALSIZEFIELD,
+                      Key:KeySz/bytes, Value:ValueSz/bytes>> = Bytes,
                     {ok, Key, Value};
                 _BadCrc ->
                     {error, bad_crc}
