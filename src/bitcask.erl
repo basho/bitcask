@@ -552,21 +552,37 @@ merge1(Dirname, Opts, FilesToMerge) ->
                       opts = Opts },
 
     %% Finally, start the merge process
-    State1 = merge_files(State),
+    StateF = case merge_files(State) of
+                 {ok, State1} ->
+                     State1;
+                 {error, {ErrFile, ErrReason}, State1} ->
+                     %% TODO: Should we do something with the file that failed to
+                     %% merge, like move it aside?
+                     error_logger:error_msg("Merge failed while processing ~s:~p\n",
+                                            [bitcask_fileops:filename(ErrFile), ErrReason]),
+                     State1
+             end,
 
     %% Make sure to close the final output file
-    ok = bitcask_fileops:sync(State1#mstate.out_file),
-    ok = bitcask_fileops:close(State1#mstate.out_file),
+    ok = bitcask_fileops:sync(StateF#mstate.out_file),
+    ok = bitcask_fileops:close(StateF#mstate.out_file),
 
     %% Explicitly release our keydirs instead of waiting for GC
     bitcask_nifs:keydir_release(LiveKeyDir),
-    bitcask_nifs:keydir_release(DelKeyDir),    
+    bitcask_nifs:keydir_release(DelKeyDir),
 
-    %% Cleanup the original input files and release our lock
+    %% Cleanup the files that successfully merged
     [begin
          bitcask_fileops:delete(F),
          bitcask_fileops:close(F)
-     end || F <- State#mstate.input_files],
+     end || F <- StateF#mstate.merged_files],
+
+    %% Close remaining input files
+    [begin
+         bitcask_fileops:close(F)
+     end || F <- StateF#mstate.input_files],
+
+    %% Release our merge lock
     ok = bitcask_lockops:release(Lock).
 
 -spec needs_merge(reference()) -> {true, [string()]} | false.
@@ -870,15 +886,19 @@ list_data_files(Dirname, WritingFile, Mergingfile) ->
           F /= Mergingfile].
 
 merge_files(#mstate { input_files = [] } = State) ->
-    State;
+    {ok, State};
 merge_files(#mstate { input_files = [File | Rest]} = State) ->
     FileId = bitcask_fileops:file_tstamp(File),
     F = fun(K, V, Tstamp, Pos, State0) ->
                 merge_single_entry(K, V, Tstamp, FileId, Pos, State0)
         end,
-    State1 = bitcask_fileops:fold(File, F, State),
-    ok = bitcask_fileops:close(File),
-    merge_files(State1#mstate { input_files = Rest }).
+    case bitcask_fileops:fold(File, F, State) of
+        {error, Reason} ->
+            {error, {File, Reason}, State#mstate { input_files = Rest }};
+        State1 when is_record(State1, mstate) ->
+            merge_files(State1#mstate { input_files = Rest,
+                                        merged_files = [File | State1#mstate.merged_files] })
+    end.
 
 merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
     case out_of_date(K, Tstamp, FileId, Pos, State#mstate.expiry_time, false,
