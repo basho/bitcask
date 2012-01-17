@@ -1638,7 +1638,19 @@ truncate_file(Path, Offset) ->
     {ok, FH} = file:open(Path, [read, write]),
     {ok, Offset} = file:position(FH, Offset),
     ok = file:truncate(FH),
-    file:close(FH).    
+    file:close(FH).
+
+badcrc_merge_test() ->
+    Dir = "/tmp/bc.test.badcrc",
+    os:cmd("rm -rf " ++ Dir),
+    os:cmd("mkdir " ++ Dir),
+    B1 = bitcask:open(Dir, [read_write]),
+    bitcask:put(B1, <<"k">>, <<"v">>),
+    ok = bitcask:close(B1),
+    [DataFile] = filelib:wildcard(Dir ++ "/*.data"),
+    {ok, Fh} = file:open(DataFile, [read, write]),
+    ok = file:pwrite(Fh, ?HEADER_SIZE, <<"l">>),
+    file:close(Fh),
+    ok = merge(Dir).
 
 -endif.
-
