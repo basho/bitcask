@@ -27,6 +27,7 @@
 
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_fsm.hrl").
+-include_lib("kernel/include/file.hrl").
 
 -compile(export_all).
 
@@ -50,6 +51,7 @@ init(_S) ->
 
 closed(_S) ->
     [{opened, {call, bitcask, open, [?TEST_DIR, [read_write, {open_timeout, 0}, sync_strategy()]]}},
+     {closed, {call, ?MODULE, truncate_hint, [int(), int()]}},
      {closed, {call, ?MODULE, create_stale_lock, []}}].
 
 opened(S) ->
@@ -62,8 +64,6 @@ opened(S) ->
 
 next_state_data(init, closed, S, _, {call, _, set_keys, [Keys]}) ->
     S#state{ keys = [<<"k">> | Keys] }; % ensure always one key
-next_state_data(closed, closed, S, _, {call, ?MODULE, create_stale_lock, _}) ->
-    S;
 next_state_data(closed, opened, S, Bcask, {call, bitcask, open, _}) ->
     S#state { bitcask = Bcask };
 next_state_data(opened, closed, S, _, {call, _, close, _}) ->
@@ -142,6 +142,21 @@ create_stale_lock() ->
     Fname = filename:join(?TEST_DIR, "bitcask.write.lock"),
     filelib:ensure_dir(Fname),
     ok = file:write_file(Fname, "102349430239 abcdef\n").
+
+truncate_hint(Seed, TruncBy0) ->
+    case filelib:wildcard(?TEST_DIR ++ "/*.hint") of
+        [] ->
+            ok;
+        Hints->
+            Hint = lists:nth(1 + (abs(Seed) rem length(Hints)), Hints),
+            {ok, Fi} = file:read_file_info(Hint),
+            {ok, Fh} = file:open(Hint, [read, write]),
+            TruncBy = (1 + abs(TruncBy0)) rem (Fi#file_info.size+1),
+            io:format(user, "Truncating ~p  by ~p\n", [Hint, TruncBy]),
+            {ok, _} = file:position(Fh, {eof, -TruncBy}),
+            file:truncate(Fh),
+            file:close(Fh)
+    end.
 
 -endif.
 
