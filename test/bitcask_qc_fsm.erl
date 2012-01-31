@@ -31,28 +31,38 @@
 -compile(export_all).
 
 -record(state,{ bitcask,
-                data = [] }).
+                data = [],
+                keys }). %% Keys to use in the test
+
+-define(QC_OUT(P),
+        eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
 -define(TEST_DIR, "/tmp/bitcask.qc").
 
 initial_state() ->
-    closed.
+    init.
 
 initial_state_data() ->
     #state{}.
 
+init(_S) ->
+    [{closed, {call, ?MODULE, set_keys, [list(key_gen())]}}].
+
 closed(_S) ->
     [{opened, {call, bitcask, open, [?TEST_DIR, [read_write, {open_timeout, 0}, sync_strategy()]]}},
+     %% {closed, {call, erlang, garbage_collect, []}},
      {closed, {call, ?MODULE, create_stale_lock, []}}].
 
 opened(S) ->
     [{closed, {call, bitcask, close, [S#state.bitcask]}},
-     {opened, {call, bitcask, get, [S#state.bitcask, keys()]}},
-     {opened, {call, bitcask, put, [S#state.bitcask, keys(), values()]}},
-     {opened, {call, bitcask, delete, [S#state.bitcask, keys()]}},
+     {opened, {call, bitcask, get, [S#state.bitcask, key(S)]}},
+     {opened, {call, bitcask, put, [S#state.bitcask, key(S), value()]}},
+     {opened, {call, bitcask, delete, [S#state.bitcask, key(S)]}},
      {opened, {call, bitcask, merge, [?TEST_DIR]}}
      ].
 
+next_state_data(init, closed, S, _, {call, _, set_keys, [Keys]}) ->
+    S#state{ keys = [<<"k">> | Keys] }; % ensure always one key
 next_state_data(closed, closed, S, _, {call, ?MODULE, create_stale_lock, _}) ->
     S;
 next_state_data(closed, opened, S, Bcask, {call, bitcask, open, _}) ->
@@ -63,12 +73,18 @@ next_state_data(opened, opened, S, _, {call, bitcask, put, [_, Key, Value]}) ->
     S#state { data = orddict:store(Key, Value, S#state.data) };
 next_state_data(opened, opened, S, _, {call, bitcask, delete, [_, Key]}) ->
     S#state { data = orddict:erase(Key, S#state.data) };
-next_state_data(opened, opened, S, _Res, {call, bitcask, _, _}) ->
+next_state_data(_From, _To, S, _Res, _Call) ->
     S.
+
+
 
 
 %% Precondition (for state data).
 %% Precondition is checked before command is added to the command sequence
+precondition(_From,_To,S,{call,_,get,[_,Key]}) ->
+    lists:member(Key, S#state.keys); % check the key has not been shrunk away
+precondition(_From,_To,S,{call,_,put,[_,Key,_Val]}) ->
+    lists:member(Key, S#state.keys); % check the key has not been shrunk away
 precondition(_From,_To,_S,{call,_,_,_}) ->
     true.
 
@@ -81,38 +97,49 @@ postcondition(_From,_To,_S,{call,_,_,_},_Res) ->
     true.
 
 qc_test_() ->
-    {timeout, 120, fun() -> true = eqc:quickcheck(prop_bitcask()) end}.
+    {timeout, 120, fun() -> true = eqc:quickcheck(?QC_OUT(prop_bitcask())) end}.
 
 prop_bitcask() ->
-    ?FORALL(Cmds,commands(?MODULE),
+    ?FORALL(Cmds, commands(?MODULE),
             begin
+                erlang:garbage_collect(),
                 [] = os:cmd("rm -rf " ++ ?TEST_DIR),
                 {H,{_State, StateData}, Res} = run_commands(?MODULE,Cmds),
-                case Res of
-                    ok ->
-                        ok;
-                    _ ->
-                        io:format(user, "QC result: ~p\n", [Res])
-                end,
+                %% case Res of
+                %%     ok ->
+                %%         ok;
+                %%     _ ->
+                %%         io:format(user, "QC result: ~p\n", [Res])
+                %% end,
                 case (StateData#state.bitcask) of
                     undefined ->
                         ok;
                     Ref ->
                         bitcask:close(Ref)
                 end,
-                aggregate(zip(state_names(H),command_names(Cmds)), Res == ok)
+                collect(length(Cmds),
+                        aggregate(zip(state_names(H),command_names(Cmds)), 
+                                  equals(Res, ok)))
             end).
 
 %% Weight for transition (this callback is optional).
 %% Specify how often each transition should be chosen
+weight(_From, _To,{call,_,close,_}) ->
+    10;
 weight(_From,_To,{call,_,_,_}) ->
-    1.
+    100.
 
-keys() ->
-    elements(vector(5, binary(5))).
+set_keys(_Keys) -> %% next_state sets the keys for use by key()
+    ok.
 
-values() ->
-    elements(vector(5, binary(5))).
+key_gen() ->
+    ?SUCHTHAT(X, binary(), X /= <<>>).
+
+key(#state{keys = Keys}) ->
+    elements(Keys).
+
+value() ->
+    binary().
 
 sync_strategy() ->
     {sync_strategy, oneof([none, o_sync])}.
