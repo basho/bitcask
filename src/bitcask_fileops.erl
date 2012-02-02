@@ -442,7 +442,7 @@ fold_hintfile_loop(_DataSize, HintFile, _Fd, HintCRC,
         _ ->
             error_logger:error_msg("Hintfile '~s' has bad CRC ~p expected ~p\n",
                                    [HintFile, HintCRC, ExpectCRC]),
-            {eror, {bad_crc, HintCRC, ExpectCRC}}
+            {error, {bad_crc, HintCRC, ExpectCRC}}
     end;
 fold_hintfile_loop(DataSize, HintFile, Fd, HintCRC0,
                    HintRecord, Fun, Acc0) ->

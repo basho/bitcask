@@ -133,6 +133,8 @@ weight(_From, _To,{call,_,close,_}) ->
     10;
 weight(_From, _To,{call,_,truncate_hint,_}) ->
     10;
+weight(_From, _To,{call,_,corrupt_hint,_}) ->
+    10;
 weight(_From,_To,{call,_,_,_}) ->
     100.
 
