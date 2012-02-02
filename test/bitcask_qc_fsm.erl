@@ -88,10 +88,20 @@ precondition(_From,_To,_S,{call,_,_,_}) ->
     true.
 
 
-postcondition(opened, opened, S, {call, bitcask, get, [_, Key]}, not_found) ->
-    not orddict:is_key(Key, S#state.data);
-postcondition(opened, opened, S, {call, bitcask, get, [_, Key]}, {ok, Value}) ->
-    Value == orddict:fetch(Key, S#state.data);
+postcondition(opened, opened, S, {call, _, get, [_, Key]}, not_found) ->
+    case orddict:find(Key, S#state.data) of
+        error ->
+            true;
+        {ok, Exp} ->
+            {expected, Exp, got, not_found}
+    end;
+postcondition(opened, opened, S, {call, _, get, [_, Key]}, {ok, Value}) ->
+    case orddict:find(Key, S#state.data) of
+        {ok, Value} ->
+            true;
+        Exp ->
+            {expected, Exp, got, Value}
+    end;
 postcondition(opened, opened, _S, {call, _, merge, [_TestDir]}, Res) ->
     Res == ok;
 postcondition(_From,_To,_S,{call,_,_,_},_Res) ->
@@ -119,6 +129,8 @@ prop_bitcask() ->
 %% Weight for transition (this callback is optional).
 %% Specify how often each transition should be chosen
 weight(_From, _To,{call,_,close,_}) ->
+    10;
+weight(_From, _To,{call,_,truncate_hint,_}) ->
     10;
 weight(_From,_To,{call,_,_,_}) ->
     100.
@@ -152,8 +164,8 @@ truncate_hint(Seed, TruncBy0) ->
             {ok, Fi} = file:read_file_info(Hint),
             {ok, Fh} = file:open(Hint, [read, write]),
             TruncBy = (1 + abs(TruncBy0)) rem (Fi#file_info.size+1),
-            io:format(user, "Truncating ~p  by ~p\n", [Hint, TruncBy]),
-            {ok, _} = file:position(Fh, {eof, -TruncBy}),
+            {ok, To} = file:position(Fh, {eof, -TruncBy}),
+            io:format(user, "Truncating ~p by ~p to ~p\n", [Hint, TruncBy, To]),
             file:truncate(Fh),
             file:close(Fh)
     end.

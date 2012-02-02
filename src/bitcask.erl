@@ -150,8 +150,8 @@ close(Ref) ->
             ok;
         fresh ->
             ok;
-        _ ->
-            ok = bitcask_fileops:close(State#bc_state.write_file),
+        WriteFile ->
+            bitcask_fileops:close_for_writing(WriteFile),
             ok = bitcask_lockops:release(State#bc_state.write_lock)
     end.
 
@@ -758,7 +758,7 @@ scan_key_files([Filename | Rest], KeyDir, Acc) ->
                                         Offset,
                                         Tstamp)
         end,
-    bitcask_fileops:fold_keys(File, F, undefined),
+    bitcask_fileops:fold_keys(File, F, undefined, recovery),
     scan_key_files(Rest, KeyDir, [File | Acc]).
 
 %%

@@ -97,7 +97,15 @@ close(#filestate{ fd = FD, hintfd = HintFd }) ->
 close_for_writing(fresh) -> ok;
 close_for_writing(undefined) -> ok;
 close_for_writing(State = 
-                  #filestate{ mode = read_write, fd = Fd, hintfd = HintFd }) ->
+                  #filestate{ mode = read_write, fd = Fd, 
+                              hintfd = HintFd, hintcrc = HintCRC }) ->
+    %% Write out CRC check at end of hint file.  Write with an empty key,
+    %% zero timestamp and offset as large as the file format supports so
+    %% opening with an older version of bitcask will just reject the 
+    %% record at the end of the hintfile and otherwise work normally.
+    Iolist = hintfile_entry(<<>>, 0, {?MAXOFFSET, HintCRC}),
+    ok = bitcask_nifs:file_write(HintFd, Iolist),
+
     bitcask_nifs:file_sync(Fd),
     bitcask_nifs:file_sync(HintFd),
     bitcask_nifs:file_close(HintFd),
@@ -131,7 +139,8 @@ delete(#filestate{ filename = FN } = State) ->
         {error, read_only}.
 write(#filestate { mode = read_only }, _K, _V, _Tstamp) ->
     {error, read_only};
-write(Filestate=#filestate{fd = FD, hintfd = HintFD, ofs = Offset},
+write(Filestate=#filestate{fd = FD, hintfd = HintFD, 
+                           hintcrc = HintCRC0, ofs = Offset},
       Key, Value, Tstamp) ->
     KeySz = size(Key),
     true = (KeySz =< ?MAXKEYSIZE),
@@ -150,7 +159,9 @@ write(Filestate=#filestate{fd = FD, hintfd = HintFD, ofs = Offset},
     ok = bitcask_nifs:file_write(HintFD, Iolist),
     %% Record our final offset
     TotalSz = iolist_size(Bytes),
-    {ok, Filestate#filestate{ofs = Offset + TotalSz}, Offset, TotalSz}.
+    HintCRC = erlang:crc32(HintCRC0, Iolist), % compute crc of hint
+    {ok, Filestate#filestate{ofs = Offset + TotalSz,
+                            hintcrc = HintCRC}, Offset, TotalSz}.
 
 
 %% @doc Given an Offset and Size, get the corresponding k/v from Filename.
@@ -235,6 +246,20 @@ fold_keys(#filestate { fd = Fd } = State, Fun, Acc, Mode) ->
             case has_hintfile(State) of
                 true ->
                     fold_hintfile(State, Fun, Acc);
+                false ->
+                    fold_keys_loop(Fd, 0, Fun, Acc)
+            end;
+        recovery -> % if hint files are corrupt, restart scanning cask files
+                    % Fun should be side-effect free or tolerant of being
+                    % called twice
+            case has_hintfile(State) of
+                true ->
+                    case fold_hintfile(State, Fun, Acc) of
+                        {error, _} ->
+                            fold_keys_loop(Fd, 0, Fun, Acc);
+                        Acc1 ->
+                            Acc1
+                    end;
                 false ->
                     fold_keys_loop(Fd, 0, Fun, Acc)
             end
@@ -378,24 +403,25 @@ fold_keys_loop(Fd, Offset, Fun, Acc0) ->
 
 
 fold_hintfile(State, Fun, Acc) ->
-    case bitcask_nifs:file_open(hintfile_name(State), [readonly]) of
+    HintFile = hintfile_name(State),
+    case bitcask_nifs:file_open(HintFile, [readonly]) of
         {ok, HintFd} ->
             try
                 {ok, DataI} = file:read_file_info(State#filestate.filename),
                 DataSize = DataI#file_info.size,
                 case bitcask_nifs:file_read(HintFd, ?HINT_RECORD_SZ) of
                     {ok, <<H:?HINT_RECORD_SZ/bytes>>} ->
-                        fold_hintfile_loop(DataSize, hintfile_name(State),
-                                           HintFd, H, Fun, Acc);
+                        fold_hintfile_loop(DataSize, HintFile,
+                                           HintFd, 0, H, Fun, Acc);
                     {ok, Bytes} ->
                         error_logger:error_msg("~s:fold_hintfile: ~s: expected "
                                                "~p bytes but got only ~p "
                                                "bytes, skipping\n",
-                                   [?MODULE, hintfile_name(State),
+                                   [?MODULE, HintFile,
                                     ?HINT_RECORD_SZ, size(Bytes)]),
-                        Acc;
+                        {error, {incomplete_hint, 1}};
                     eof ->
-                        Acc;
+                        {error, empty_hintfile}; % shoudld never be empty hintfiles
                     {error, Reason} ->
                         {error, {fold_hintfile, Reason}}
                 end
@@ -406,7 +432,20 @@ fold_hintfile(State, Fun, Acc) ->
             {error, {fold_hintfile, Reason}}
     end.
 
-fold_hintfile_loop(DataSize, HintFile, Fd, HintRecord, Fun, Acc0) ->
+
+fold_hintfile_loop(_DataSize, HintFile, _Fd, HintCRC,
+                   <<0:?TSTAMPFIELD, 0:?KEYSIZEFIELD,
+                     ExpectCRC:?TOTALSIZEFIELD, (?MAXOFFSET):?OFFSETFIELD>>, _Fun, Acc0) ->
+    case HintCRC of
+        ExpectCRC ->
+            Acc0;
+        _ ->
+            error_logger:error_msg("Hintfile '~s' has bad CRC ~p expected ~p\n",
+                                   [HintFile, HintCRC, ExpectCRC]),
+            {eror, {bad_crc, HintCRC, ExpectCRC}}
+    end;
+fold_hintfile_loop(DataSize, HintFile, Fd, HintCRC0,
+                   HintRecord, Fun, Acc0) ->
     <<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
       TotalSz:?TOTALSIZEFIELD, Offset:?OFFSETFIELD>> = HintRecord,
     ReadSz = KeySz + ?HINT_RECORD_SZ,
@@ -417,19 +456,23 @@ fold_hintfile_loop(DataSize, HintFile, Fd, HintRecord, Fun, Acc0) ->
             Acc = Fun(Key, Tstamp, PosInfo, Acc0),
             case Rest of
                 <<NextRecord:?HINT_RECORD_SZ/bytes>> ->
-                    fold_hintfile_loop(DataSize, HintFile,
-                                       Fd, NextRecord, Fun, Acc);
+                    HintCRC=erlang:crc32(HintCRC0, [HintRecord, Key]),
+                    fold_hintfile_loop(DataSize, HintFile,  Fd, 
+                                       HintCRC, NextRecord, Fun, Acc);
                 <<>> ->
+                    %% Hint files without CRCs will end on a record boundary.
+                    %% No way to know whether to expect a crc or not.
+                    %% Over time, merges will add CRCs to all hint files.
                     Acc;
                 X ->
                     error_logger:error_msg("Bad hintfile data 1: ~p\n", [X]),
-                    Acc
+                    {error, {incomplete_hint, 2}}
             end;
         {ok, _} ->
             error_logger:error_msg("Hintfile '~s' contains pointer ~p ~p "
                                    "that is greater than total data size ~p\n",
                                    [HintFile, Offset, TotalSz, DataSize]),
-            Acc0;
+            {error, {incomplete_hint, 3}};
         eof ->
             {error, incomplete_key};
         {error, Reason} ->
