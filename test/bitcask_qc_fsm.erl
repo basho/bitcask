@@ -52,6 +52,7 @@ init(_S) ->
 closed(_S) ->
     [{opened, {call, bitcask, open, [?TEST_DIR, [read_write, {open_timeout, 0}, sync_strategy()]]}},
      {closed, {call, ?MODULE, truncate_hint, [int(), int()]}},
+     {closed, {call, ?MODULE, corrupt_hint, [int(), int()]}},
      {closed, {call, ?MODULE, create_stale_lock, []}}].
 
 opened(S) ->
@@ -165,9 +166,35 @@ truncate_hint(Seed, TruncBy0) ->
             {ok, Fh} = file:open(Hint, [read, write]),
             TruncBy = (1 + abs(TruncBy0)) rem (Fi#file_info.size+1),
             {ok, To} = file:position(Fh, {eof, -TruncBy}),
-            io:format(user, "Truncating ~p by ~p to ~p\n", [Hint, TruncBy, To]),
+            %% io:format(user, "Truncating ~p by ~p to ~p\n", [Hint, TruncBy, To]),
             file:truncate(Fh),
             file:close(Fh)
+    end.
+
+corrupt_hint(Seed, CorruptAt0) ->
+    case filelib:wildcard(?TEST_DIR ++ "/*.hint") of
+        [] ->
+            ok;
+        Hints->
+            Hint = lists:nth(1 + (abs(Seed) rem length(Hints)), Hints),
+            {ok, Fi} = file:read_file_info(Hint),
+            {ok, Fh} = file:open(Hint, [read, write, binary]),
+            Size = Fi#file_info.size,
+            CorruptAt = (1 + abs(CorruptAt0)) rem (Size+1),
+            try
+                {ok, Pos} = file:position(Fh, {eof, -CorruptAt}),
+                {ok, <<Byte>>} = file:pread(Fh, Pos, 1),
+                BadByte = <<(bnot Byte)>>,
+                io:format(user, "Corrupting from ~p to ~p at ~p size ~p\n",
+                          [Byte, BadByte, Pos, Size]),
+                ok = file:pwrite(Fh, Pos, BadByte)
+            catch
+                _:Reason ->
+                    io:format(user, "corrupt failed corruptat=~p reason=~p\n",
+                              [CorruptAt, Reason])
+            after
+                file:close(Fh)
+            end
     end.
 
 -endif.
