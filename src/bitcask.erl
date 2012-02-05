@@ -1625,7 +1625,7 @@ truncated_merge_test() ->
 
     %% Make sure all corrupted data is missing, all good data is present
     B = bitcask:open(Dir),
-    {BadData, GoodData} = lists:split(4, DataSet),
+    {BadData, GoodData} = lists:split(2, DataSet),
     lists:foldl(fun({K, _V}, _) ->
                         not_found = bitcask:get(B, K)
                 end, undefined, BadData),
