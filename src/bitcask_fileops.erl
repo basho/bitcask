@@ -252,7 +252,7 @@ fold_keys(#filestate { fd = Fd } = State, Fun, Acc, Mode) ->
         recovery -> % if hint files are corrupt, restart scanning cask files
                     % Fun should be side-effect free or tolerant of being
                     % called twice
-            case has_hintfile(State) of
+            case has_valid_hintfile(State) of
                 true ->
                     case fold_hintfile(State, Fun, Acc) of
                         {error, _} ->
@@ -289,7 +289,6 @@ create_hintfile(State) when is_record(State, filestate) ->
         end,
     generate_hintfile(hintfile_name(State),
                       {?MODULE, fold_keys_loop, [State#filestate.fd, 0, F]}).
-
 
 -spec mk_filename(string(), integer()) -> string().
 mk_filename(Dirname, Tstamp) ->
@@ -328,6 +327,22 @@ check_write(#filestate { ofs = Offset }, Key, Value, MaxSize) ->
 
 has_hintfile(#filestate { filename = Fname }) ->
     filelib:is_file(hintfile_name(Fname)).
+
+%% Return true if there is a hintfile and it has
+%% a valid CRC check
+has_valid_hintfile(State) ->
+    case has_hintfile(State) of
+        true ->
+            case fold_hintfile(State, fun has_valid_hintfile_visitor/4, 0) of
+                N when is_number(N) ->
+                    true;
+                _ ->
+                    false
+            end;
+        X ->
+            X
+    end.
+
 
 
 %% ===================================================================
@@ -537,7 +552,14 @@ hintfile_entry(Key, Tstamp, {Offset, TotalSz}) ->
     [<<Tstamp:?TSTAMPFIELD>>, <<KeySz:?KEYSIZEFIELD>>,
      <<TotalSz:?TOTALSIZEFIELD>>, <<Offset:?OFFSETFIELD>>, Key].
 
-    
+%% Visitor function for hintfile validation - broken out as a
+%% separate function to make tracing with dbg easier if there is
+%% ever an issue with hintfiles.
+has_valid_hintfile_visitor(_Key, _Tstamp, _PosInfo, Acc0) when is_number(Acc0) ->
+    Acc0+1;
+has_valid_hintfile_visitor(_Key, _Tstamp, _PosInfo, Acc0) ->
+    Acc0.
+
 %% Find the most recent timestamp for a .data file
 most_recent_tstamp(DirName) ->
     lists:foldl(fun({TS,_},Acc) -> 
