@@ -50,7 +50,6 @@ init(_S) ->
 
 closed(_S) ->
     [{opened, {call, bitcask, open, [?TEST_DIR, [read_write, {open_timeout, 0}, sync_strategy()]]}},
-     %% {closed, {call, erlang, garbage_collect, []}},
      {closed, {call, ?MODULE, create_stale_lock, []}}].
 
 opened(S) ->
@@ -107,12 +106,6 @@ prop_bitcask() ->
                 erlang:garbage_collect(),
                 [] = os:cmd("rm -rf " ++ ?TEST_DIR),
                 {H,{_State, StateData}, Res} = run_commands(?MODULE,Cmds),
-                %% case Res of
-                %%     ok ->
-                %%         ok;
-                %%     _ ->
-                %%         io:format(user, "QC result: ~p\n", [Res])
-                %% end,
                 case (StateData#state.bitcask) of
                     undefined ->
                         ok;
