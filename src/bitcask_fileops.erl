@@ -37,7 +37,6 @@
          delete/1,
          fold/3,
          fold_keys/3, fold_keys/4,
-         create_hintfile/1,
          mk_filename/2,
          filename/1,
          hintfile_name/1,
@@ -264,31 +263,6 @@ fold_keys(#filestate { fd = Fd } = State, Fun, Acc, Mode) ->
                     fold_keys_loop(Fd, 0, Fun, Acc)
             end
     end.
-
--spec create_hintfile(string() | #filestate{}) -> ok | {error, any()}.
-create_hintfile(Filename) when is_list(Filename) ->
-    case open_file(Filename) of
-        {ok, Fstate} ->
-            try
-                create_hintfile(Fstate)
-            after
-                close(Fstate)
-            end;
-        {error, Reason} ->
-            {error, Reason}
-    end;
-create_hintfile(State) when is_record(State, filestate) ->
-    F = fun(K, Tstamp, {Offset, TotalSz}, HintFd) ->
-                Iolist = hintfile_entry(K, Tstamp, {Offset, TotalSz}),
-                case bitcask_nifs:file_write(HintFd, Iolist) of
-                    ok ->
-                        HintFd;
-                    {error, Reason} ->
-                        throw({error, Reason})
-                end
-        end,
-    generate_hintfile(hintfile_name(State),
-                      {?MODULE, fold_keys_loop, [State#filestate.fd, 0, F]}).
 
 -spec mk_filename(string(), integer()) -> string().
 mk_filename(Dirname, Tstamp) ->
@@ -534,24 +508,6 @@ create_file_loop(DirName, Opts, Tstamp) ->
             create_file_loop(DirName, Opts, MostRecentTS + 1)
     end.
 
-generate_hintfile(Filename, {FolderMod, FolderFn, FolderArgs}) ->
-    %% Create the temp file that we will write records out to.
-    {ok, Fd, TmpFilename} = temp_file(Filename ++ ".~w"),
-
-    %% Run the provided fold function over whatever the dataset is. The function
-    %% is passed the Fd as the accumulator argument, and must return the same
-    %% Fd on success. Otherwise, we expect an {error, Reason}.
-    try apply(FolderMod, FolderFn, FolderArgs ++ [Fd]) of
-        Fd ->
-            %% All done writing -- rename to the actual hintfile
-            ok = file:rename(TmpFilename, Filename);
-        {error, Reason} ->
-            {error, Reason}
-    after
-        file:delete(TmpFilename),
-        bitcask_nifs:file_close(Fd)
-    end.
-
 hintfile_entry(Key, Tstamp, {Offset, TotalSz}) ->
     KeySz = size(Key),
     [<<Tstamp:?TSTAMPFIELD>>, <<KeySz:?KEYSIZEFIELD>>,
@@ -584,46 +540,3 @@ temp_file(Template, Seed0) ->
         {error, eexists} ->
             temp_file(Template, Seed)
     end.
-
-%% ===================================================================
-%% EUnit tests
-%% ===================================================================
--ifdef(TEST).
-
--ifdef(EQC).
-
--define(QC_OUT(P), eqc:on_output(fun(Str, Args) -> ?debugFmt(Str, Args) end, P)).
-
-init_file(Dirname, Kvs) ->
-    os:cmd(?FMT("rm -rf ~s", [Dirname])),
-    {ok, F} = create_file(Dirname, []),
-    {ok, _} = write_kvs(Kvs, F, 0).
-
-write_kvs([], F, _Tstamp) ->
-    {ok, F};
-write_kvs([{K, V} | Rest], F, Tstamp) ->
-    {ok, F2, _, _} = write(F, K, V, Tstamp),
-    write_kvs(Rest, F2, Tstamp + 1).
-
-key_value() ->
-    {eqc_gen:non_empty(binary()), binary()}.
-
-prop_hintfile() ->
-    ?FORALL(Kvs, eqc_gen:non_empty(list(key_value())),
-            begin
-                 {ok, F} = init_file("/tmp/bc.fop.hintfile", Kvs),
-                 ok = create_hintfile(F),
-                 true = has_hintfile(F),
-                 AccFn = fun(K, Tstamp, Pos, Acc0) ->
-                                 [{K, Tstamp, Pos} | Acc0]
-                         end,
-                 fold_keys(F, AccFn, [], datafile) ==
-                     fold_keys(F, AccFn, [], hintfile)
-            end).
-
-prop_hintfile_test_() ->
-    {timeout, 60, fun() -> ?assert(eqc:quickcheck(prop_hintfile())) end}.
-
--endif.
-
--endif.
