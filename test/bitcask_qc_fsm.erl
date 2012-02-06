@@ -93,6 +93,8 @@ postcondition(opened, opened, S, {call, bitcask, get, [_, Key]}, not_found) ->
     not orddict:is_key(Key, S#state.data);
 postcondition(opened, opened, S, {call, bitcask, get, [_, Key]}, {ok, Value}) ->
     Value == orddict:fetch(Key, S#state.data);
+postcondition(opened, opened, _S, {call, _, merge, [_TestDir]}, Res) ->
+    Res == ok;
 postcondition(_From,_To,_S,{call,_,_,_},_Res) ->
     true.
 
@@ -117,9 +119,8 @@ prop_bitcask() ->
                     Ref ->
                         bitcask:close(Ref)
                 end,
-                collect(length(Cmds),
-                        aggregate(zip(state_names(H),command_names(Cmds)), 
-                                  equals(Res, ok)))
+                aggregate(zip(state_names(H),command_names(Cmds)), 
+                          equals(Res, ok))
             end).
 
 %% Weight for transition (this callback is optional).

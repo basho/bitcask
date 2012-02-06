@@ -230,55 +230,9 @@ put(Ref, Key, Value) ->
             ok
     end,
 
-    case bitcask_fileops:check_write(WriteFile, Key, Value,
-                                     State#bc_state.max_file_size) of
-        wrap ->
-            %% Time to start a new write file. Note that we do not close the old
-            %% one, just transition it. The thinking is that closing/reopening
-            %% for read only access would flush the O/S cache for the file,
-            %% which may be undesirable.
-            LastWriteFile = bitcask_fileops:close_for_writing(WriteFile),
-            {ok, NewWriteFile} = bitcask_fileops:create_file(
-                                   State#bc_state.dirname,
-                                   State#bc_state.opts),
-            ok = bitcask_lockops:write_activefile(
-                   State#bc_state.write_lock,
-                   bitcask_fileops:filename(NewWriteFile)),
-            State2 = State#bc_state{ write_file = NewWriteFile,
-                                     read_files = [LastWriteFile | 
-                                                   State#bc_state.read_files]};
-        fresh ->
-            %% Time to start our first write file.
-            case bitcask_lockops:acquire(write, State#bc_state.dirname) of
-                {ok, WriteLock} ->
-                    {ok, NewWriteFile} = bitcask_fileops:create_file(
-                                           State#bc_state.dirname,
-                                           State#bc_state.opts),
-                    ok = bitcask_lockops:write_activefile(
-                           WriteLock,
-                           bitcask_fileops:filename(NewWriteFile)),
-                    State2 = State#bc_state{ write_file = NewWriteFile,
-                                             write_lock = WriteLock };
-                {error, Reason} ->
-                    State2 = undefined,
-                    throw({error, {write_locked, Reason, State#bc_state.dirname}})
-            end;
-
-        ok ->
-            State2 = State
-    end,
-
-    Tstamp = bitcask_time:tstamp(),
-    {ok, WriteFile2, Offset, Size} = bitcask_fileops:write(
-                                       State2#bc_state.write_file,
-                                       Key, Value, Tstamp),
-    ok = bitcask_nifs:keydir_put(State2#bc_state.keydir, Key,
-                                 bitcask_fileops:file_tstamp(WriteFile2),
-                                 Size, Offset, Tstamp),
-
-    put_state(Ref, State2#bc_state { write_file = WriteFile2 }),
-    ok.
-
+    {Ret, State1} = do_put(Key, Value, State, 2, undefined),
+    put_state(Ref, State1),
+    Ret.
 
 %% @doc Delete a key from a bitcask datastore.
 -spec delete(reference(), Key::binary()) -> ok.
@@ -1026,6 +980,73 @@ readable_files(Dirname) ->
     MergingFile = bitcask_lockops:read_activefile(merge, Dirname),
     list_data_files(Dirname, WritingFile, MergingFile).
 
+%% Internal put - have validated that the file is opened for write
+%% and looked up the state at this point
+do_put(_Key, _Value, State, 0, LastErr) ->
+    {{error, LastErr}, State};
+do_put(Key, Value, #bc_state{write_file = WriteFile} = State, Retries, _LastErr) ->
+    case bitcask_fileops:check_write(WriteFile, Key, Value,
+                                     State#bc_state.max_file_size) of
+        wrap ->
+            %% Time to start a new write file. Note that we do not close the old
+            %% one, just transition it. The thinking is that closing/reopening
+            %% for read only access would flush the O/S cache for the file,
+            %% which may be undesirable.
+            State2 = wrap_write_file(State);
+        fresh ->
+            %% Time to start our first write file.
+            case bitcask_lockops:acquire(write, State#bc_state.dirname) of
+                {ok, WriteLock} ->
+                    {ok, NewWriteFile} = bitcask_fileops:create_file(
+                                           State#bc_state.dirname,
+                                           State#bc_state.opts),
+                    ok = bitcask_lockops:write_activefile(
+                           WriteLock,
+                           bitcask_fileops:filename(NewWriteFile)),
+                    State2 = State#bc_state{ write_file = NewWriteFile,
+                                             write_lock = WriteLock };
+                {error, Reason} ->
+                    State2 = undefined,
+                    throw({error, {write_locked, Reason, State#bc_state.dirname}})
+            end;
+
+        ok ->
+            State2 = State
+    end,
+
+    Tstamp = bitcask_time:tstamp(),
+    {ok, WriteFile2, Offset, Size} = bitcask_fileops:write(
+                                       State2#bc_state.write_file,
+                                       Key, Value, Tstamp),
+    case bitcask_nifs:keydir_put(State2#bc_state.keydir, Key,
+                                 bitcask_fileops:file_tstamp(WriteFile2),
+                                 Size, Offset, Tstamp) of
+        ok ->
+            {ok, State2#bc_state { write_file = WriteFile2 }};
+        already_exists ->
+            %% Assuming the timestamps in the keydir are
+            %% valid, there is an edge case where the merge thread
+            %% could have rewritten this Key to a file with a greater
+            %% file_id. Rather than synchronize the merge/writer processes, 
+            %% wrap to a new file with a greater file_id and rewrite
+            %% the key there.  Limit the number of recursions in case
+            %% there is a different issue with the keydir.
+            State3 = wrap_write_file(State2),
+            do_put(Key, Value, State3, Retries - 1, already_exist)
+    end.
+
+
+wrap_write_file(#bc_state{write_file = WriteFile} = State) ->
+    LastWriteFile = bitcask_fileops:close_for_writing(WriteFile),
+    {ok, NewWriteFile} = bitcask_fileops:create_file(
+                           State#bc_state.dirname,
+                           State#bc_state.opts),
+    ok = bitcask_lockops:write_activefile(
+           State#bc_state.write_lock,
+           bitcask_fileops:filename(NewWriteFile)),
+    State#bc_state{ write_file = NewWriteFile,
+                    read_files = [LastWriteFile | 
+                                  State#bc_state.read_files]}.
 
 
 %% ===================================================================
