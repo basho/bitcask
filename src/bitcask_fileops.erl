@@ -451,7 +451,8 @@ fold_hintfile_loop(DataSize, HintFile, Fd, HintCRC0,
                 <<>> ->
                     %% Hint files without CRCs will end on a record boundary.
                     %% No way to know whether to expect a crc or not.
-                    %% Over time, merges will add CRCs to all hint files.
+                    %% Over time, merges will add CRCs to all hint files and
+                    %% we can set this as the default.
                     case application:get_env(bitcask, require_hint_crc) of
                         {ok, true} ->
                             {error, {incomplete_hint, 4}};

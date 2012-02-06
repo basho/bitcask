@@ -28,6 +28,7 @@
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_fsm.hrl").
 -include_lib("kernel/include/file.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 -compile(export_all).
 
@@ -109,12 +110,20 @@ postcondition(_From,_To,_S,{call,_,_,_},_Res) ->
     true.
 
 qc_test_() ->
-    {timeout, 120, fun() -> true = eqc:quickcheck(?QC_OUT(prop_bitcask())) end}.
+    {timeout, 120, 
+     {setup, fun prepare/0, fun cleanup/1,
+      [?_assertEqual(true, eqc:quickcheck(?QC_OUT(prop_bitcask())))]}}.
+
+prepare() ->
+    application:load(bitcask),
+    application:set_env(bitcask, require_hint_crc, true).
+
+cleanup(_) ->
+    application:unload(bitcask).
 
 prop_bitcask() ->
     ?FORALL(Cmds, commands(?MODULE),
             begin
-                erlang:garbage_collect(),
                 [] = os:cmd("rm -rf " ++ ?TEST_DIR),
                 {H,{_State, StateData}, Res} = run_commands(?MODULE,Cmds),
                 case (StateData#state.bitcask) of
@@ -123,6 +132,7 @@ prop_bitcask() ->
                     Ref ->
                         bitcask:close(Ref)
                 end,
+                application:unload(bitcask),
                 aggregate(zip(state_names(H),command_names(Cmds)), 
                           equals(Res, ok))
             end).
