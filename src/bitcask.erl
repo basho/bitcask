@@ -1472,6 +1472,25 @@ corrupt_file_test() ->
 
     ok.
 
+invalid_data_size_test() ->
+    TestDir = "/tmp/bc.test.invalid_data_size_test",
+    TestDataFile = TestDir ++ "/1.bitcask.data",
+
+    os:cmd("rm -rf " ++ TestDir),
+    B = bitcask:open(TestDir, [read_write]),
+    ok = bitcask:put(B,<<"k">>,<<"v">>),
+    close(B),
+
+    % Alter data size
+    {ok, F} = file:open(TestDataFile, [read, write, raw, binary]),
+    {ok, _} = file:position(F, {eof, -6}),
+    ok = file:write(F, <<255:?VALSIZEFIELD>>),
+    file:close(F),
+    B2 = bitcask:open(TestDir),
+    ?assertEqual({error, bad_crc}, bitcask:get(B2, <<"k">>)),
+    close(B2),
+    ok.
+
 testhelper_keydir_count(B) ->
     KD = (get_state(B))#bc_state.keydir,
     {KeyCount,_,_} = bitcask_nifs:keydir_info(KD),
