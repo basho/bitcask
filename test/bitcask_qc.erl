@@ -27,7 +27,7 @@
 
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eunit/include/eunit.hrl").
--include_lib("bitcask/include/bitcask.hrl").
+-include("bitcask.hrl").
 
 -compile(export_all).
 
