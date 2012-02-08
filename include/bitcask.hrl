@@ -12,6 +12,7 @@
                     tstamp,   % Tstamp portion of filename
                     fd,       % File handle
                     hintfd,   % File handle for hints
+                    hintcrc=0,% CRC-32 of current hint
                     ofs }).   % Current offset for writing
 
 -record(file_status, { filename,
@@ -34,3 +35,4 @@
 -define(HEADER_SIZE,  14). % 4 + 4 + 2 + 4 bytes
 -define(MAXKEYSIZE, 2#1111111111111111).
 -define(MAXVALSIZE, 2#11111111111111111111111111111111).
+-define(MAXOFFSET, 16#ffffffffffffffff). % max 64-bit unsigned

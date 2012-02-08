@@ -27,6 +27,13 @@
          %% applications.
          {sync_strategy, none},
 
+         %% Require the CRC to be present at the end of hintfiles.
+         %% Bitcask defaults to a backward compatible mode where
+         %% old hint files will still be accepted without them.
+         %% It is safe to set this true for new deployments and will
+         %% become the default setting in a future release.
+         {require_hint_crc, false},
+
          %% Merge window. Span of hours during which merge is acceptable.
          %% * {Start, End} - Hours during which merging is permitted
          %% * always       - Merging is always permitted (default)

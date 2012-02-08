@@ -27,6 +27,8 @@
 
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_fsm.hrl").
+-include_lib("kernel/include/file.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 -compile(export_all).
 
@@ -50,6 +52,8 @@ init(_S) ->
 
 closed(_S) ->
     [{opened, {call, bitcask, open, [?TEST_DIR, [read_write, {open_timeout, 0}, sync_strategy()]]}},
+     {closed, {call, ?MODULE, truncate_hint, [int(), int()]}},
+     {closed, {call, ?MODULE, corrupt_hint, [int(), int()]}},
      {closed, {call, ?MODULE, create_stale_lock, []}}].
 
 opened(S) ->
@@ -62,8 +66,6 @@ opened(S) ->
 
 next_state_data(init, closed, S, _, {call, _, set_keys, [Keys]}) ->
     S#state{ keys = [<<"k">> | Keys] }; % ensure always one key
-next_state_data(closed, closed, S, _, {call, ?MODULE, create_stale_lock, _}) ->
-    S;
 next_state_data(closed, opened, S, Bcask, {call, bitcask, open, _}) ->
     S#state { bitcask = Bcask };
 next_state_data(opened, closed, S, _, {call, _, close, _}) ->
@@ -88,22 +90,40 @@ precondition(_From,_To,_S,{call,_,_,_}) ->
     true.
 
 
-postcondition(opened, opened, S, {call, bitcask, get, [_, Key]}, not_found) ->
-    not orddict:is_key(Key, S#state.data);
-postcondition(opened, opened, S, {call, bitcask, get, [_, Key]}, {ok, Value}) ->
-    Value == orddict:fetch(Key, S#state.data);
+postcondition(opened, opened, S, {call, _, get, [_, Key]}, not_found) ->
+    case orddict:find(Key, S#state.data) of
+        error ->
+            true;
+        {ok, Exp} ->
+            {expected, Exp, got, not_found}
+    end;
+postcondition(opened, opened, S, {call, _, get, [_, Key]}, {ok, Value}) ->
+    case orddict:find(Key, S#state.data) of
+        {ok, Value} ->
+            true;
+        Exp ->
+            {expected, Exp, got, Value}
+    end;
 postcondition(opened, opened, _S, {call, _, merge, [_TestDir]}, Res) ->
     Res == ok;
 postcondition(_From,_To,_S,{call,_,_,_},_Res) ->
     true.
 
 qc_test_() ->
-    {timeout, 120, fun() -> true = eqc:quickcheck(?QC_OUT(prop_bitcask())) end}.
+    {timeout, 120, 
+     {setup, fun prepare/0, fun cleanup/1,
+      [?_assertEqual(true, eqc:quickcheck(?QC_OUT(prop_bitcask())))]}}.
+
+prepare() ->
+    application:load(bitcask),
+    application:set_env(bitcask, require_hint_crc, true).
+
+cleanup(_) ->
+    application:unload(bitcask).
 
 prop_bitcask() ->
     ?FORALL(Cmds, commands(?MODULE),
             begin
-                erlang:garbage_collect(),
                 [] = os:cmd("rm -rf " ++ ?TEST_DIR),
                 {H,{_State, StateData}, Res} = run_commands(?MODULE,Cmds),
                 case (StateData#state.bitcask) of
@@ -112,6 +132,7 @@ prop_bitcask() ->
                     Ref ->
                         bitcask:close(Ref)
                 end,
+                application:unload(bitcask),
                 aggregate(zip(state_names(H),command_names(Cmds)), 
                           equals(Res, ok))
             end).
@@ -119,6 +140,10 @@ prop_bitcask() ->
 %% Weight for transition (this callback is optional).
 %% Specify how often each transition should be chosen
 weight(_From, _To,{call,_,close,_}) ->
+    10;
+weight(_From, _To,{call,_,truncate_hint,_}) ->
+    10;
+weight(_From, _To,{call,_,corrupt_hint,_}) ->
     10;
 weight(_From,_To,{call,_,_,_}) ->
     100.
@@ -142,6 +167,47 @@ create_stale_lock() ->
     Fname = filename:join(?TEST_DIR, "bitcask.write.lock"),
     filelib:ensure_dir(Fname),
     ok = file:write_file(Fname, "102349430239 abcdef\n").
+
+truncate_hint(Seed, TruncBy0) ->
+    case filelib:wildcard(?TEST_DIR ++ "/*.hint") of
+        [] ->
+            ok;
+        Hints->
+            Hint = lists:nth(1 + (abs(Seed) rem length(Hints)), Hints),
+            {ok, Fi} = file:read_file_info(Hint),
+            {ok, Fh} = file:open(Hint, [read, write]),
+            TruncBy = (1 + abs(TruncBy0)) rem (Fi#file_info.size+1),
+            {ok, To} = file:position(Fh, {eof, -TruncBy}),
+            %% io:format(user, "Truncating ~p by ~p to ~p\n", [Hint, TruncBy, To]),
+            file:truncate(Fh),
+            file:close(Fh)
+    end.
+
+corrupt_hint(Seed, CorruptAt0) ->
+    case filelib:wildcard(?TEST_DIR ++ "/*.hint") of
+        [] ->
+            ok;
+        Hints->
+            Hint = lists:nth(1 + (abs(Seed) rem length(Hints)), Hints),
+            {ok, Fi} = file:read_file_info(Hint),
+            {ok, Fh} = file:open(Hint, [read, write, binary]),
+            Size = Fi#file_info.size,
+            CorruptAt = (1 + abs(CorruptAt0)) rem (Size+1),
+            try
+                {ok, Pos} = file:position(Fh, {eof, -CorruptAt}),
+                {ok, <<Byte>>} = file:pread(Fh, Pos, 1),
+                BadByte = <<(bnot Byte)>>,
+                io:format(user, "Corrupting from ~p to ~p at ~p size ~p\n",
+                          [Byte, BadByte, Pos, Size]),
+                ok = file:pwrite(Fh, Pos, BadByte)
+            catch
+                _:Reason ->
+                    io:format(user, "corrupt failed corruptat=~p reason=~p\n",
+                              [CorruptAt, Reason])
+            after
+                file:close(Fh)
+            end
+    end.
 
 -endif.
 

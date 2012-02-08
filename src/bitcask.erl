@@ -150,8 +150,8 @@ close(Ref) ->
             ok;
         fresh ->
             ok;
-        _ ->
-            ok = bitcask_fileops:close(State#bc_state.write_file),
+        WriteFile ->
+            bitcask_fileops:close_for_writing(WriteFile),
             ok = bitcask_lockops:release(State#bc_state.write_lock)
     end.
 
@@ -758,7 +758,7 @@ scan_key_files([Filename | Rest], KeyDir, Acc) ->
                                         Offset,
                                         Tstamp)
         end,
-    bitcask_fileops:fold_keys(File, F, undefined),
+    bitcask_fileops:fold_keys(File, F, undefined, recovery),
     scan_key_files(Rest, KeyDir, [File | Acc]).
 
 %%
@@ -1585,7 +1585,8 @@ truncated_datafile_test() ->
 
     % close and reopen so that status can reflect a closed file
     B2 = bitcask:open(Dir, [read_write]),
-    {1, [{_, _, _, 494}]} = bitcask:status(B2),
+
+    {1, [{_, _, _, 513}]} = bitcask:status(B2),
     ok.
 
 truncated_merge_test() ->
@@ -1625,7 +1626,7 @@ truncated_merge_test() ->
 
     %% Make sure all corrupted data is missing, all good data is present
     B = bitcask:open(Dir),
-    {BadData, GoodData} = lists:split(4, DataSet),
+    {BadData, GoodData} = lists:split(2, DataSet),
     lists:foldl(fun({K, _V}, _) ->
                         not_found = bitcask:get(B, K)
                 end, undefined, BadData),

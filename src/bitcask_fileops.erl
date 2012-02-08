@@ -37,7 +37,6 @@
          delete/1,
          fold/3,
          fold_keys/3, fold_keys/4,
-         create_hintfile/1,
          mk_filename/2,
          filename/1,
          hintfile_name/1,
@@ -97,7 +96,15 @@ close(#filestate{ fd = FD, hintfd = HintFd }) ->
 close_for_writing(fresh) -> ok;
 close_for_writing(undefined) -> ok;
 close_for_writing(State = 
-                  #filestate{ mode = read_write, fd = Fd, hintfd = HintFd }) ->
+                  #filestate{ mode = read_write, fd = Fd, 
+                              hintfd = HintFd, hintcrc = HintCRC }) ->
+    %% Write out CRC check at end of hint file.  Write with an empty key,
+    %% zero timestamp and offset as large as the file format supports so
+    %% opening with an older version of bitcask will just reject the 
+    %% record at the end of the hintfile and otherwise work normally.
+    Iolist = hintfile_entry(<<>>, 0, {?MAXOFFSET, HintCRC}),
+    ok = bitcask_nifs:file_write(HintFd, Iolist),
+
     bitcask_nifs:file_sync(Fd),
     bitcask_nifs:file_sync(HintFd),
     bitcask_nifs:file_close(HintFd),
@@ -131,7 +138,8 @@ delete(#filestate{ filename = FN } = State) ->
         {error, read_only}.
 write(#filestate { mode = read_only }, _K, _V, _Tstamp) ->
     {error, read_only};
-write(Filestate=#filestate{fd = FD, hintfd = HintFD, ofs = Offset},
+write(Filestate=#filestate{fd = FD, hintfd = HintFD, 
+                           hintcrc = HintCRC0, ofs = Offset},
       Key, Value, Tstamp) ->
     KeySz = size(Key),
     true = (KeySz =< ?MAXKEYSIZE),
@@ -150,7 +158,9 @@ write(Filestate=#filestate{fd = FD, hintfd = HintFD, ofs = Offset},
     ok = bitcask_nifs:file_write(HintFD, Iolist),
     %% Record our final offset
     TotalSz = iolist_size(Bytes),
-    {ok, Filestate#filestate{ofs = Offset + TotalSz}, Offset, TotalSz}.
+    HintCRC = erlang:crc32(HintCRC0, Iolist), % compute crc of hint
+    {ok, Filestate#filestate{ofs = Offset + TotalSz,
+                            hintcrc = HintCRC}, Offset, TotalSz}.
 
 
 %% @doc Given an Offset and Size, get the corresponding k/v from Filename.
@@ -237,34 +247,22 @@ fold_keys(#filestate { fd = Fd } = State, Fun, Acc, Mode) ->
                     fold_hintfile(State, Fun, Acc);
                 false ->
                     fold_keys_loop(Fd, 0, Fun, Acc)
+            end;
+        recovery -> % if hint files are corrupt, restart scanning cask files
+                    % Fun should be side-effect free or tolerant of being
+                    % called twice
+            case has_valid_hintfile(State) of
+                true ->
+                    case fold_hintfile(State, Fun, Acc) of
+                        {error, _} ->
+                            fold_keys_loop(Fd, 0, Fun, Acc);
+                        Acc1 ->
+                            Acc1
+                    end;
+                false ->
+                    fold_keys_loop(Fd, 0, Fun, Acc)
             end
     end.
-
--spec create_hintfile(string() | #filestate{}) -> ok | {error, any()}.
-create_hintfile(Filename) when is_list(Filename) ->
-    case open_file(Filename) of
-        {ok, Fstate} ->
-            try
-                create_hintfile(Fstate)
-            after
-                close(Fstate)
-            end;
-        {error, Reason} ->
-            {error, Reason}
-    end;
-create_hintfile(State) when is_record(State, filestate) ->
-    F = fun(K, Tstamp, {Offset, TotalSz}, HintFd) ->
-                Iolist = hintfile_entry(K, Tstamp, {Offset, TotalSz}),
-                case bitcask_nifs:file_write(HintFd, Iolist) of
-                    ok ->
-                        HintFd;
-                    {error, Reason} ->
-                        throw({error, Reason})
-                end
-        end,
-    generate_hintfile(hintfile_name(State),
-                      {?MODULE, fold_keys_loop, [State#filestate.fd, 0, F]}).
-
 
 -spec mk_filename(string(), integer()) -> string().
 mk_filename(Dirname, Tstamp) ->
@@ -303,6 +301,22 @@ check_write(#filestate { ofs = Offset }, Key, Value, MaxSize) ->
 
 has_hintfile(#filestate { filename = Fname }) ->
     filelib:is_file(hintfile_name(Fname)).
+
+%% Return true if there is a hintfile and it has
+%% a valid CRC check
+has_valid_hintfile(State) ->
+    case has_hintfile(State) of
+        true ->
+            case fold_hintfile(State, fun has_valid_hintfile_visitor/4, 0) of
+                N when is_number(N) ->
+                    true;
+                _ ->
+                    false
+            end;
+        X ->
+            X
+    end.
+
 
 
 %% ===================================================================
@@ -378,24 +392,25 @@ fold_keys_loop(Fd, Offset, Fun, Acc0) ->
 
 
 fold_hintfile(State, Fun, Acc) ->
-    case bitcask_nifs:file_open(hintfile_name(State), [readonly]) of
+    HintFile = hintfile_name(State),
+    case bitcask_nifs:file_open(HintFile, [readonly]) of
         {ok, HintFd} ->
             try
                 {ok, DataI} = file:read_file_info(State#filestate.filename),
                 DataSize = DataI#file_info.size,
                 case bitcask_nifs:file_read(HintFd, ?HINT_RECORD_SZ) of
                     {ok, <<H:?HINT_RECORD_SZ/bytes>>} ->
-                        fold_hintfile_loop(DataSize, hintfile_name(State),
-                                           HintFd, H, Fun, Acc);
+                        fold_hintfile_loop(DataSize, HintFile,
+                                           HintFd, 0, H, Fun, Acc);
                     {ok, Bytes} ->
                         error_logger:error_msg("~s:fold_hintfile: ~s: expected "
                                                "~p bytes but got only ~p "
                                                "bytes, skipping\n",
-                                   [?MODULE, hintfile_name(State),
+                                   [?MODULE, HintFile,
                                     ?HINT_RECORD_SZ, size(Bytes)]),
-                        Acc;
+                        {error, {incomplete_hint, 1}};
                     eof ->
-                        Acc;
+                        {error, empty_hintfile}; % shoudld never be empty hintfiles
                     {error, Reason} ->
                         {error, {fold_hintfile, Reason}}
                 end
@@ -406,7 +421,20 @@ fold_hintfile(State, Fun, Acc) ->
             {error, {fold_hintfile, Reason}}
     end.
 
-fold_hintfile_loop(DataSize, HintFile, Fd, HintRecord, Fun, Acc0) ->
+
+fold_hintfile_loop(_DataSize, HintFile, _Fd, HintCRC,
+                   <<0:?TSTAMPFIELD, 0:?KEYSIZEFIELD,
+                     ExpectCRC:?TOTALSIZEFIELD, (?MAXOFFSET):?OFFSETFIELD>>, _Fun, Acc0) ->
+    case HintCRC of
+        ExpectCRC ->
+            Acc0;
+        _ ->
+            error_logger:error_msg("Hintfile '~s' has bad CRC ~p expected ~p\n",
+                                   [HintFile, HintCRC, ExpectCRC]),
+            {error, {bad_crc, HintCRC, ExpectCRC}}
+    end;
+fold_hintfile_loop(DataSize, HintFile, Fd, HintCRC0,
+                   HintRecord, Fun, Acc0) ->
     <<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
       TotalSz:?TOTALSIZEFIELD, Offset:?OFFSETFIELD>> = HintRecord,
     ReadSz = KeySz + ?HINT_RECORD_SZ,
@@ -417,19 +445,29 @@ fold_hintfile_loop(DataSize, HintFile, Fd, HintRecord, Fun, Acc0) ->
             Acc = Fun(Key, Tstamp, PosInfo, Acc0),
             case Rest of
                 <<NextRecord:?HINT_RECORD_SZ/bytes>> ->
-                    fold_hintfile_loop(DataSize, HintFile,
-                                       Fd, NextRecord, Fun, Acc);
+                    HintCRC=erlang:crc32(HintCRC0, [HintRecord, Key]),
+                    fold_hintfile_loop(DataSize, HintFile,  Fd, 
+                                       HintCRC, NextRecord, Fun, Acc);
                 <<>> ->
-                    Acc;
+                    %% Hint files without CRCs will end on a record boundary.
+                    %% No way to know whether to expect a crc or not.
+                    %% Over time, merges will add CRCs to all hint files and
+                    %% we can set this as the default.
+                    case application:get_env(bitcask, require_hint_crc) of
+                        {ok, true} ->
+                            {error, {incomplete_hint, 4}};
+                        _ ->
+                            <<>>
+                    end;
                 X ->
                     error_logger:error_msg("Bad hintfile data 1: ~p\n", [X]),
-                    Acc
+                    {error, {incomplete_hint, 2}}
             end;
         {ok, _} ->
             error_logger:error_msg("Hintfile '~s' contains pointer ~p ~p "
                                    "that is greater than total data size ~p\n",
                                    [HintFile, Offset, TotalSz, DataSize]),
-            Acc0;
+            {error, {incomplete_hint, 3}};
         eof ->
             {error, incomplete_key};
         {error, Reason} ->
@@ -471,30 +509,19 @@ create_file_loop(DirName, Opts, Tstamp) ->
             create_file_loop(DirName, Opts, MostRecentTS + 1)
     end.
 
-generate_hintfile(Filename, {FolderMod, FolderFn, FolderArgs}) ->
-    %% Create the temp file that we will write records out to.
-    {ok, Fd, TmpFilename} = temp_file(Filename ++ ".~w"),
-
-    %% Run the provided fold function over whatever the dataset is. The function
-    %% is passed the Fd as the accumulator argument, and must return the same
-    %% Fd on success. Otherwise, we expect an {error, Reason}.
-    try apply(FolderMod, FolderFn, FolderArgs ++ [Fd]) of
-        Fd ->
-            %% All done writing -- rename to the actual hintfile
-            ok = file:rename(TmpFilename, Filename);
-        {error, Reason} ->
-            {error, Reason}
-    after
-        file:delete(TmpFilename),
-        bitcask_nifs:file_close(Fd)
-    end.
-
 hintfile_entry(Key, Tstamp, {Offset, TotalSz}) ->
     KeySz = size(Key),
     [<<Tstamp:?TSTAMPFIELD>>, <<KeySz:?KEYSIZEFIELD>>,
      <<TotalSz:?TOTALSIZEFIELD>>, <<Offset:?OFFSETFIELD>>, Key].
 
-    
+%% Visitor function for hintfile validation - broken out as a
+%% separate function to make tracing with dbg easier if there is
+%% ever an issue with hintfiles.
+has_valid_hintfile_visitor(_Key, _Tstamp, _PosInfo, Acc0) when is_number(Acc0) ->
+    Acc0+1;
+has_valid_hintfile_visitor(_Key, _Tstamp, _PosInfo, Acc0) ->
+    Acc0.
+
 %% Find the most recent timestamp for a .data file
 most_recent_tstamp(DirName) ->
     lists:foldl(fun({TS,_},Acc) -> 
@@ -514,46 +541,3 @@ temp_file(Template, Seed0) ->
         {error, eexists} ->
             temp_file(Template, Seed)
     end.
-
-%% ===================================================================
-%% EUnit tests
-%% ===================================================================
--ifdef(TEST).
-
--ifdef(EQC).
-
--define(QC_OUT(P), eqc:on_output(fun(Str, Args) -> ?debugFmt(Str, Args) end, P)).
-
-init_file(Dirname, Kvs) ->
-    os:cmd(?FMT("rm -rf ~s", [Dirname])),
-    {ok, F} = create_file(Dirname, []),
-    {ok, _} = write_kvs(Kvs, F, 0).
-
-write_kvs([], F, _Tstamp) ->
-    {ok, F};
-write_kvs([{K, V} | Rest], F, Tstamp) ->
-    {ok, F2, _, _} = write(F, K, V, Tstamp),
-    write_kvs(Rest, F2, Tstamp + 1).
-
-key_value() ->
-    {eqc_gen:non_empty(binary()), binary()}.
-
-prop_hintfile() ->
-    ?FORALL(Kvs, eqc_gen:non_empty(list(key_value())),
-            begin
-                 {ok, F} = init_file("/tmp/bc.fop.hintfile", Kvs),
-                 ok = create_hintfile(F),
-                 true = has_hintfile(F),
-                 AccFn = fun(K, Tstamp, Pos, Acc0) ->
-                                 [{K, Tstamp, Pos} | Acc0]
-                         end,
-                 fold_keys(F, AccFn, [], datafile) ==
-                     fold_keys(F, AccFn, [], hintfile)
-            end).
-
-prop_hintfile_test_() ->
-    {timeout, 60, fun() -> ?assert(eqc:quickcheck(prop_hintfile())) end}.
-
--endif.
-
--endif.
