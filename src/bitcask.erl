@@ -848,7 +848,10 @@ merge_files(#mstate { input_files = [File | Rest]} = State) ->
         end,
     case bitcask_fileops:fold(File, F, State) of
         {error, Reason} ->
-            {error, {File, Reason}, State#mstate { input_files = Rest }};
+            error_logger:error_msg("Merge failed while processing ~s:~p\n",
+                                   [bitcask_fileops:filename(File), Reason]),
+            merge_files(State#mstate { input_files = Rest });
+        
         State1 when is_record(State1, mstate) ->
             merge_files(State1#mstate { input_files = Rest,
                                         merged_files = [File | State1#mstate.merged_files] })
