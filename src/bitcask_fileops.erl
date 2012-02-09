@@ -114,7 +114,7 @@ close_for_writing(State =
 %% match our regex. 
 -spec data_file_tstamps(Dirname :: string()) -> [{integer(), string()}].
 data_file_tstamps(Dirname) ->
-    filelib:fold_files(Dirname, "[0-9]+.bitcask.data", false,
+    filelib:fold_files(Dirname, "[0-9]+.bitcask.data$", false,
                        fun(F, Acc) ->
                                [{file_tstamp(F), F} | Acc]
                        end, []).
