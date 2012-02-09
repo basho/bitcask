@@ -527,17 +527,3 @@ most_recent_tstamp(DirName) ->
     lists:foldl(fun({TS,_},Acc) -> 
                        erlang:max(TS, Acc)
                end, 0, data_file_tstamps(DirName)).
-  
-
-temp_file(Template) ->
-    temp_file(Template, now()).
-
-temp_file(Template, Seed0) ->
-    {Int, Seed} = random:uniform_s(65536, Seed0),
-    Filename = ?FMT(Template, [Int]),
-    case bitcask_nifs:file_open(Filename, [create]) of
-        {ok, FD} ->
-            {ok, FD, Filename};
-        {error, eexists} ->
-            temp_file(Template, Seed)
-    end.
