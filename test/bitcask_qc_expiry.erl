@@ -36,20 +36,7 @@ qc(P) ->
     qc(P, 100).
 
 qc(P, NumTests) ->
-    case last_counterexample() of
-        undefined ->
-            ?assert(eqc:quickcheck(?QC_OUT(eqc:numtests(NumTests, P))));
-        C ->
-            ?assert(eqc:check(?QC_OUT(P), C))
-    end.
-
-last_counterexample() ->
-    try
-        eqc:current_counterexample()
-    catch
-        _:no_current_counterexample ->
-            undefined
-    end.
+    ?assert(eqc:quickcheck(?QC_OUT(eqc:numtests(NumTests, P)))).
 
 keys() ->
     eqc_gen:non_empty(list(eqc_gen:non_empty(binary()))).
