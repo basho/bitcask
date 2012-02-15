@@ -112,7 +112,8 @@ postcondition(_From,_To,_S,{call,_,_,_},_Res) ->
 qc_test_() ->
     {timeout, 120, 
      {setup, fun prepare/0, fun cleanup/1,
-      [?_assertEqual(true, eqc:quickcheck(?QC_OUT(prop_bitcask())))]}}.
+      [{timeout, 120, ?_assertEqual(true,
+                eqc:quickcheck(?QC_OUT(prop_bitcask())))}]}}.
 
 prepare() ->
     application:load(bitcask),
@@ -177,8 +178,8 @@ truncate_hint(Seed, TruncBy0) ->
             {ok, Fi} = file:read_file_info(Hint),
             {ok, Fh} = file:open(Hint, [read, write]),
             TruncBy = (1 + abs(TruncBy0)) rem (Fi#file_info.size+1),
-            {ok, To} = file:position(Fh, {eof, -TruncBy}),
-            %% io:format(user, "Truncating ~p by ~p to ~p\n", [Hint, TruncBy, To]),
+            {ok, _To} = file:position(Fh, {eof, -TruncBy}),
+            %% io:format(user, "Truncating ~p by ~p to ~p\n", [Hint, TruncBy, _To]),
             file:truncate(Fh),
             file:close(Fh)
     end.
