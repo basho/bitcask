@@ -1304,9 +1304,7 @@ ERL_NIF_TERM bitcask_nifs_file_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM
         }
         else
         {
-            ERL_NIF_TERM error = enif_make_tuple2(env, ATOM_ERROR,
-                                                  enif_make_atom(env, erl_errno_id(errno)));
-            return enif_make_tuple2(env, ATOM_ERROR, error);
+            return enif_make_tuple2(env, ATOM_ERROR, errno_atom(env, errno));
         }
     }
     else
@@ -1346,9 +1344,7 @@ ERL_NIF_TERM bitcask_nifs_file_sync(ErlNifEnv* env, int argc, const ERL_NIF_TERM
         }
         else
         {
-            ERL_NIF_TERM error = enif_make_tuple2(env, ATOM_ERROR,
-                                                  enif_make_atom(env, erl_errno_id(errno)));
-            return enif_make_tuple2(env, ATOM_ERROR, error);
+            return enif_make_tuple2(env, ATOM_ERROR, errno_atom(env, errno));
         }
     }
     else
@@ -1404,9 +1400,7 @@ ERL_NIF_TERM bitcask_nifs_file_pread(ErlNifEnv* env, int argc, const ERL_NIF_TER
         {
             /* Read failed altogether */
             enif_release_binary(&bin);
-            ERL_NIF_TERM error = enif_make_tuple2(env, ATOM_ERROR,
-                                                  enif_make_atom(env, erl_errno_id(errno)));
-            return enif_make_tuple2(env, ATOM_ERROR, error);
+            return enif_make_tuple2(env, ATOM_ERROR, errno_atom(env, errno));
         }
     }
     else
@@ -1442,9 +1436,7 @@ ERL_NIF_TERM bitcask_nifs_file_pwrite(ErlNifEnv* env, int argc, const ERL_NIF_TE
             else
             {
                 /* Write failed altogether */
-                ERL_NIF_TERM error = enif_make_tuple2(env, ATOM_ERROR,
-                                                      enif_make_atom(env, erl_errno_id(errno)));
-                return enif_make_tuple2(env, ATOM_ERROR, error);
+                return enif_make_tuple2(env, ATOM_ERROR, errno_atom(env, errno));
             }
         }
 
@@ -1501,9 +1493,7 @@ ERL_NIF_TERM bitcask_nifs_file_read(ErlNifEnv* env, int argc, const ERL_NIF_TERM
         {
             /* Read failed altogether */
             enif_release_binary(&bin);
-            ERL_NIF_TERM error = enif_make_tuple2(env, ATOM_ERROR,
-                                                  enif_make_atom(env, erl_errno_id(errno)));
-            return enif_make_tuple2(env, ATOM_ERROR, error);
+            return enif_make_tuple2(env, ATOM_ERROR, errno_atom(env, errno));
         }
     }
     else
@@ -1534,9 +1524,7 @@ ERL_NIF_TERM bitcask_nifs_file_write(ErlNifEnv* env, int argc, const ERL_NIF_TER
             else
             {
                 /* Write failed altogether */
-                ERL_NIF_TERM error = enif_make_tuple2(env, ATOM_ERROR,
-                                                      enif_make_atom(env, erl_errno_id(errno)));
-                return enif_make_tuple2(env, ATOM_ERROR, error);
+                return enif_make_tuple2(env, ATOM_ERROR, errno_atom(env, errno));
             }
         }
 
@@ -1562,9 +1550,7 @@ ERL_NIF_TERM bitcask_nifs_file_seekbof(ErlNifEnv* env, int argc, const ERL_NIF_T
         else
         {
             /* Write failed altogether */
-            ERL_NIF_TERM error = enif_make_tuple2(env, ATOM_ERROR,
-                                                  enif_make_atom(env, erl_errno_id(errno)));
-            return enif_make_tuple2(env, ATOM_ERROR, error);
+            return enif_make_tuple2(env, ATOM_ERROR, errno_atom(env, errno));
         }
     }
     else
