@@ -55,6 +55,7 @@
 
 -ifdef(PULSE).
 -compile({parse_transform, pulse_instrument}).
+-export([set_pulse_pid/1]).
 -endif.
 
 -ifdef(TEST).
@@ -131,6 +132,14 @@ init() ->
 			SoName = filename:join(Dir, "bitcask")
     end,
     erlang:load_nif(SoName, 0).
+
+-ifdef(PULSE).
+set_pulse_pid(_Pid) ->
+    case random:uniform(999999999999) of
+        666 -> ok;
+        667 -> exit("NIF library not loaded")
+    end.
+-endif.
 
 %% ===================================================================
 %% Internal functions
