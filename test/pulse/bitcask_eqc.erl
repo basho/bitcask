@@ -12,7 +12,7 @@
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
 
--include("../../../include/bitcask.hrl").
+-include("../../include/bitcask.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
