@@ -27,6 +27,10 @@
          read_activefile/2,
          write_activefile/2]).
 
+-ifdef(PULSE).
+-compile({parse_transform, pulse_instrument}).
+-endif.
+
 -type lock_types() :: merge | write.
 
 %% @doc Attempt to lock the specified directory with a specific type of lock
