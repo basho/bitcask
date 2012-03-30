@@ -344,69 +344,93 @@ copy_bitcask_app() ->
 %% (or a fold/fold_keys) may see any of the potential values if the
 %% operation overlaps with a put/delete.
 check_trace(Trace) ->
+  %% Turn the trace into a temporal relation
   Events = eqc_temporal:from_timed_list(Trace),
+
+  %% The Calls relation contains {call, Pid, Call} whenever Call by Pid is in
+  %% progress.
   Calls  = eqc_temporal:stateful(
       fun({call, Pid, Call}) -> [{call, Pid, Call}] end,
       fun({call, Pid, _Call}, {result, Pid, _}) -> [] end,
       Events),
+
+  %% The initial value for each key is not_found.
   AllKeys = lists:usort(fold(
               fun({put, _, K, _}) -> K;
                  ({get, _, K})    -> K;
                  ({delete, _, K}) -> K end, Trace)),
   InitialPuts = eqc_temporal:elems(eqc_temporal:ret([{K, not_found} || K <- AllKeys])),
+  %% For each put or delete the Puts relation contains the appropriate key/value pair.
   Puts    = eqc_temporal:union(InitialPuts,
             eqc_temporal:map(fun({call, _Pid, {put, _H, K, V}}) -> {K, V};
                                 ({call, _Pid, {delete, _H, K}}) -> {K, not_found} end, Calls)),
+  %% DonePut contains {freeze, K, V} when a put or delete has completed.
   DonePut = eqc_temporal:map(
               fun({K, V}) -> {freeze, K, V} end,
               eqc_temporal:subtract(eqc_temporal:shift(1, Puts), Puts)),
+  %% Values contains {K, V} whenever V is a possible value for K. We compute it
+  %% by adding {K, V} whenever it appears in Puts and removing any {K, V1} as
+  %% soon as we see {freeze, K, V2} (with V1 /= V2) in DonePut. In effect, when
+  %% a put/delete call is started both the old and the new value appears in
+  %% Values and when the call has completed only the new value does.
   Values  = eqc_temporal:stateful(
               fun({K, V}) -> {K, V} end,
               fun({K, V1}, {freeze, K, V2}) when V1 /= V2 -> [] end,
               eqc_temporal:union(Puts, DonePut)),
-  %% Build an orddict for key/values for efficiency reasons
+  %% Build an orddict for key/values for efficiency reasons.
   ValueDict = eqc_temporal:map(
       fun(KVs) ->
         lists:foldr(fun({K,V}, Dict) -> orddict:append(K, V, Dict) end, orddict:new(), KVs)
       end,
       eqc_temporal:set(Values)),
 
+  %% The Reads relation keeps track of get, fold_keys and fold calls with the
+  %% purpose of checking that they return something sensible. For a get call we
+  %% check that the result was a possible value at some point during the
+  %% evaluation of the call. The fold and fold_keys are checked analogously.
   Reads = eqc_temporal:stateful(
-      fun({call, Pid, {get, _H, K}}) -> {get, Pid, K, []};
+      %% Starting a read call. For get we aggregate the list of possible values
+      %% for the corresponding key seen during the call. For fold we keep a
+      %% dictionary mapping keys to lists of possible values and for fold_keys
+      %% we keep a dictionary mapping keys to a list of found or not_found.
+      fun({call, Pid, {get, _H, K}})    -> {get, Pid, K, []};
          ({call, Pid, {fold_keys, _H}}) -> {fold_keys, Pid, orddict:new()};
-         ({call, Pid, {fold, _H}}) -> {fold, Pid, orddict:new()} end,
-      fun({get, Pid, K, Vs}, {values, Vals}) ->
+         ({call, Pid, {fold, _H}})      -> {fold, Pid, orddict:new()} end,
+
+      fun
+        %% Update a get call with a new set of possible values.
+         ({get, Pid, K, Vs}, {values, Vals}) ->
+          %% Get all possible values for K
           Ws = case orddict:find(K, Vals) of
                  error    -> [];
                  {ok, Us} -> lists:sort(Us)
                end,
+          %% Add them to the previously seen values
           VWs = lists:umerge(Vs, Ws),
-          false = VWs == Vs,
+          false = VWs == Vs,  %% Be careful not to update the state if nothing
+                              %% changed since eqc_temporal:stateful allows you
+                              %% to change the state several times during the
+                              %% same time slot.
           [{get, Pid, K, VWs}];
-         ({get, Pid, K, Vs}, {result, Pid, not_found}) ->
-            case Vs == [] orelse lists:member(not_found, Vs) of
-              true  -> [];
-              false -> [{bad, {get, K, Vs, not_found}}]
-            end;
-         ({get, Pid, K, Vs}, {result, Pid, {ok, V}}) ->
-            case lists:member(V, Vs) of
-              true  -> [];
-              false -> [{bad, {get, K, Vs, V}}]
-            end;
+
+        %% Update a fold_keys call
          ({fold_keys, Pid, Vals1}, {values, Vals2}) ->
+          %% We don't need the actual values for fold_keys, just found or
+          %% not_found.
           FoundOrNotFound = fun(not_found) -> not_found;
-                               (_) -> found end,
+                               (_)         -> found end,
+          %% Merge the new values and the old values
           Vals = orddict:merge(
-                   fun(_, Vs1, Vs2) ->
-                       lists:umerge(Vs1, lists:usort(lists:map(FoundOrNotFound, Vs2)))
-                   end, Vals1, Vals2),
+                   fun(_, Vs1, Vs2) -> lists:umerge(Vs1, Vs2) end,
+                   Vals1,
+                   orddict:map(fun(_, Vs) ->
+                      lists:usort(lists:map(FoundOrNotFound, Vs))
+                    end, Vals2)),
+          %% Make sure to not do any identity updates
           false = orddict:to_list(Vals) == orddict:to_list(Vals1),
           [{fold_keys, Pid, Vals}];
-         ({fold_keys, Pid, Vals}, {result, Pid, Keys}) ->
-            case check_fold_keys_result(orddict:to_list(Vals), lists:sort(Keys)) of
-              true  -> [];
-              false -> [{bad, {fold_keys, orddict:to_list(Vals), Keys}}]
-            end;
+
+        %% Update a fold call
          ({fold, Pid, Vals1}, {values, Vals2}) ->
           Vals = orddict:merge(
                    fun(_, Vs1, Vs2) ->
@@ -414,7 +438,29 @@ check_trace(Trace) ->
                    end, Vals1, Vals2),
           false = orddict:to_list(Vals) == orddict:to_list(Vals1),
           [{fold, Pid, Vals}];
+
+        %% Check a call to get
+         ({get, Pid, K, Vs}, {result, Pid, R}) ->
+            V = case R of not_found -> not_found;
+                          {ok, U}   -> U end,
+            case lists:member(V, Vs) of
+              true  -> [];                      %% V is a good result
+              false -> [{bad, {get, K, Vs, V}}] %% V is a bad result!
+            end;
+        %% Check a call to fold_keys
+         ({fold_keys, Pid, Vals}, {result, Pid, Keys}) ->
+            %% check_fold_keys_result checks that
+            %%  K in Keys     ==> found     in Vals[K] and
+            %%  K not in Keys ==> not_found in Vals[K]
+            case check_fold_keys_result(orddict:to_list(Vals), lists:sort(Keys)) of
+              true  -> [];
+              false -> [{bad, {fold_keys, orddict:to_list(Vals), Keys}}]
+            end;
+        %% Check a call to fold
          ({fold, Pid, Vals}, {result, Pid, KVs}) ->
+            %% check_fold_result checks that
+            %%  {K, V} in KVs ==> V         in Vals[K] and
+            %%  K not in KVs  ==> not_found in Vals[K]
             case check_fold_result(orddict:to_list(Vals), lists:sort(KVs)) of
               true  -> [];
               false -> [{bad, {fold, orddict:to_list(Vals), KVs}}]
@@ -422,11 +468,13 @@ check_trace(Trace) ->
         end,
       eqc_temporal:union(Events, eqc_temporal:map(fun(D) -> {values, D} end, ValueDict))),
 
+  %% Filter out the bad stuff from the Reads relation.
   Bad = eqc_temporal:map(fun(X={bad, _}) -> X end, Reads),
 
   ?WHENFAIL(begin
     ?QC_FMT("Events:\n~p\n", [Events]),
     ?QC_FMT("Bad:\n~p\n", [Bad]) end,
+    %% There shouldn't be any Bad stuff
     eqc_temporal:is_false(Bad)).
 
 check_fold_result([{K, Vs}|Expected], [{K, V}|Actual]) ->
@@ -556,11 +604,11 @@ sync(H) ->
 
 fold(H) ->
   ?LOG({fold, H},
-  ?CHECK_HANDLE(H, 0, bitcask:fold(H, fun(<<K:32>>, V, Acc) -> [{K,V}|Acc] end, []))).
+  ?CHECK_HANDLE(H, [], bitcask:fold(H, fun(<<K:32>>, V, Acc) -> [{K,V}|Acc] end, []))).
 
 fold_keys(H) ->
   ?LOG({fold_keys, H},
-  ?CHECK_HANDLE(H, 0, bitcask:fold_keys(H, fun(#bitcask_entry{key = <<K:32>>}, Ks) -> [K|Ks] end, []))).
+  ?CHECK_HANDLE(H, [], bitcask:fold_keys(H, fun(#bitcask_entry{key = <<K:32>>}, Ks) -> [K|Ks] end, []))).
 
 bc_open(Writer) ->
   ?LOG({open, Writer},
