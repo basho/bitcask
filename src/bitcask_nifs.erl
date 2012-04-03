@@ -56,6 +56,7 @@
 -ifdef(PULSE).
 -compile({parse_transform, pulse_instrument}).
 -export([set_pulse_pid/1]).
+-compile({pulse_skip, [{init,0}]}).
 -endif.
 
 -ifdef(TEST).
