@@ -33,12 +33,19 @@ ERL_NIF_TERM set_pulse_pid(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]){
 }
 
 int  pulse_send(ErlNifEnv* env, ErlNifPid* dest_pid,
-                ErlNifEnv* msg_env, ERL_NIF_TERM msg){
-    ERL_NIF_TERM t_dest_pid = enif_make_pid(env, dest_pid);
-    ERL_NIF_TERM pulse_msg = enif_make_tuple3(env,
+                ErlNifEnv* msg_env, ERL_NIF_TERM msg,
+                char* file, int line){
+    ERL_NIF_TERM t_self = 
+        enif_make_pid(env, enif_self(env, (ErlNifPid *)malloc(sizeof(ErlNifPid))));
+    ERL_NIF_TERM t_src_loc = 
+        enif_make_tuple2(env, enif_make_string(env, file, ERL_NIF_LATIN1),
+                              enif_make_int(env, line));
+    ERL_NIF_TERM t_args = enif_make_list(env, 2, enif_make_pid(env, dest_pid), msg);
+    ERL_NIF_TERM pulse_msg = enif_make_tuple4(env,
                                               ATOM_SEND,
-                                              t_dest_pid,
-                                              msg);
+                                              t_self,
+                                              t_src_loc,
+                                              t_args);
 
     return enif_send(env, THE_PULSE_PID, msg_env, pulse_msg);
 }
