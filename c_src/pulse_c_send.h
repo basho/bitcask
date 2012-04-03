@@ -15,10 +15,14 @@
 
 #include "erl_nif.h"
 
+#define PULSE_SEND(env, dest_pid, msg_env, msg) \
+  pulse_send(env, dest_pid, msg_env, msg, __FILE__, __LINE__)
+
 ERL_NIF_TERM set_pulse_pid(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
 int  pulse_send(ErlNifEnv* env, ErlNifPid* dest_pid,
-                ErlNifEnv* msg_env, ERL_NIF_TERM msg);
+                ErlNifEnv* msg_env, ERL_NIF_TERM msg,
+                char* file, int line);
 
 int pulse_c_send_on_load(ErlNifEnv* env);
 
