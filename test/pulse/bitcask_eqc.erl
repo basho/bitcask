@@ -22,6 +22,7 @@
 %% The following functions contains side_effects but are run outside
 %% PULSE, i.e. PULSE needs to leave them alone
 -compile({pulse_skip,[{prop_pulse_test_,0},{really_delete_bitcask,0},{copy_bitcask_app,0}]}).
+-compile({pulse_no_side_effect,[{file,'_','_'}]}).
 
 %% The token module keeps track of the currently used directory for
 %% bitcask. Each test uses a fresh directory!
