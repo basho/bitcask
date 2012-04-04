@@ -271,7 +271,7 @@ run_commands_on_node(Cmds, Seed, Verbose) ->
     X =
     try
       {H, S, Res, PidRs, Trace} = pulse:run(fun() ->
-          pulse_application_controller:start({application, kernel, []}),
+          %% pulse_application_controller:start({application, kernel, []}),
           application:start(bitcask),
           receive after 1000000 -> ok end,
           OldVerbose = pulse:verbose([ all || Verbose ]),
