@@ -22,7 +22,7 @@
 %% The following functions contains side_effects but are run outside
 %% PULSE, i.e. PULSE needs to leave them alone
 -compile({pulse_skip,[{prop_pulse_test_,0},{really_delete_bitcask,0},{copy_bitcask_app,0}]}).
--compile({pulse_no_side_effect,[{file,'_','_'}]}).
+-compile({pulse_no_side_effect,[{file,'_','_'}, {erlang, now, 0}]}).
 
 %% The token module keeps track of the currently used directory for
 %% bitcask. Each test uses a fresh directory!
@@ -228,7 +228,7 @@ host() ->
 
 %% Generate a most likely unique node name
 unique_name() ->
-  {A, B, C} = utils:now(),
+  {A, B, C} = erlang:now(),
   list_to_atom(lists:concat([integer_to_list(A), "-",
                              integer_to_list(B), "-",
                              integer_to_list(C)])).
@@ -300,8 +300,8 @@ prop_pulse() ->
   prop_pulse(false).
 
 prop_pulse(Verbose) ->
-  ?FORALL(Cmds, ?LET(Cmds, more_commands(10, commands(?MODULE)), shrink_commands(Cmds)),
-  ?FORALL(Seed, pulse:seed(),
+  ?FORALL(Cmds, ?LET(Cmds, more_commands(2, commands(?MODULE)), shrink_commands(Cmds)),
+  ?FORALL(Seed, ?LAZY(erlang:now()), %pulse:seed(),
   begin
     case run_on_node(Verbose, ?MODULE, run_commands_on_node, [Cmds, Seed, Verbose]) of
       {'EXIT', Err} ->
@@ -822,7 +822,7 @@ custom_shrink(CE=[_,Seed|_], [C|Cs], Repeat) ->
   end.
 
 check_many(C, N) ->
-  check_many(utils:now(), C, N).
+  check_many(erlang:now(), C, N).
 
 check_many(_, _, 0) -> true;
 check_many(Seed, C0, N) ->
@@ -838,7 +838,7 @@ mk_counterexample(CE = [Cmds, _Seed]) when is_list(Cmds) ->
   CE;
 mk_counterexample(Cmds) ->
   S = state_after(?MODULE, Cmds),
-  [Cmds, utils:now(),
+  [Cmds, erlang:now(),
    [ {0, []} | [ {I, []}
                  || I <- lists:seq(1, length(S#state.readers)) ] ]
    ++ [ {errors, []}, {events, []} ] ].

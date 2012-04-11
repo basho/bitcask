@@ -7,9 +7,6 @@
 
 -compile(export_all).
 
-now() ->
-  erlang:now().
-
 whereis(Name) ->
   erlang:whereis(Name).
 
