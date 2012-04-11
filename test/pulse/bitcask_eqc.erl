@@ -301,7 +301,7 @@ prop_pulse() ->
 
 prop_pulse(Verbose) ->
   ?FORALL(Cmds, ?LET(Cmds, more_commands(2, commands(?MODULE)), shrink_commands(Cmds)),
-  ?FORALL(Seed, ?LAZY(erlang:now()), %pulse:seed(),
+  ?FORALL(Seed, pulse:seed(),
   begin
     case run_on_node(Verbose, ?MODULE, run_commands_on_node, [Cmds, Seed, Verbose]) of
       {'EXIT', Err} ->
