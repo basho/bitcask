@@ -505,7 +505,8 @@ command_data({set, _, {call, _, fork_merge, _}}, {_S, V}) ->
 command_data({set, _, {call, _, bc_open, _}}, {_S, V}) ->
   case V of
     {'EXIT', _} -> {bc_open, 'EXIT'};
-    _           -> bc_open
+    {error, Err} -> {bc_open, Err};
+    _  when is_reference(V) -> bc_open
   end;
 command_data({set, _, {call, _, needs_merge, _}}, {_S, V}) ->
   case V of
