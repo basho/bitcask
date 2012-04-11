@@ -25,6 +25,9 @@
 
 -behaviour(supervisor).
 
+-ifdef(PULSE).
+-compile({parse_transform, pulse_instrument}).
+-endif.
 %% API
 -export([start_link/0]).
 

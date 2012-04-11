@@ -47,7 +47,9 @@ void DEBUG(const char *fmt, ...)
 #  define DEBUG(X, ...) {}
 #endif
 
-
+#ifdef PULSE
+#include "pulse_c_send.h"
+#endif
 
 static ErlNifResourceType* bitcask_keydir_RESOURCE;
 
@@ -221,6 +223,9 @@ static void bitcask_nifs_file_resource_cleanup(ErlNifEnv* env, void* arg);
 
 static ErlNifFunc nif_funcs[] =
 {
+#ifdef PULSE
+    {"set_pulse_pid", 1, set_pulse_pid},
+#endif
     {"keydir_new", 0, bitcask_nifs_keydir_new0},
     {"keydir_new", 1, bitcask_nifs_keydir_new1},
     {"keydir_mark_ready", 1, bitcask_nifs_keydir_mark_ready},
@@ -1582,7 +1587,11 @@ static void msg_pending_awaken(ErlNifEnv* env, bitcask_keydir* keydir,
     for (idx = 0; idx < keydir->pending_awaken_count; idx++)
     {
         enif_clear_env(msg_env);
+#ifdef PULSE
+        PULSE_SEND(env, &keydir->pending_awaken[idx], msg_env, msg);
+#else
         enif_send(env, &keydir->pending_awaken[idx], msg_env, msg);
+#endif
     }
     enif_free_env(msg_env);
 }
@@ -1863,6 +1872,10 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
     ATOM_CREATE = enif_make_atom(env, "create");
     ATOM_READONLY = enif_make_atom(env, "readonly");
     ATOM_O_SYNC = enif_make_atom(env, "o_sync");
+
+#ifdef PULSE
+	pulse_c_send_on_load(env);
+#endif
 
     return 0;
 }
