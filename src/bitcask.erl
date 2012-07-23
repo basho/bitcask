@@ -587,7 +587,7 @@ needs_merge(Ref) ->
             %%       recv this information and decide if they want it
             case get_opt(log_needs_merge, State#bc_state.opts) of
                 true ->
-                    error_logger:info_msg("~p needs_merge: ~120p\n",
+                    error_logger:info_msg("~p needs_merge: ~p\n",
                                           [State#bc_state.dirname, MergableFiles]);
                 _ ->
                     ok
