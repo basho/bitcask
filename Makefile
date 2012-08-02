@@ -2,19 +2,23 @@ REPO		?= bitcask
 BITCASK_TAG	 = $(shell git describe --tags)
 REVISION	?= $(shell echo $(BITCASK_TAG) | sed -e 's/^$(REPO)-//')
 PKG_VERSION	?= $(shell echo $(REVISION) | tr - .)
+REBAR_BIN := $(shell which rebar)
+ifeq ($(REBAR_BIN),)
+REBAR_BIN = ./rebar
+endif
 
 .PHONY: rel deps package pkgclean
 
 all: deps compile
 
 compile:
-	./rebar compile eunit
+	$(REBAR_BIN) compile eunit
 
 deps:
-	./rebar get-deps
+	$(REBAR_BIN) get-deps
 
 clean:
-	./rebar clean
+	$(REBAR_BIN) clean
 
 # Release tarball creation
 # Generates a tarball that includes all the deps sources so no checkouts are necessary
