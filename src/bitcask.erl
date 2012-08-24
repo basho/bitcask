@@ -27,6 +27,7 @@
          close/1,
          close_write_file/1,
          get/2,
+         get_offset/2,
          put/3,
          delete/2,
          sync/1,
@@ -214,6 +215,17 @@ get(Ref, Key, TryNum) ->
                             end
                     end
             end
+    end.
+
+%% @doc Get the offset of a key on-disk
+-spec get_offset(reference(), Key::binary()) -> integer() | not_found.
+get_offset(Ref, Key) ->
+    State = get_state(Ref),
+    case bitcask_nifs:keydir_get(State#bc_state.keydir, Key) of
+        not_found ->
+            not_found;
+        E when is_record(E, bitcask_entry) ->
+            E#bitcask_entry.offset
     end.
 
 %% @doc Store a key and value in a bitcase datastore.
