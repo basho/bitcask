@@ -73,6 +73,7 @@
                   hint_keydir,
                   del_keydir,
                   expiry_time,
+                  expiry_grace_time,
                   opts }).
 
 %% A bitcask is a directory containing:
@@ -503,6 +504,7 @@ merge1(Dirname, Opts, FilesToMerge) ->
                       live_keydir = LiveKeyDir,
                       del_keydir = DelKeyDir,
                       expiry_time = expiry_time(Opts),
+                      expiry_grace_time = expiry_grace_time(Opts),
                       opts = Opts },
 
     %% Finally, start the merge process
@@ -547,16 +549,22 @@ needs_merge(Ref) ->
     %%
     %% frag_merge_trigger - Any file exceeds this % fragmentation
     %% dead_bytes_merge_trigger - Any file has more than this # of dead bytes
-    %% expiry_secs - Any file has an expired key
+    %% expiry_time - Any file has an expired key
+    %% expiry_grace_time - avoid expiring in the case of continuous writes
     %%
     FragTrigger = get_opt(frag_merge_trigger, State#bc_state.opts),
     DeadBytesTrigger = get_opt(dead_bytes_merge_trigger, State#bc_state.opts),
-    ExpirationTime = expiry_time(State#bc_state.opts),
+%io:format("JFW: hello, world! expiry_time: ~p, grace_time ~p\n~p", [expiry_time(State#bc_state.opts), expiry_grace_time(State#bc_state.opts), State#bc_state.opts]),
+    ExpirationTime = 
+            max(expiry_time(State#bc_state.opts) - expiry_grace_time(State#bc_state.opts), 0),
 
     NeedsMerge = lists:any(fun(F) ->
                                    (F#file_status.fragmented >= FragTrigger)
-                                       or (F#file_status.dead_bytes >= DeadBytesTrigger)
-                                       or (F#file_status.oldest_tstamp < ExpirationTime)
+                                       orelse (F#file_status.dead_bytes >= DeadBytesTrigger)
+                                          %% Don't purge new files along with expired ones:
+                                       orelse (        (F#file_status.oldest_tstamp > 0) 
+                                               andalso (F#file_status.oldest_tstamp < ExpirationTime)
+                                              )
                            end, Summary),
 
     case NeedsMerge of
@@ -710,6 +718,24 @@ expiry_time(Opts) ->
         true -> bitcask_time:tstamp() - ExpirySecs;
         false -> 0
     end.
+
+% JFW
+%expiry_grace_time(Opts) ->
+%    ExpiryGraceTime = get_opt(expiry_grace_secs, Opts),
+%    case ExpiryGraceTime > 0 of 
+%        true -> ExpiryGraceTime;
+%        false -> 1
+%    end.
+%
+
+to_lower_grace_time_bound(undefined) -> 0;
+to_lower_grace_time_bound(X) -> 
+    case X > 0 of
+        true -> X;
+        false -> 0
+    end.
+
+expiry_grace_time(Opts) -> to_lower_grace_time_bound(get_opt(expiry_secs, Opts)).
 
 start_app() ->
     case application:start(?MODULE) of
@@ -1641,4 +1667,3 @@ truncate_file(Path, Offset) ->
     file:close(FH).    
 
 -endif.
-

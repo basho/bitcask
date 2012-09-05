@@ -32,6 +32,17 @@
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
+%% JFW
+run() ->
+                              try
+                                  meck:new(bitcask_time, [passthrough]),
+                                  meck:expect(bitcask_time, tstamp, fun next_tstamp/0),
+                                  eqc:quickcheck(prop_expiry())
+                              after
+                                  meck:unload()
+                              end.
+%% JFW 
+
 qc(P) ->
     qc(P, 100).
 
@@ -86,9 +97,9 @@ set_tstamp_step(Step) ->
 
 prop_expiry() ->
     ?LET({Keys, Values}, {keys(), values()},
-         ?FORALL({Ops, Expiry, Timestep, M1},
+         ?FORALL({Ops, Expiry, ExpiryGrace, Timestep, M1},
                  {eqc_gen:non_empty(list(ops(Keys, Values))),
-                  choose(1,10), choose(5, 50), choose(5,128)},
+                  choose(1,10), choose(1, 10), choose(5, 50), choose(5,128)},
                  begin
                      Dirname = "/tmp/bc.prop.expiry",
                      ?cmd("rm -rf " ++ Dirname),
@@ -106,6 +117,7 @@ prop_expiry() ->
                                           {small_file_threshold, disabled},
                                           {frag_threshold, disabled},
                                           {expiry_secs, Expiry},
+                                          {expiry_grace_secs, ExpiryGrace},
                                           {max_file_size, M1}]),
 
                      try
@@ -118,7 +130,7 @@ prop_expiry() ->
                          bitcask:close_write_file(Bref),
 
                          %% Identify items in the Model that should be expired
-                         ExpireCutoff = erlang:max(current_tstamp() + Timestep - Expiry, -1),
+                         ExpireCutoff = erlang:max(current_tstamp() + Timestep - erlang:max(Expiry - ExpiryGrace, 0), -1),
 
                          {Expired, _Live} = lists:partition(fun({_K, {_Value, Tstamp}}) ->
                                                                     Tstamp < ExpireCutoff
@@ -133,6 +145,7 @@ prop_expiry() ->
                              _ ->
                                  ?assertMatch({true, _}, bitcask:needs_merge(Bref))
                          end
+ catch X:Y -> io:format(user, "exception: ~p ~p @ ~p\n", [X,Y, erlang:get_stacktrace()])
                      after
                          bitcask:close(Bref)
                      end,
