@@ -554,7 +554,6 @@ needs_merge(Ref) ->
     %%
     FragTrigger = get_opt(frag_merge_trigger, State#bc_state.opts),
     DeadBytesTrigger = get_opt(dead_bytes_merge_trigger, State#bc_state.opts),
-%io:format("JFW: hello, world! expiry_time: ~p, grace_time ~p\n~p", [expiry_time(State#bc_state.opts), expiry_grace_time(State#bc_state.opts), State#bc_state.opts]),
     ExpirationTime = 
             max(expiry_time(State#bc_state.opts) - expiry_grace_time(State#bc_state.opts), 0),
 
@@ -718,15 +717,6 @@ expiry_time(Opts) ->
         true -> bitcask_time:tstamp() - ExpirySecs;
         false -> 0
     end.
-
-% JFW
-%expiry_grace_time(Opts) ->
-%    ExpiryGraceTime = get_opt(expiry_grace_secs, Opts),
-%    case ExpiryGraceTime > 0 of 
-%        true -> ExpiryGraceTime;
-%        false -> 1
-%    end.
-%
 
 to_lower_grace_time_bound(undefined) -> 0;
 to_lower_grace_time_bound(X) -> 
