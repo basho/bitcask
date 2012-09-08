@@ -126,9 +126,9 @@ do_merge(Args) ->
     {_, {Hour, _, _}} = calendar:local_time(),
     case in_merge_window(Hour, merge_window()) of
         true ->
-            Start = now(),
+            Start = os:timestamp(),
             Result = (catch apply(bitcask, merge, Args)),
-            ElapsedSecs = timer:now_diff(now(), Start) / 1000000,
+            ElapsedSecs = timer:now_diff(os:timestamp(), Start) / 1000000,
             case Result of
                 ok ->
                     error_logger:info_msg("Merged ~p in ~p seconds.\n",
