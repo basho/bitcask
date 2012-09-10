@@ -725,7 +725,7 @@ to_lower_grace_time_bound(X) ->
         false -> 0
     end.
 
-expiry_grace_time(Opts) -> to_lower_grace_time_bound(get_opt(expiry_secs, Opts)).
+expiry_grace_time(Opts) -> to_lower_grace_time_bound(get_opt(expiry_grace_time, Opts)).
 
 start_app() ->
     case application:start(?MODULE) of
