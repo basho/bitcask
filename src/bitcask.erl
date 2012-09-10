@@ -555,6 +555,8 @@ needs_merge(Ref) ->
     FragTrigger = get_opt(frag_merge_trigger, State#bc_state.opts),
     DeadBytesTrigger = get_opt(dead_bytes_merge_trigger, State#bc_state.opts),
     ExpirationTime = 
+            max(expiry_time(State#bc_state.opts), 0),
+    ExpirationGraceTime = 
             max(expiry_time(State#bc_state.opts) - expiry_grace_time(State#bc_state.opts), 0),
 
     NeedsMerge = lists:any(fun(F) ->
@@ -562,7 +564,7 @@ needs_merge(Ref) ->
                                        orelse (F#file_status.dead_bytes >= DeadBytesTrigger)
                                           %% Don't purge new files along with expired ones:
                                        orelse (        (F#file_status.oldest_tstamp > 0) 
-                                               andalso (F#file_status.oldest_tstamp < ExpirationTime)
+                                               andalso (F#file_status.oldest_tstamp < ExpirationGraceTime)
                                               )
                            end, Summary),
 
