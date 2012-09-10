@@ -22,9 +22,6 @@
 
 %% @doc Basic file i/o operations for bitcask.
 -module(bitcask_fileops).
--author('Dave Smith <dizzyd@basho.com>').
--author('Justin Sheehy <justin@basho.com>').
--author('Andy Gross <andy@basho.com>').
 
 -export([create_file/2,
          open_file/1,

@@ -20,8 +20,6 @@
 %%
 %% -------------------------------------------------------------------
 -module(merge_pulse_qc).
--author('Dave Smith <dizzyd@basho.com>').
--author('Justin Sheehy <justin@basho.com>').
 
 -ifdef(EQC).
 -ifdef(PULSE).
