@@ -525,6 +525,16 @@ merge1(Dirname, Opts, FilesToMerge) ->
      end || F <- State#mstate.input_files],
     ok = bitcask_lockops:release(Lock).
 
+%% @doc Predicate which determines whether or not a file should be considered for a merge. 
+consider_for_merge(FragTrigger, DeadBytesTrigger, ExpirationGraceTime) ->
+    fun (F) ->
+            (F#file_status.fragmented >= FragTrigger)
+                orelse (F#file_status.dead_bytes >= DeadBytesTrigger)
+                orelse (        (F#file_status.oldest_tstamp > 0)     %% means that the file has data
+                        andalso (F#file_status.oldest_tstamp < ExpirationGraceTime)
+                       )
+    end.
+
 -spec needs_merge(reference()) -> {true, [string()]} | false.
 needs_merge(Ref) ->
     State = get_state(Ref),
@@ -559,15 +569,8 @@ needs_merge(Ref) ->
     ExpirationGraceTime = 
             max(expiry_time(State#bc_state.opts) - expiry_grace_time(State#bc_state.opts), 0),
 
-    NeedsMerge = lists:any(fun(F) ->
-                                   (F#file_status.fragmented >= FragTrigger)
-                                       orelse (F#file_status.dead_bytes >= DeadBytesTrigger)
-                                          %% Don't purge new files along with expired ones:
-                                       orelse (        (F#file_status.oldest_tstamp > 0) 
-                                               andalso (F#file_status.oldest_tstamp < ExpirationGraceTime)
-                                              )
-                           end, Summary),
-
+    NeedsMerge = lists:any(consider_for_merge(FragTrigger, DeadBytesTrigger, ExpirationGraceTime), 
+                           Summary),
     case NeedsMerge of
         true ->
             %% Build a list of threshold checks; a file which meets ANY

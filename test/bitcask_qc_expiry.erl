@@ -32,17 +32,6 @@
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
-%% JFW
-run() ->
-                              try
-                                  meck:new(bitcask_time, [passthrough]),
-                                  meck:expect(bitcask_time, tstamp, fun next_tstamp/0),
-                                  eqc:quickcheck(prop_expiry())
-                              after
-                                  meck:unload()
-                              end.
-%% JFW 
-
 qc(P) ->
     qc(P, 100).
 
