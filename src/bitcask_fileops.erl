@@ -488,7 +488,9 @@ create_file_loop(DirName, Opts, Tstamp) ->
 
     case bitcask_nifs:file_open(Filename, FinalOpts) of
         {ok, FD} ->
-            {ok, HintFD} = bitcask_nifs:file_open(hintfile_name(Filename), FinalOpts),
+            HintfileName = hintfile_name(Filename),
+            error_logger:error_msg("bitcask_nifs:file_open() in PID ~p: HintfileName: ~p, FinalOpts: ~p", [erlang:self(), HintfileName, FinalOpts]),
+            {ok, HintFD} = bitcask_nifs:file_open(HintfileName, FinalOpts),
             {ok, #filestate{mode = read_write,
                             filename = Filename,
                             tstamp = file_tstamp(Filename),
