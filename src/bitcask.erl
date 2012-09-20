@@ -512,7 +512,7 @@ merge1(Dirname, Opts, FilesToMerge) ->
 
     %% Make sure to close the final output file
     ok = bitcask_fileops:sync(State1#mstate.out_file),
-    ok = bitcask_fileops:close(State1#mstate.out_file),
+    ok = bitcask_fileops:close(bitcask_fileops:close_for_writing(State1#mstate.out_file)),
 
     %% Explicitly release our keydirs instead of waiting for GC
     bitcask_nifs:keydir_release(LiveKeyDir),
@@ -898,7 +898,7 @@ inner_merge_write(K, V, Tstamp, State) ->
             wrap ->
                 %% Close the current output file
                 ok = bitcask_fileops:sync(State#mstate.out_file),
-                ok = bitcask_fileops:close(State#mstate.out_file),
+                ok = bitcask_fileops:close(bitcask_fileops:close_for_writing(State#mstate.out_file)),
                 
                 %% Start our next file and update state
                 {ok, NewFile} = bitcask_fileops:create_file(
