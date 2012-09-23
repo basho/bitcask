@@ -53,8 +53,8 @@
 -ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_fsm.hrl").
--compile(export_all).
 -endif.
+-compile(export_all).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
