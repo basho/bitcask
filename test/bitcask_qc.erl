@@ -196,7 +196,20 @@ prop_merge() ->
                          true
                      after
                          bitcask:close(Ref)
-                     end
+                     end,
+
+                     %% For each of the data files, validate that it has a valid hint file
+                     Validate = fun(Fname) ->
+                                        {ok, S} = bitcask_fileops:open_file(Fname),
+                                        try
+                                            ?assertEqual(true, bitcask_fileops:has_valid_hintfile(S))
+                                        after
+                                            bitcask_fileops:close(S)
+                                        end
+                                end,
+                     [Validate(Fname) || {_Ts, Fname} <-
+                                             bitcask_fileops:data_file_tstamps("/tmp/bc.prop.merge")],
+                     true
                  end)).
 
 
