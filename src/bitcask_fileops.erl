@@ -81,34 +81,33 @@ open_file(Filename) ->
 -spec close(#filestate{} | fresh | undefined) -> ok.
 close(fresh) -> ok;
 close(undefined) -> ok;
-close(#filestate{ fd = FD, hintfd = HintFd }) ->
+close(State = #filestate{ fd = FD }) ->
+    S2 = close_hintfile(State),
     bitcask_nifs:file_close(FD),
-    case HintFd of
-        undefined ->
-            ok;
-        _ ->
-            bitcask_nifs:file_close(HintFd)
-    end,
     ok.
 
 %% @doc Close a file for writing, but leave it open for reads.
 -spec close_for_writing(#filestate{} | fresh | undefined) -> #filestate{} | ok.
 close_for_writing(fresh) -> ok;
 close_for_writing(undefined) -> ok;
-close_for_writing(State = 
-                  #filestate{ mode = read_write, fd = Fd, 
-                              hintfd = HintFd, hintcrc = HintCRC }) ->
-    %% Write out CRC check at end of hint file.  Write with an empty key,
-    %% zero timestamp and offset as large as the file format supports so
-    %% opening with an older version of bitcask will just reject the 
-    %% record at the end of the hintfile and otherwise work normally.
+close_for_writing(State = #filestate{ mode = read_write, fd = Fd }) ->
+    S2 = close_hintfile(State),
+    bitcask_nifs:file_sync(Fd),
+    S2#filestate { mode = read_only }.
+
+close_hintfile(State = #filestate { hintfd = undefined }) ->
+    State;
+close_hintfile(State = #filestate { hintfd = HintFd, hintcrc = HintCRC }) ->
+    %% Write out CRC check at end of hint file.  Write with an empty key, zero
+    %% timestamp and offset as large as the file format supports so opening with
+    %% an older version of bitcask will just reject the record at the end of the
+    %% hintfile and otherwise work normally.
     Iolist = hintfile_entry(<<>>, 0, {?MAXOFFSET, HintCRC}),
     ok = bitcask_nifs:file_write(HintFd, Iolist),
-
-    bitcask_nifs:file_sync(Fd),
     bitcask_nifs:file_sync(HintFd),
     bitcask_nifs:file_close(HintFd),
-    State#filestate { mode = read_only, hintfd = undefined }.
+    State#filestate { hintfd = undefined, hintcrc = 0 }.
+
 
 %% Build a list of {tstamp, filename} for all files in the directory that
 %% match our regex. 
