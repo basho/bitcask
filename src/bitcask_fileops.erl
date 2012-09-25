@@ -82,7 +82,7 @@ open_file(Filename) ->
 close(fresh) -> ok;
 close(undefined) -> ok;
 close(State = #filestate{ fd = FD }) ->
-    S2 = close_hintfile(State),
+    close_hintfile(State),
     bitcask_nifs:file_close(FD),
     ok.
 
