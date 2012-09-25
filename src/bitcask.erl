@@ -1052,7 +1052,7 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State, Retries, _LastErr)
             %% wrap to a new file with a greater file_id and rewrite
             %% the key there.  Limit the number of recursions in case
             %% there is a different issue with the keydir.
-            State3 = wrap_write_file(State2),
+            State3 = wrap_write_file(State2#bc_state { write_file = WriteFile2 }),
             do_put(Key, Value, State3, Retries - 1, already_exist)
     end.
 
