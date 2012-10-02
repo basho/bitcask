@@ -20,8 +20,6 @@
 %%
 %% -------------------------------------------------------------------
 -module(bitcask_sup).
--author('Dave Smith <dizzyd@basho.com>').
--author('Justin Sheehy <justin@basho.com>').
 
 -behaviour(supervisor).
 
