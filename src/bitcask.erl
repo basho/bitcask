@@ -459,7 +459,8 @@ merge1(Dirname, Opts, FilesToMerge) ->
             %% load all available data into the keydir in case another
             %% reader/writer comes along in the same VM. Note that we
             %% won't necessarily merge all these files.
-            AllFiles = scan_key_files(readable_files(Dirname), LiveKeyDir, []),
+            AllFiles = scan_key_files(readable_files(Dirname), LiveKeyDir, [],
+                                      false),
 
             %% Partition all files to files we'll merge and files we
             %% won't (so that we can close those extra files once
@@ -765,9 +766,9 @@ put_state(Ref, State) ->
 reverse_sort(L) ->
     lists:reverse(lists:sort(L)).
 
-scan_key_files([], _KeyDir, Acc) ->
+scan_key_files([], _KeyDir, Acc, _CloseFile) ->
     Acc;
-scan_key_files([Filename | Rest], KeyDir, Acc) ->
+scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile) ->
     {ok, File} = bitcask_fileops:open_file(Filename),
     F = fun(K, Tstamp, {Offset, TotalSz}, _) ->
                 bitcask_nifs:keydir_put(KeyDir,
@@ -778,7 +779,12 @@ scan_key_files([Filename | Rest], KeyDir, Acc) ->
                                         Tstamp)
         end,
     bitcask_fileops:fold_keys(File, F, undefined, recovery),
-    scan_key_files(Rest, KeyDir, [File | Acc]).
+    if CloseFile == true ->
+            bitcask_fileops:close(File);
+       true ->
+            ok
+    end,
+    scan_key_files(Rest, KeyDir, [File | Acc], CloseFile).
 
 %%
 %% Initialize a keydir for a given directory.
@@ -798,12 +804,12 @@ init_keydir(Dirname, WaitTime) ->
             %% the data from disk. Build a list of all the bitcask data files
             %% and sort it in descending order (newest->oldest).
             SortedFiles = readable_files(Dirname),
-            ReadFiles = scan_key_files(SortedFiles, KeyDir, []),
+            _ = scan_key_files(SortedFiles, KeyDir, [], true),
 
             %% Now that we loaded all the data, mark the keydir as ready
             %% so other callers can use it
             ok = bitcask_nifs:keydir_mark_ready(KeyDir),
-            {ok, KeyDir, ReadFiles};
+            {ok, KeyDir, []};
 
         {error, not_ready} ->
             timer:sleep(100),
@@ -1658,5 +1664,55 @@ truncate_file(Path, Offset) ->
     {ok, Offset} = file:position(FH, Offset),
     ok = file:truncate(FH),
     file:close(FH).    
+
+%% About leak_t0():
+%%
+%% If bitcask leaks file descriptors for the 'touch'ed files, output is:
+%%    Res =      920
+%%
+%% If bitcask isn't leaking the 'touch'ed files, output is:
+%%    Res =       20
+
+leak_t0() ->
+    Dir = "/tmp/goofus",
+    os:cmd("rm -rf " ++ Dir),
+
+    Ref0 = bitcask:open(Dir),
+    os:cmd("cd " ++ Dir ++ "; sh -c 'for i in `seq 100 1000`; do touch $i.bitcask.data $i.bitcask.hint; done'"),
+    Ref1 = bitcask:open(Dir),
+
+    Cmd = lists:flatten(io_lib:format("lsof -nP -p ~p | wc -l", [os:getpid()])),
+    io:format("Res = ~s\n", [os:cmd(Cmd)]).
+
+leak_t1() ->
+    Dir = "/tmp/goofus",
+    NumKeys = 300,
+    os:cmd("rm -rf " ++ Dir),
+
+    Ref = bitcask:open(Dir, [read_write, {max_file_size, 10}]),
+    Used = fun() ->
+                   Cmd = lists:flatten(io_lib:format("lsof -nP -p ~p | wc -l", [os:getpid()])),
+                   %% io:format("Cmd = ~s\n", [Cmd]),
+                   os:cmd(Cmd)
+           end,
+    [bitcask:put(Ref, <<X:32>>, <<"it's a big, big world!">>) ||
+        X <- lists:seq(1, NumKeys)],
+    io:format("After putting ~p keys, lsof says: ~s", [NumKeys, Used()]),
+
+    DelKeys = NumKeys div 2,
+    [bitcask:delete(Ref, <<X:32>>) || X <- lists:seq(1, DelKeys)],
+    io:format("After deleting ~p keys, lsof says: ~s", [DelKeys, Used()]),
+
+    bitcask:merge(Dir),
+    io:format("After merging, lsof says: ~s", [Used()]),
+
+    io:format("Q: Are all keys fetchable? ..."),
+    [{ok, _} = bitcask:get(Ref, <<X:32>>) ||
+        X <- lists:seq(DelKeys + 1, NumKeys)],
+    [not_found = bitcask:get(Ref, <<X:32>>) || X <- lists:seq(1, DelKeys)],
+    io:format("A: yes\n"),
+    io:format("Now, lsof says: ~s", [Used()]),
+
+    ok.
 
 -endif.
