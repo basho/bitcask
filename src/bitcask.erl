@@ -23,7 +23,6 @@
 -author('Dave Smith <dizzyd@basho.com>').
 -author('Justin Sheehy <justin@basho.com>').
 
--export([t0/0, t1/0]). %%% SLF debugging DELETEME
 -export([open/1, open/2,
          close/1,
          close_write_file/1,
@@ -1668,15 +1667,15 @@ truncate_file(Path, Offset) ->
     ok = file:truncate(FH),
     file:close(FH).    
 
--endif.
-
+%% About leak_t0():
+%%
 %% If bitcask leaks file descriptors for the 'touch'ed files, output is:
 %%    Res =      920
 %%
 %% If bitcask isn't leaking the 'touch'ed files, output is:
 %%    Res =       20
 
-t0() ->
+leak_t0() ->
     Dir = "/tmp/goofus",
     os:cmd("rm -rf " ++ Dir),
 
@@ -1687,7 +1686,7 @@ t0() ->
     Cmd = lists:flatten(io_lib:format("lsof -nP -p ~p | wc -l", [os:getpid()])),
     io:format("Res = ~s\n", [os:cmd(Cmd)]).
 
-t1() ->
+leak_t1() ->
     Dir = "/tmp/goofus",
     NumKeys = 300,
     os:cmd("rm -rf " ++ Dir),
@@ -1717,3 +1716,5 @@ t1() ->
     io:format("Now, lsof says: ~s", [Used()]),
 
     ok.
+
+-endif.
