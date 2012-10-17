@@ -1177,6 +1177,29 @@ fold_corrupt_file_test() ->
     close(B4),
     ok.
 
+fold_error_handling_test() ->
+    TestDir = "/tmp/bc.test.fold_error_handling_test",
+    TestDataFile = TestDir ++ "/2.bitcask.data",
+
+    os:cmd("rm -rf " ++ TestDir),
+    B = bitcask:open(TestDir, [read_write, {max_file_size, 20}]),
+    ok = bitcask:put(B,<<"k1">>,<<255>>),
+    ok = bitcask:put(B,<<"k2">>,<<255>>),
+    close(B),
+
+    % Alter value to get CRC error
+    {ok, F} = file:open(TestDataFile, [read, write, raw, binary]),
+    {ok, _} = file:position(F, {eof, -1}),
+    ok = file:write(F, <<0>>),
+    ok = file:close(F),
+
+    FoldFun = fun (_K, _V, Acc) -> Acc + 1 end,
+
+    B2 = bitcask:open(TestDir),
+    ?assertThrow({error, {bad_crc, _, _}}, bitcask:fold(B2, FoldFun, 0)),
+    close(B2),
+    ok.
+
 %%
 %% Check that fold visits the objects at the point the keydir
 %% was frozen.  Check with and without wrapping the cask.

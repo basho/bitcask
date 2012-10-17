@@ -201,13 +201,13 @@ sync(#filestate { mode = read_write, fd = Fd, hintfd = HintFd }) ->
            fun((binary(), binary(), integer(),
                 {list(), integer(), integer(), integer()}, any()) -> any()),
            any()) ->
-        any() | {error, any()}.
+        any().
 fold(fresh, _Fun, Acc) -> Acc;
 fold(#filestate { fd=Fd, filename=Filename, tstamp=FTStamp }, Fun, Acc) ->
     %% TODO: Add some sort of check that this is a read-only file
     %% TODO: Need to position+read?!
     ok = bitcask_nifs:file_seekbof(Fd),
-    case bitcask_nifs:file_read(Fd, ?HEADER_SIZE) of
+    Result = case bitcask_nifs:file_read(Fd, ?HEADER_SIZE) of
         {ok, <<_Crc:?CRCSIZEFIELD, _Tstamp:?TSTAMPFIELD, _KeySz:?KEYSIZEFIELD,
               _ValueSz:?VALSIZEFIELD>> = H} ->
             fold_loop(Fd, Filename, FTStamp, H, 0, Fun, Acc);
@@ -221,18 +221,24 @@ fold(#filestate { fd=Fd, filename=Filename, tstamp=FTStamp }, Fun, Acc) ->
             Acc;
         {error, Reason} ->
             {error, Reason}
+    end,
+    case Result of
+        {error, _}=Error ->
+            throw(Error);
+        _ ->
+            Result
     end.
 
 -spec fold_keys(fresh | #filestate{}, fun((binary(), integer(), {integer(), integer()}, any()) -> any()), any()) ->
-        any() | {error, any()}.
+        any().
 fold_keys(fresh, _Fun, Acc) -> Acc;
 fold_keys(State, Fun, Acc) ->
     fold_keys(State, Fun, Acc, default).
 
 -spec fold_keys(fresh | #filestate{}, fun((binary(), integer(), {integer(), integer()}, any()) -> any()), any(), datafile | hintfile | default) ->
-        any() | {error, any()}.
+        any().
 fold_keys(#filestate { fd = Fd } = State, Fun, Acc, Mode) ->
-    case Mode of
+    Result = case Mode of
         datafile ->
             fold_keys_loop(Fd, 0, Fun, Acc);
         hintfile ->
@@ -258,6 +264,12 @@ fold_keys(#filestate { fd = Fd } = State, Fun, Acc, Mode) ->
                 false ->
                     fold_keys_loop(Fd, 0, Fun, Acc)
             end
+    end,
+    case Result of
+        {error, _}=Error ->
+            throw(Error);
+        _ ->
+            Result
     end.
 
 -spec mk_filename(string(), integer()) -> string().
