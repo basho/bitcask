@@ -211,16 +211,19 @@ fold(#filestate { fd=Fd, filename=Filename, tstamp=FTStamp }, Fun, Acc) ->
         {ok, <<_Crc:?CRCSIZEFIELD, _Tstamp:?TSTAMPFIELD, _KeySz:?KEYSIZEFIELD,
               _ValueSz:?VALSIZEFIELD>> = H} ->
             fold_loop(Fd, Filename, FTStamp, H, 0, Fun, Acc);
-        {ok, Bytes} ->
+        {ok, OtherBytes} ->
             error_logger:error_msg("~s:fold: ~s: expected ~p bytes but got "
                                    "only ~p bytes, skipping\n",
                                    [?MODULE, Filename, ?HEADER_SIZE,
-                                    size(Bytes)]),
+                                    size(OtherBytes)]),
             Acc;
         eof ->
             Acc;
         {error, Reason} ->
-            {error, Reason}
+            %% A truncated file would yield {ok, OtherBytes} or eof.
+            %% Something really bad has happened, either an allocation
+            %% error or something Truly Bad, e.g. EBADF, EIO.
+            throw({fold_error, {read_read, Filename, 0, ?HEADER_SIZE, Reason}, Acc})
     end.
 
 -spec fold_keys(fresh | #filestate{}, fun((binary(), integer(), {integer(), integer()}, any()) -> any()), any()) ->
@@ -326,23 +329,27 @@ fold_loop(Fd, Filename, FTStamp, Header, Offset, Fun, Acc0) ->
     TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
     case bitcask_nifs:file_read(Fd, TotalSz) of
         {ok, <<Key:KeySz/bytes, Value:ValueSz/bytes, Rest/binary>>} ->
-            case erlang:crc32([HeaderMinusCRC, Key, Value]) of
-                Crc32 ->
-                    PosInfo = {Filename, FTStamp, Offset, TotalSz},
-                    Acc = Fun(Key, Value, Tstamp, PosInfo, Acc0),
-                    case Rest of
-                        <<NextHeader:?HEADER_SIZE/bytes>> ->
-                            fold_loop(Fd, Filename, FTStamp, NextHeader,
-                                      Offset + TotalSz, Fun, Acc);
-                        <<>> ->
-                            Acc;
-                        Tail ->
-                            error_logger:error_msg("Trailing data, discarding"
-                                " (~p bytes)\n", [size(Tail)]),
-                            Acc
-                    end;
-                _ ->
-                    {error, {bad_crc, Fd, Offset}}
+            Acc = case erlang:crc32([HeaderMinusCRC, Key, Value]) of
+                      Crc32 ->
+                          PosInfo = {Filename, FTStamp, Offset, TotalSz},
+                          Fun(Key, Value, Tstamp, PosInfo, Acc0);
+                      _ ->
+                          error_logger:error_msg(
+                            "fold_loop: CRC error at file ~s offset ~p, "
+                            "skipping ~p bytes\n", [Filename, Offset, TotalSz]),
+                          Acc0
+                  end,
+            case Rest of
+                <<NextHeader:?HEADER_SIZE/bytes>> ->
+                    fold_loop(Fd, Filename, FTStamp, NextHeader,
+                              Offset + TotalSz, Fun, Acc);
+                <<>> ->
+                    Acc;
+                Tail ->
+                    error_logger:error_msg(
+                      "Trailing data, discarding (~p bytes)\n",
+                      [size(Tail)]),
+                    Acc
             end;
         {ok, X} ->
             error_logger:error_msg("Bad datafile entry, discarding"
@@ -353,7 +360,9 @@ fold_loop(Fd, Filename, FTStamp, Header, Offset, Fun, Acc0) ->
                 [TotalSz]),
             Acc0;
         {error, Reason} ->
-            {error, Reason}
+            %% Again, either we had an allocation error in NIF land,
+            %% or something Truly Bad happened, e.g. EBADF, EIO
+            throw({fold_error, {file_read, Filename, Offset, TotalSz, Reason}, Acc0})
     end.
 
 fold_keys_loop(Fd, Offset, Fun, Acc0) ->
