@@ -856,17 +856,19 @@ merge_files(#mstate {  dirname = Dirname,
     F = fun(K, V, Tstamp, Pos, State0) ->
                 merge_single_entry(K, V, Tstamp, FileId, Pos, State0)
         end,
-    try bitcask_fileops:fold(File, F, State) of
-        State1 ->
-            ok = bitcask_fileops:close(File),
-            merge_files(State1#mstate { input_files = Rest })
-    catch
-        throw:{fold_error, Error, _PartialAcc} ->
-            error_logger:error_msg("merge_files: skipping file ~s in ~s: ~p\n",
-                                  [File#filestate.filename, Dirname, Error]),
-            catch bitcask_fileops:close(File),
-            merge_files(State#mstate { input_files = Rest })
-    end.
+    State2 = try bitcask_fileops:fold(File, F, State) of
+                 State1 ->
+                     State1
+             catch
+                 throw:{fold_error, Error, _PartialAcc} ->
+                     error_logger:error_msg(
+                       "merge_files: skipping file ~s in ~s: ~p\n",
+                       [File#filestate.filename, Dirname, Error]),
+                     State
+             after
+                     catch bitcask_fileops:close(File)
+             end,
+    merge_files(State2#mstate { input_files = Rest }).
 
 merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
     case out_of_date(K, Tstamp, FileId, Pos, State#mstate.expiry_time, false,
