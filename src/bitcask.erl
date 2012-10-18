@@ -1630,19 +1630,21 @@ truncated_merge_test() ->
     %% Verify number of files in directory
     5 = length(readable_files(Dir)),
 
-    [FirstData, SecondData|_] = filelib:wildcard(Dir ++ "/*.data"),
-    [_, _, ThirdHint, FourthHint|_] = filelib:wildcard(Dir ++ "/*.hint"),
+    [Data1, Data2, _, _, Data5|_] = filelib:wildcard(Dir ++ "/*.data"),
+    [_, _, Hint3, Hint4|_] = filelib:wildcard(Dir ++ "/*.hint"),
           
     %% Truncate 1st after data file's header, read by bitcask_fileops:fold/3).
     %% Truncate 2nd in the middle of header, which provokes another
     %%     variation of bug mentioned by Bugzilla 1097.
-    %% Truncate 3rd after data file's header, read by
+    %% Truncate 3rd after hint file's header, read by
     %%     bitcask_fileops:fold_hintfile/3).
     %% Truncate 4th in the middle of header, same situation as 2nd....
-    ok = truncate_file(FirstData, 15),
-    ok = truncate_file(SecondData, 5),
-    ok = truncate_file(ThirdHint, 15),
-    ok = truncate_file(FourthHint, 5),
+    %% Truncate 5th data file at byte #1.
+    ok = truncate_file(Data1, 15),
+    ok = truncate_file(Data2, 5),
+    ok = truncate_file(Hint3, 15),
+    ok = truncate_file(Hint4, 5),
+    ok = corrupt_file(Data5, 15, <<"!">>),
     %% Merge everything
     ok = merge(Dir),
 
@@ -1651,12 +1653,15 @@ truncated_merge_test() ->
 
     %% Make sure all corrupted data is missing, all good data is present
     B = bitcask:open(Dir),
-    {BadData, GoodData} = lists:split(2, DataSet),
-    lists:foldl(fun({K, _V}, _) ->
-                        not_found = bitcask:get(B, K)
+    BadKeys = [<<"k">>, <<"k2">>,               % Trunc of Data1 & Data2
+               <<"k99">>],                      % Trunc of Data5
+    {BadData, GoodData} =
+        lists:partition(fun({K, _V}) -> lists:member(K, BadKeys) end, DataSet),
+    lists:foldl(fun({K, _V} = KV, _) ->
+                        {KV, not_found} = {KV, bitcask:get(B, K)}
                 end, undefined, BadData),
-    lists:foldl(fun({K, V}, _) ->
-                        {ok, V} = bitcask:get(B, K)
+    lists:foldl(fun({K, V} = KV, _) ->
+                        {KV, {ok, V}} = {KV, bitcask:get(B, K)}
                 end, undefined, GoodData).
 
 truncate_file(Path, Offset) ->
@@ -1664,6 +1669,12 @@ truncate_file(Path, Offset) ->
     {ok, Offset} = file:position(FH, Offset),
     ok = file:truncate(FH),
     file:close(FH).    
+
+corrupt_file(Path, Offset, Data) ->
+    {ok, FH} = file:open(Path, [read, write]),
+    {ok, Offset} = file:position(FH, Offset),
+    ok = file:write(FH, Data),
+    file:close(FH).
 
 %% About leak_t0():
 %%
