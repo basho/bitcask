@@ -329,24 +329,27 @@ fold_loop(Fd, Filename, FTStamp, Header, Offset, Fun, Acc0) ->
     TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
     case bitcask_nifs:file_read(Fd, TotalSz) of
         {ok, <<Key:KeySz/bytes, Value:ValueSz/bytes, Rest/binary>>} ->
-            case erlang:crc32([HeaderMinusCRC, Key, Value]) of
-                Crc32 ->
-                    PosInfo = {Filename, FTStamp, Offset, TotalSz},
-                    Acc = Fun(Key, Value, Tstamp, PosInfo, Acc0),
-                    case Rest of
-                        <<NextHeader:?HEADER_SIZE/bytes>> ->
-                            fold_loop(Fd, Filename, FTStamp, NextHeader,
-                                      Offset + TotalSz, Fun, Acc);
-                        <<>> ->
-                            Acc;
-                        Tail ->
-                            error_logger:error_msg("Trailing data, discarding"
-                                " (~p bytes)\n", [size(Tail)]),
-                            Acc
-                    end;
-                OtherCRC ->
-                    throw({fold_error,
-                           {bad_crc, Filename, Offset, Crc32, OtherCRC}, Acc0})
+            Acc = case erlang:crc32([HeaderMinusCRC, Key, Value]) of
+                      Crc32 ->
+                          PosInfo = {Filename, FTStamp, Offset, TotalSz},
+                          Fun(Key, Value, Tstamp, PosInfo, Acc0);
+                      _ ->
+                          error_logger:error_msg(
+                            "fold_loop: CRC error at file ~s offset ~p, "
+                            "skipping ~p bytes\n", [Filename, Offset, TotalSz]),
+                          Acc0
+                  end,
+            case Rest of
+                <<NextHeader:?HEADER_SIZE/bytes>> ->
+                    fold_loop(Fd, Filename, FTStamp, NextHeader,
+                              Offset + TotalSz, Fun, Acc);
+                <<>> ->
+                    Acc;
+                Tail ->
+                    error_logger:error_msg(
+                      "Trailing data, discarding (~p bytes)\n",
+                      [size(Tail)]),
+                    Acc
             end;
         {ok, X} ->
             error_logger:error_msg("Bad datafile entry, discarding"
