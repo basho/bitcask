@@ -393,9 +393,18 @@ open_files([Filename | Rest], Acc) ->
 subfold(_SubFun,[],Acc) ->
     Acc;
 subfold(SubFun,[FD | Rest],Acc0) ->
-    Acc = bitcask_fileops:fold(FD, SubFun, Acc0),
-    bitcask_fileops:close(FD),
-    subfold(SubFun,Rest,Acc).
+    Acc2 = try bitcask_fileops:fold(FD, SubFun, Acc0) of
+               Acc1 ->
+                   Acc1
+           catch
+               throw:{fold_error, Error, _PartialAcc} ->
+                   error_logger:error_msg("subfold: skipping file ~s: ~p\n",
+                                          [FD#filestate.filename, Error]),
+                   Acc0
+           after
+               bitcask_fileops:close(FD)
+           end,
+    subfold(SubFun, Rest, Acc2).
 
 %% @doc Merge several data files within a bitcask datastore
 %%      into a more compact form.
