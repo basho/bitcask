@@ -1187,7 +1187,7 @@ fold_test() ->
     close(B).
 
 iterator_test() ->
-    B = init_dataset("/tmp/bc.test.fold", default_dataset()),
+    B = init_dataset("/tmp/bc.iterator.test.fold", default_dataset()),
     ok = iterator(B, 0, 0),
     Keys = [ begin #bitcask_entry{ key = Key } = iterator_next(B), Key end || 
              _ <- default_dataset() ],
