@@ -31,6 +31,7 @@
          list_keys/1,
          fold_keys/3, fold_keys/5,
          fold/3, fold/5,
+         iterator/3, iterator_next/1, iterator_release/1,
          merge/1, merge/2, merge/3,
          needs_merge/1,
          status/1]).
@@ -405,6 +406,27 @@ subfold(SubFun,[FD | Rest],Acc0) ->
                bitcask_fileops:close(FD)
            end,
     subfold(SubFun, Rest, Acc2).
+
+%% @doc Start entry iterator
+-spec iterator(reference(), integer(), integer()) ->
+      ok | out_of_date | {error, iteration_in_process}.
+iterator(Ref, MaxAge, MaxPuts) ->
+    KeyDir = (get_state(Ref))#bc_state.keydir,
+    bitcask_nifs:keydir_itr(KeyDir, MaxAge, MaxPuts).
+
+%% @doc Get next entry from the iterator
+-spec iterator_next(reference()) ->
+      #bitcask_entry{} |
+     {error, iteration_not_started} | allocation_error | not_found.
+iterator_next(Ref) ->
+    KeyDir = (get_state(Ref))#bc_state.keydir,
+    bitcask_nifs:keydir_itr_next(KeyDir).
+
+%% @doc Release iterator
+-spec iterator_release(reference()) -> ok.
+iterator_release(Ref) ->
+    KeyDir = (get_state(Ref))#bc_state.keydir,
+    bitcask_nifs:keydir_itr_release(KeyDir).
 
 %% @doc Merge several data files within a bitcask datastore
 %%      into a more compact form.
@@ -1163,6 +1185,15 @@ fold_test() ->
                                    end, []),
     ?assertEqual(default_dataset(), lists:reverse(L)),
     close(B).
+
+iterator_test() ->
+    B = init_dataset("/tmp/bc.test.fold", default_dataset()),
+    ok = iterator(B, 0, 0),
+    Keys = [ begin #bitcask_entry{ key = Key } = iterator_next(B), Key end || 
+             _ <- default_dataset() ],
+    ?assertEqual(lists:sort(Keys), lists:sort([ Key  || {Key, _} <- default_dataset() ])), 
+    iterator_release(B).
+
 
 fold_corrupt_file_test() ->
     TestDir = "/tmp/bc.test.fold_corrupt_file_test",
