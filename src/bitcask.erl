@@ -479,11 +479,17 @@ merge1(Dirname, Opts, FilesToMerge) ->
             %% Simplest case; a key dir is already available and
             %% loaded. Go ahead and open just the files we wish to
             %% merge
-            InFiles = [begin 
-                           {ok, Fstate} = bitcask_fileops:open_file(F),
-                           Fstate
-                       end
-                       || F <- FilesToMerge];
+            InFiles0 = [begin 
+                            %% Handle open errors gracefully.  QuickCheck
+                            %% plus PULSE showed that there are races where
+                            %% the open below can fail.
+                            case bitcask_fileops:open_file(F) of
+                                {ok, Fstate}    -> Fstate;
+                                {error, _}      -> skip
+                            end
+                        end
+                        || F <- FilesToMerge],
+            InFiles = [F || F <- InFiles0, F /= skip];
 
         {not_ready, LiveKeyDir} ->
             %% Live keydir is newly created. We need to go ahead and
