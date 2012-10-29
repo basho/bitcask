@@ -85,8 +85,12 @@ command(S) ->
       || S#state.handle /= undefined ] ++
     [ {1, {call, ?MODULE, fold, [S#state.handle]}}
       || S#state.handle /= undefined ] ++
+    %% If the writer can close, then there are all kinds of races with other
+    %% forked threads regarding whether or not the cask's handle refcount drops
+    %% to zero. After the last handle is closed and refcount==0, then all keys
+    %% are deleted, which causes havoc for this model. {sigh}
     [ {1, {call, ?MODULE, bc_close, [S#state.handle]}}
-      || S#state.handle /= undefined ] ++
+      || not S#state.is_writer andalso S#state.handle /= undefined ] ++
     %% [ {1, {call, ?MODULE, merge, [S#state.handle]}}
     %%   || S#state.is_writer, not S#state.did_fork_merge, S#state.handle /= undefined ] ++
     [ {1, {call, ?MODULE, fork_merge, [S#state.handle]}}
@@ -128,7 +132,7 @@ precondition(S, {call, _, kill, [Pid]}) ->
   S#state.is_writer andalso S#state.handle /= undefined andalso
   (Pid == bitcask_merge_worker orelse lists:member(Pid, S#state.readers));
 precondition(S, {call, _, bc_close, [H]}) ->
-  S#state.handle == H;
+  not S#state.is_writer andalso S#state.handle == H;
 precondition(S, {call, _, bc_open, [Writer]}) ->
   %% The writer can open for reading but not the other way around.
   S#state.is_writer >= Writer andalso S#state.handle == undefined.
@@ -201,6 +205,7 @@ postcondition(_S, {call, _, bc_open, _}, V) ->
     _ when is_reference(V)                  -> true;
     {'EXIT', {{badmatch,{error,enoent}},_}} -> true;
     {error, timeout}                        -> true;
+    undefined                               -> exit(yowhattheheckSLF);
     _                                       -> {bc_open, V}
   end;
 postcondition(_S, {call, _, get, _}, V) ->
@@ -241,8 +246,10 @@ start_node(Verbose) ->
     _ -> ok
   end,
   stop_node(),
-  {ok, _} = slave:start(host(), slave_name(), "-pa ../../../ebin " ++
-                          lists:append(["-detached" || not Verbose ])),
+  {ok, _} = slave:start(host(), slave_name(), "-pa ../../../ebin "
+                        %% ++
+                        %%   lists:append(["-detached" || not Verbose ])
+),
   ok.
 
 stop_node() ->
@@ -250,7 +257,8 @@ stop_node() ->
 
 run_on_node(Verbose, M, F, A) ->
   start_node(Verbose),
-  rpc:call(node_name(), M, F, A).
+  rpc:call(node(), M, F, A).
+  %% rpc:call(node_name(), M, F, A).
 
 %% Muting the QuickCheck license printout from the slave node
 mute(true,  Fun) -> Fun();
@@ -262,26 +270,34 @@ mute(false, Fun) -> mute:run(Fun).
 run_commands_on_node(Cmds, Seed, Verbose) ->
   mute(Verbose, fun() ->
     event_logger:start_link(),
+    pulse:verbose([format]),
     pulse:start(),
     bitcask_nifs:set_pulse_pid(utils:whereis(pulse)),
-    error_logger:tty(false),
+    %% error_logger:tty(false),
     error_logger:add_report_handler(handle_errors),
     token:next_name(),
     event_logger:start_logging(),
+  %% %% OsPid = rpc:call(node_name(), os, getpid, []),
+  %% OsPid = os:getpid(),
+  %% io:format("Remote machine pid is ~p\n", [OsPid]),
+  %% timer:sleep(15*1000),
     X =
     try
       {H, S, Res, PidRs, Trace} = pulse:run(fun() ->
           %% pulse_application_controller:start({application, kernel, []}),
           application:start(bitcask),
-          receive after 1000000 -> ok end,
+          %% receive after 1000000 -> ok end,
+          receive after     250000 -> ok end,
           OldVerbose = pulse:verbose([ all || Verbose ]),
           {H, S, R} = run_commands(?MODULE, Cmds),
           Pids = lists:usort(S#state.readers),
           PidRs = fork_results(Pids),
-          receive after 1000000 -> ok end,
+          %% receive after 1000000 -> ok end,
+          receive after     250000 -> ok end,
           pulse:verbose(OldVerbose),
           Trace = event_logger:get_events(),
-          receive after 1000000 -> ok end,
+          %% receive after 1000000 -> ok end,
+          receive after     250000 -> ok end,
           exit(pulse_application_controller, shutdown),
           {H, S, R, PidRs, Trace}
         end, [{seed, Seed},
@@ -303,12 +319,17 @@ prop_pulse(Verbose) ->
   ?FORALL(Cmds, ?LET(Cmds, more_commands(2, commands(?MODULE)), shrink_commands(Cmds)),
   ?FORALL(Seed, pulse:seed(),
   begin
+    file:write_file("/tmp/slf.just-in-case-of-core-dump.ebin", [term_to_binary({Cmds, Seed})]),
     case run_on_node(Verbose, ?MODULE, run_commands_on_node, [Cmds, Seed, Verbose]) of
-      {'EXIT', Err} ->
-        equals({'EXIT', Err}, ok);
+      {badrpc, {'EXIT', Err}} ->                % Bug-hint from Hans!
+        equals({badrpc, {'EXIT', Err}}, ok);
       {H, S, Res, PidRs, Trace, Schedule, Errors} ->
         ?WHENFAIL(
+begin
+        XX = lists:sort([ {Pid, Dict} || {Pid, _, Dict} <- PidRs ]),
+        io:format("XX = ~p\n", [XX]),
           ?QC_FMT("\nState: ~p\n", [S]),
+ok end,
           aggregate(zipwith(fun command_data/2, Cmds, H),
           measure(schedule, length(Schedule),
           %% In the end we check four things:
@@ -318,7 +339,7 @@ prop_pulse(Verbose) ->
           %% - That all read actions (gets, fold, and fold_keys) return possible values
           conjunction(
             [ {0, equals(Res, ok)}
-            | [ {Pid, equals(R, ok)} || {Pid, R} <- PidRs ] ] ++
+            | [ {Pid, equals(R, ok)} || {Pid, R, _Dict} <- PidRs ] ] ++
             [ {errors, equals(Errors, [])}
             , {events, check_trace(Trace)} ]))))
     end
@@ -329,7 +350,7 @@ prop_pulse_test_() ->
   {timeout, 1000000,
    fun() ->
        copy_bitcask_app(),
-       ?assert(eqc:quickcheck(eqc:testing_time(10,?QC_OUT(prop_pulse()))))
+       ?assert(eqc:quickcheck(eqc:testing_time(5*60,?QC_OUT(prop_pulse()))))
    end}.
 
 %% Needed since rebar fails miserably in setting up the .eunit test directory
@@ -525,7 +546,7 @@ command_data({set, _, {call, _, Fun, _}}, {_S, _V}) ->
 %% Wait for all forks to return their results
 fork_results(Pids) ->
   [ receive
-      {Pid, done, R} -> {I, R}
+      {Pid, done, R, Dict} -> {I, R, Dict}
     %% after ?TIMEOUT -> {I, timeout}
     end || {I, Pid} <- lists:zip(lists:seq(1, length(Pids)), Pids) ].
 
@@ -548,7 +569,7 @@ fork(Cmds) ->
   spawn(fun() ->
     {_, S, R} = run_commands(?MODULE, recommand(Cmds)),
     bc_close(S#state.handle),
-    Mama ! {self(), done, R}
+    Mama ! {self(), done, R, process_info(self(), dictionary)}
   end) end).
 
 get(H, K) ->
@@ -557,7 +578,11 @@ get(H, K) ->
 
 put(H, K, V) ->
   ?LOG({put, H, K, V},
-  ?CHECK_HANDLE(H, ok, bitcask:put(H, <<K:32>>, V))).
+  ?CHECK_HANDLE(H, ok, begin
+                           erlang:put(sneaky_bastid, case erlang:get(sneaky_bastid) of undefined -> []; XXXX -> XXXX end ++ [{put, K, V, ?MODULE}]),
+                           bitcask:put(H, <<K:32>>, V)
+                       end)).
+  %% ?CHECK_HANDLE(H, ok, bitcask:put(H, <<K:32>>, V))).
 
 puts(H, {K1, K2}, V) ->
   case lists:usort([ put(H, K, V) || K <- lists:seq(K1, K2) ]) of
