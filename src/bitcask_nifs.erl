@@ -25,6 +25,7 @@
          keydir_new/0, keydir_new/1,
          keydir_mark_ready/1,
          keydir_put/6,
+         keydir_put/7,
          keydir_get/2,
          keydir_remove/2, keydir_remove/5,
          keydir_copy/1,
@@ -79,8 +80,11 @@
 -spec keydir_put(reference(), binary(), integer(), integer(),
                  integer(), integer()) ->
         ok | already_exists.
+-spec keydir_put(reference(), binary(), integer(), integer(),
+                 integer(), integer(), boolean()) ->
+        ok | already_exists.
 -spec keydir_put_int(reference(), binary(), integer(), integer(),
-                     binary(), integer()) -> 
+                     binary(), integer(), boolean()) ->
         ok | already_exists.
 -spec keydir_get(reference(), binary()) ->
         not_found | #bitcask_entry{}.
@@ -174,10 +178,15 @@ keydir_mark_ready(_Ref) ->
     end.
 
 keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp) ->
-    keydir_put_int(Ref, Key, FileId, TotalSz, <<Offset:64/unsigned-native>>,
-                       Tstamp).
+    keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, false).
 
-keydir_put_int(_Ref, _Key, _FileId, _TotalSz, _Offset, _Tstamp) ->
+keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NewestPutB) ->
+    keydir_put_int(Ref, Key, FileId, TotalSz, <<Offset:64/unsigned-native>>,
+                   Tstamp, if not NewestPutB -> 0;
+                              true           -> 1
+                           end).
+
+keydir_put_int(_Ref, _Key, _FileId, _TotalSz, _Offset, _Tstamp, _NewestPutI) ->
     case random:uniform(999999999999) of
         666 -> ok;
         667 -> already_exists;

@@ -1093,7 +1093,7 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State, Retries, _LastErr)
                                        Key, Value, Tstamp),
     case bitcask_nifs:keydir_put(State2#bc_state.keydir, Key,
                                  bitcask_fileops:file_tstamp(WriteFile2),
-                                 Size, Offset, Tstamp) of
+                                 Size, Offset, Tstamp, true) of
         ok ->
             {ok, State2#bc_state { write_file = WriteFile2 }};
         already_exists ->

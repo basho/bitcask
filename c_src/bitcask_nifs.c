@@ -68,6 +68,7 @@ typedef struct
     uint32_t total_sz;
     uint64_t offset;
     uint32_t tstamp;
+    uint32_t newest_put;
     uint16_t key_sz;
     char     key[0];
 } bitcask_keydir_entry;
@@ -100,6 +101,7 @@ typedef struct
     fstats_hash_t*  fstats;
     size_t        key_count;
     size_t        key_bytes;
+    uint32_t      biggest_file_id;
     unsigned int  refcount;
     unsigned int  keyfolders;
     uint64_t      pending_updated;
@@ -229,7 +231,7 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_new", 0, bitcask_nifs_keydir_new0},
     {"keydir_new", 1, bitcask_nifs_keydir_new1},
     {"keydir_mark_ready", 1, bitcask_nifs_keydir_mark_ready},
-    {"keydir_put_int", 6, bitcask_nifs_keydir_put_int},
+    {"keydir_put_int", 7, bitcask_nifs_keydir_put_int},
     {"keydir_get_int", 2, bitcask_nifs_keydir_get_int},
     {"keydir_remove", 2, bitcask_nifs_keydir_remove},
     {"keydir_remove_int", 5, bitcask_nifs_keydir_remove},
@@ -548,7 +550,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
         enif_get_uint(env, argv[2], (unsigned int*)&(entry.file_id)) &&
         enif_get_uint(env, argv[3], &(entry.total_sz)) &&
         enif_get_uint64_bin(env, argv[4], &(entry.offset)) &&
-        enif_get_uint(env, argv[5], &(entry.tstamp)))
+        enif_get_uint(env, argv[5], &(entry.tstamp)) &&
+        enif_get_uint(env, argv[6], &(entry.newest_put)))
     {
         khiter_t itr;
         entries_hash_t* hash;
@@ -559,7 +562,6 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
         DEBUG("+++ Put file_id=%d offset=%d total_sz=%d\r\n",
               (int) entry.file_id, (int) entry.offset,
               (int)entry.total_sz);
-
 
         // Check for put on a new key or updating a pending tombstone
         int tombstone = 0;
@@ -595,6 +597,10 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
             {
                 keydir->pending_updated++;
             }
+            if (entry.file_id > keydir->biggest_file_id)
+            {
+                keydir->biggest_file_id = entry.file_id;
+            }
 
             UNLOCK(keydir);
             return ATOM_OK;
@@ -602,14 +608,12 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
 
         // Now that we've marshalled everything, see if the tstamp for this key is >=
         // to what's already in the hash. Otherwise, we don't bother with the update.
-        if ((old_entry->tstamp < entry.tstamp) ||
-
-            ((old_entry->tstamp == entry.tstamp) &&
-             (old_entry->file_id < entry.file_id)) ||
-
-            ((old_entry->tstamp == entry.tstamp) &&
-             ((old_entry->file_id == entry.file_id) &&
-              (old_entry->offset < entry.offset))))
+        if ((entry.newest_put &&
+             (entry.file_id >= keydir->biggest_file_id)) ||
+            (! entry.newest_put &&
+             ((old_entry->file_id < entry.file_id) ||
+              (((old_entry->file_id == entry.file_id) &&
+                (old_entry->offset < entry.offset))))))
         {
             // Remove the stats for the old entry and add the new
             if (old_entry->file_id != entry.file_id) // different files
@@ -645,6 +649,10 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
             if (keydir->pending != NULL)
             {
                 keydir->pending_updated++;
+            }
+            if (entry.file_id > keydir->biggest_file_id)
+            {
+                keydir->biggest_file_id = entry.file_id;
             }
 
             UNLOCK(keydir);
