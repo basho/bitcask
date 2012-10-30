@@ -247,8 +247,8 @@ start_node(Verbose) ->
   end,
   stop_node(),
   {ok, _} = slave:start(host(), slave_name(), "-pa ../../../ebin "
-                        %% ++
-                        %%   lists:append(["-detached" || not Verbose ])
+                        ++
+                          lists:append(["-detached" || not Verbose ])
 ),
   ok.
 
@@ -256,8 +256,10 @@ stop_node() ->
   slave:stop(node_name()).
 
 run_on_node(Verbose, M, F, A) ->
-  start_node(Verbose),
+  %% Temp hack!  Always use local node for speed.
+  %% Switch back manually to slave node when isolation is needed.
   rpc:call(node(), M, F, A).
+  %% start_node(Verbose),
   %% rpc:call(node_name(), M, F, A).
 
 %% Muting the QuickCheck license printout from the slave node
@@ -273,7 +275,7 @@ run_commands_on_node(Cmds, Seed, Verbose) ->
     pulse:verbose([format]),
     pulse:start(),
     bitcask_nifs:set_pulse_pid(utils:whereis(pulse)),
-    %% error_logger:tty(false),
+    error_logger:tty(false),
     error_logger:add_report_handler(handle_errors),
     token:next_name(),
     event_logger:start_logging(),
