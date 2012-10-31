@@ -26,6 +26,7 @@
          keydir_mark_ready/1,
          keydir_put/6,
          keydir_put/7,
+         keydir_put/8,
          keydir_get/2,
          keydir_remove/2, keydir_remove/5,
          keydir_copy/1,
@@ -83,8 +84,11 @@
 -spec keydir_put(reference(), binary(), integer(), integer(),
                  integer(), integer(), boolean()) ->
         ok | already_exists.
+-spec keydir_put(reference(), binary(), integer(), integer(),
+                 integer(), integer(), integer(), integer()) ->
+        ok | already_exists.
 -spec keydir_put_int(reference(), binary(), integer(), integer(),
-                     binary(), integer(), boolean()) ->
+                     binary(), integer(), boolean(), integer(), binary()) ->
         ok | already_exists.
 -spec keydir_get(reference(), binary()) ->
         not_found | #bitcask_entry{}.
@@ -181,12 +185,22 @@ keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp) ->
     keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, false).
 
 keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NewestPutB) ->
+    keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NewestPutB, 0, 0).
+
+keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, OldFileId, OldOffset) ->
+    keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, false,
+               OldFileId, OldOffset).
+
+keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NewestPutB,
+           OldFileId, OldOffset) ->
     keydir_put_int(Ref, Key, FileId, TotalSz, <<Offset:64/unsigned-native>>,
                    Tstamp, if not NewestPutB -> 0;
                               true           -> 1
-                           end).
+                           end,
+                   OldFileId, <<OldOffset:64/unsigned-native>>).
 
-keydir_put_int(_Ref, _Key, _FileId, _TotalSz, _Offset, _Tstamp, _NewestPutI) ->
+keydir_put_int(_Ref, _Key, _FileId, _TotalSz, _Offset, _Tstamp, _NewestPutI,
+               _OldFileId, _OldOffset) ->
     case random:uniform(999999999999) of
         666 -> ok;
         667 -> already_exists;

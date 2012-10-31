@@ -911,6 +911,8 @@ merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
     case out_of_date(K, Tstamp, FileId, Pos, State#mstate.expiry_time, false,
                      [State#mstate.live_keydir, State#mstate.del_keydir]) of
         true ->
+            %% NOTE: This remove is conditional on an exact match on
+            %%       Tstamp + FileId + Offset
             bitcask_nifs:keydir_remove(State#mstate.live_keydir, K,
                                        Tstamp, FileId, Offset),
             State;
@@ -929,18 +931,20 @@ merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
                                                Tstamp, FileId, Offset),
 
                     case State#mstate.partial of
-                        true -> inner_merge_write(K, V, Tstamp, State);
+                        true -> inner_merge_write(K, V, Tstamp,
+                                                  FileId, Offset, State);
                         false -> State
                     end;
                 false ->
                     ok = bitcask_nifs:keydir_remove(State#mstate.del_keydir, K),
-                    inner_merge_write(K, V, Tstamp, State)
+                    inner_merge_write(K, V, Tstamp, FileId, Offset, State)
             end
     end.
 
--spec inner_merge_write(binary(), binary(), integer(), #mstate{}) -> #mstate{}.
+-spec inner_merge_write(binary(), binary(), integer(), integer(), integer(),
+                        #mstate{}) -> #mstate{}.
 
-inner_merge_write(K, V, Tstamp, State) ->
+inner_merge_write(K, V, Tstamp, OldFileId, OldOffset, State) ->
     %% write a single item while inside the merge process
 
     %% See if it's time to rotate to the next file
@@ -973,10 +977,10 @@ inner_merge_write(K, V, Tstamp, State) ->
     %% file. It's possible that this is a noop, as
     %% someone else may have written a newer value
     %% whilst we were processing.
-    bitcask_nifs:keydir_put(
-      State#mstate.live_keydir, K,
-      bitcask_fileops:file_tstamp(Outfile),
-      Size, Offset, Tstamp),
+    _ = bitcask_nifs:keydir_put(
+          State#mstate.live_keydir, K,
+          bitcask_fileops:file_tstamp(Outfile),
+          Size, Offset, Tstamp, OldFileId, OldOffset),
     
     State1#mstate { out_file = Outfile }.
 
