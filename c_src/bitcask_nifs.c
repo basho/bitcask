@@ -231,7 +231,7 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_new", 0, bitcask_nifs_keydir_new0},
     {"keydir_new", 1, bitcask_nifs_keydir_new1},
     {"keydir_mark_ready", 1, bitcask_nifs_keydir_mark_ready},
-    {"keydir_put_int", 7, bitcask_nifs_keydir_put_int},
+    {"keydir_put_int", 9, bitcask_nifs_keydir_put_int},
     {"keydir_get_int", 2, bitcask_nifs_keydir_get_int},
     {"keydir_remove", 2, bitcask_nifs_keydir_remove},
     {"keydir_remove_int", 5, bitcask_nifs_keydir_remove},
@@ -544,6 +544,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
     bitcask_keydir_handle* handle;
     bitcask_keydir_entry entry;
     ErlNifBinary key;
+    uint32_t old_file_id;
+    uint64_t old_offset;
 
     if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle) &&
         enif_inspect_binary(env, argv[1], &key) &&
@@ -551,7 +553,9 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
         enif_get_uint(env, argv[3], &(entry.total_sz)) &&
         enif_get_uint64_bin(env, argv[4], &(entry.offset)) &&
         enif_get_uint(env, argv[5], &(entry.tstamp)) &&
-        enif_get_uint(env, argv[6], &(entry.newest_put)))
+        enif_get_uint(env, argv[6], &(entry.newest_put)) &&
+        enif_get_uint(env, argv[7], (unsigned int*)&(old_file_id)) &&
+        enif_get_uint64_bin(env, argv[8], &(old_offset)))
     {
         khiter_t itr;
         entries_hash_t* hash;
@@ -604,6 +608,16 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
 
             UNLOCK(keydir);
             return ATOM_OK;
+        }
+
+        // If old_file_id and old_offset are > 0, then
+        // if test-and-set fails, then return already_exists.
+        if (old_file_id != 0 && old_offset != 0 &&
+            !(old_file_id == old_entry->file_id &&
+              old_offset == old_entry->offset))
+        {
+            UNLOCK(keydir);
+            return ATOM_ALREADY_EXISTS;
         }
 
         // Now that we've marshalled everything, see if the tstamp for this key is >=
@@ -1643,7 +1657,7 @@ static void merge_pending_entries(ErlNifEnv* env, bitcask_keydir* keydir)
             else
             {
                 bitcask_keydir_entry* entries_entry = kh_key(keydir->entries, ent_itr);
-                DEBUG("Entries Entry: key=%s key_sz=%d file_id=%d statmp=%u offset=%u size=%d\r\n", 
+                DEBUG("Entries Entry: key=%s key_sz=%d file_id=%d statmp=%u offset=%u size=%d\r\n",
                         entries_entry->key, entries_entry->key_sz,
                         entries_entry->file_id,
                         (unsigned int) entries_entry->tstamp,
