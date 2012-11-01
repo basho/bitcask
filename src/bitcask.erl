@@ -144,13 +144,6 @@ close(Ref) ->
     State = get_state(Ref),
     erlang:erase(Ref),
 
-    %% Manually release the keydir. If, for some reason, this failed GC would
-    %% still get the job done.
-    bitcask_nifs:keydir_release(State#bc_state.keydir),
-
-    %% Clean up all the reading files
-    [ok = bitcask_fileops:close(F) || F <- State#bc_state.read_files],
-
     %% Cleanup the write file and associated lock
     case State#bc_state.write_file of
         undefined ->
@@ -160,7 +153,16 @@ close(Ref) ->
         WriteFile ->
             bitcask_fileops:close_for_writing(WriteFile),
             ok = bitcask_lockops:release(State#bc_state.write_lock)
-    end.
+    end,
+
+    %% Manually release the keydir. If, for some reason, this failed GC would
+    %% still get the job done.
+    bitcask_nifs:keydir_release(State#bc_state.keydir),
+
+    %% Clean up all the reading files
+    [ok = bitcask_fileops:close(F) || F <- State#bc_state.read_files],
+
+    ok.
 
 %% @doc Close the currently active writing file; mostly for testing purposes
 close_write_file(Ref) ->
