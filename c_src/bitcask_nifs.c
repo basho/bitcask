@@ -33,6 +33,7 @@
 #include "khash.h"
 #include "murmurhash.h"
 
+#include <stdio.h>
 #ifdef BITCASK_DEBUG
 #include <stdio.h>
 #include <stdarg.h>
@@ -104,6 +105,7 @@ typedef struct
     uint32_t      biggest_file_id;
     unsigned int  refcount;
     unsigned int  keyfolders;
+    uint64_t      iter_generation;
     uint64_t      pending_updated;
     uint64_t      pending_start; // os:timestamp() as 64-bit integer
     ErlNifPid*    pending_awaken; // processes to wake once pending merged into entries
@@ -1081,6 +1083,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_release(ErlNifEnv* env, int argc, const ERL
         if (handle->keydir->keyfolders == 0)
         {
             merge_pending_entries(env, handle->keydir);
+            handle->keydir->iter_generation++;
         }
         UNLOCK(handle->keydir);
         return ATOM_OK;
@@ -1099,6 +1102,11 @@ ERL_NIF_TERM bitcask_nifs_keydir_info(ErlNifEnv* env, int argc, const ERL_NIF_TE
     if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle))
     {
         bitcask_keydir* keydir = handle->keydir;
+
+        if (keydir == NULL)
+        {
+            return enif_make_badarg(env);
+        }
         LOCK(keydir);
 
         // Dump fstats info into a list of [{file_id, live_keys, total_keys,
@@ -1123,10 +1131,16 @@ ERL_NIF_TERM bitcask_nifs_keydir_info(ErlNifEnv* env, int argc, const ERL_NIF_TE
             }
         }
 
-        ERL_NIF_TERM result = enif_make_tuple3(env,
+        ERL_NIF_TERM iter_info =
+            enif_make_tuple3(env,
+                             enif_make_uint64_bin(env, keydir->iter_generation),
+                             enif_make_ulong(env, keydir->keyfolders),
+                             keydir->pending == NULL ? ATOM_FALSE : ATOM_TRUE);
+        ERL_NIF_TERM result = enif_make_tuple4(env,
                                                enif_make_ulong(env, keydir->key_count),
                                                enif_make_ulong(env, keydir->key_bytes),
-                                               fstats_list);
+                                               fstats_list,
+                                               iter_info);
         UNLOCK(keydir);
         return result;
     }

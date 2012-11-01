@@ -112,7 +112,8 @@ handle_info({'EXIT', Pid, Reason}, #state { worker = Pid } = State) ->
     error_logger:error_msg("Merge worker PID exited: ~p\n", [Reason]),
     {stop, State}.
 
-terminate(_Reason, _State) ->
+terminate(_Reason, State) ->
+    catch exit(State#state.worker, shutdown),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->

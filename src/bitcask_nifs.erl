@@ -112,7 +112,7 @@
         any() | {error, any()}.
 -spec keydir_info(reference()) ->
         {integer(), integer(),
-         [{integer(), integer(), integer(), integer(), integer()}]}.
+         [{integer(), integer(), integer(), integer(), integer()}], integer(), boolean()}.
 -spec keydir_release(reference()) ->
         ok.
 -spec lock_acquire(string(), integer()) ->
@@ -424,7 +424,8 @@ keydir_basic_test() ->
     {ok, Ref} = keydir_new(),
     ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
 
-    {1, 3, [{0, 1, 1, 1234, 1234, 1}]} = keydir_info(Ref),
+    {1, 3, [{0, 1, 1, 1234, 1234, 1}], {<<0:64/unsigned-native>>, 0, false}} =
+        keydir_info(Ref),
 
     E = keydir_get(Ref, <<"abc">>),
     0 = E#bitcask_entry.file_id,
@@ -451,7 +452,7 @@ keydir_itr_test_base(Ref) ->
     ok = keydir_put(Ref, <<"def">>, 0, 4567, 1234, 2),
     ok = keydir_put(Ref, <<"hij">>, 1, 7890, 0, 3),
 
-    {3, 9, _} = keydir_info(Ref),
+    {3, 9, _, _} = keydir_info(Ref),
 
     List = keydir_fold(Ref, fun(E, Acc) -> [ E | Acc] end, [], -1, -1),
     3 = length(List),

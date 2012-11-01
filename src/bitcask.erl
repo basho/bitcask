@@ -38,7 +38,9 @@
 
 -export([get_opt/2,
          get_filestate/2]).
+-export([has_setuid_bit/1]).                    % For EUnit tests
 
+-include_lib("kernel/include/file.hrl").
 -include("bitcask.hrl").
 
 
@@ -98,7 +100,12 @@ open(Dirname, Opts) ->
     %% Do this first to avoid unnecessary processing of files for reading.
     WritingFile = case proplists:get_bool(read_write, Opts) of
         true ->
-          bitcask_lockops:delete_stale_lock(write, Dirname),
+          %% If the lock file is not stale, we'll continue initializing
+          %% and loading anyway: if later someone tries to write
+          %% something, that someone will get a write_locked exception.
+          _ = bitcask_lockops:delete_stale_lock(write, Dirname),
+          %% This purge will acquire the write lock prior to doing anything.
+          purge_setuid_files(Dirname),
           fresh;
         false -> undefined
     end,
@@ -550,15 +557,18 @@ merge1(Dirname, Opts, FilesToMerge) ->
     ok = bitcask_fileops:sync(State1#mstate.out_file),
     ok = bitcask_fileops:close(State1#mstate.out_file),
 
+    %% Close the original input files, schedule them for deletion,
+    %% close keydirs, and release our lock
+    [bitcask_fileops:close(F) || F <- State#mstate.input_files],
+    {_, _, _, {IterGeneration, _, _}} = bitcask_nifs:keydir_info(LiveKeyDir),
+    FileNames = [F#filestate.filename || F <- State#mstate.input_files],
+    [catch set_setuid_bit(F) || F <- FileNames],
+    bitcask_merge_delete:defer_delete(Dirname, IterGeneration, FileNames),
+
     %% Explicitly release our keydirs instead of waiting for GC
     bitcask_nifs:keydir_release(LiveKeyDir),
     bitcask_nifs:keydir_release(DelKeyDir),    
 
-    %% Cleanup the original input files and release our lock
-    [begin
-         bitcask_fileops:delete(F),
-         bitcask_fileops:close(F)
-     end || F <- State#mstate.input_files],
     ok = bitcask_lockops:release(Lock).
 
 %% @doc Predicate which determines whether or not a file should be considered for a merge. 
@@ -716,8 +726,8 @@ summary_info(Ref) ->
     %%
     %% Fstat has form: [{FileId, LiveCount, TotalCount, LiveBytes, TotalBytes, OldestTstamp}]
     %% and is only an estimate/snapshot.
-    {KeyCount, _KeyBytes, Fstats} = bitcask_nifs:keydir_info(
-                                      State#bc_state.keydir),
+    {KeyCount, _KeyBytes, Fstats, _IterStatus} =
+        bitcask_nifs:keydir_info(State#bc_state.keydir),
 
     %% We want to ignore the file currently being written when
     %% considering status!
@@ -1055,7 +1065,11 @@ readable_files(Dirname) ->
     %% being written to. Generate our list excepting those.
     WritingFile = bitcask_lockops:read_activefile(write, Dirname),
     MergingFile = bitcask_lockops:read_activefile(merge, Dirname),
-    list_data_files(Dirname, WritingFile, MergingFile).
+
+    %% Filter out files with setuid bit set: they've been marked for
+    %% deletion by an earlier *successful* merge.
+    [F || F <- list_data_files(Dirname, WritingFile, MergingFile),
+          not has_setuid_bit(F)].
 
 %% Internal put - have validated that the file is opened for write
 %% and looked up the state at this point
@@ -1125,6 +1139,48 @@ wrap_write_file(#bc_state{write_file = WriteFile} = State) ->
                     read_files = [LastWriteFile | 
                                   State#bc_state.read_files]}.
 
+set_setuid_bit(File) ->
+    %% We're intentionally opinionated about pattern matching here.
+    {ok, FI} = file:read_file_info(File),
+    NewFI = FI#file_info{mode = FI#file_info.mode bor 8#4000},
+    ok = file:write_file_info(File, NewFI).
+
+has_setuid_bit(File) ->
+    try
+        {ok, FI} = file:read_file_info(File),
+        FI#file_info.mode band 8#4000 == 8#4000
+    catch _:_ ->
+            false
+    end.
+
+purge_setuid_files(Dirname) ->
+    case bitcask_lockops:acquire(write, Dirname) of
+        {ok, WriteLock} ->
+            try
+                StaleFs = [F || F <- list_data_files(Dirname,
+                                                     undefined, undefined),
+                                has_setuid_bit(F)],
+                [bitcask_fileops:delete(#filestate{filename = F}) ||
+                    F <- StaleFs],
+                if StaleFs == [] ->
+                        ok;
+                   true ->
+                        error_logger:info_msg("Deleted ~p stale merge input "
+                                              "files from ~p\n",
+                                              [length(StaleFs), Dirname])
+                end
+            catch
+                X:Y ->
+                    error_logger:error_msg("While deleting stale merge input "
+                                           "files from ~p: ~p ~p @ ~p\n",
+                                           [X, Y, erlang:get_stacktrace()])
+            after
+                bitcask_lockops:release(WriteLock)
+            end;
+        Else ->
+            error_logger:info_msg("Lock failed trying deleting stale merge "
+                                  "input files from ~p: ~p\n", [Dirname, Else])
+    end.
 
 %% ===================================================================
 %% EUnit tests
@@ -1433,6 +1489,7 @@ expire_merge_test() ->
     ok = merge("/tmp/bc.test.mergeexpire",[{expiry_secs,1}]),
 
     %% Verify we've now only got one file
+    ok = bitcask_merge_delete:testonly__delete_trigger(),
     1 = length(readable_files("/tmp/bc.test.mergeexpire")),
 
     %% Make sure all the data is present
@@ -1600,7 +1657,7 @@ invalid_data_size_test() ->
 
 testhelper_keydir_count(B) ->
     KD = (get_state(B))#bc_state.keydir,
-    {KeyCount,_,_} = bitcask_nifs:keydir_info(KD),
+    {KeyCount,_,_,_} = bitcask_nifs:keydir_info(KD),
     KeyCount.
     
 expire_keydir_test() ->
@@ -1710,6 +1767,7 @@ truncated_merge_test() ->
     ok = merge(Dir),
 
     %% Verify we've now only got one file
+    ok = bitcask_merge_delete:testonly__delete_trigger(),
     1 = length(readable_files(Dir)),
 
     %% Make sure all corrupted data is missing, all good data is present
