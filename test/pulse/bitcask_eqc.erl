@@ -200,7 +200,10 @@ postcondition(_S, {call, _, bc_open, _}, V) ->
   case V of
     _ when is_reference(V)                  -> true;
     {'EXIT', {{badmatch,{error,enoent}},_}} -> true;
-    {error, timeout}                        -> true;
+    %% If we manage to get a timeout, there's a pathological scheduling
+    %% delay that is causing starvation.  Expose the starvation by
+    %% not considering {error, timeout} a success.
+    {error, timeout}                        -> {dont_want_this_timeout, V};
     _                                       -> {bc_open, V}
   end;
 postcondition(_S, {call, _, get, _}, V) ->
@@ -615,8 +618,8 @@ fold_keys(H) ->
 bc_open(Writer) ->
   ?LOG({open, Writer},
   case Writer of
-    true  -> catch bitcask:open(?BITCASK, [read_write, {max_file_size, ?FILE_SIZE}, {open_timeout, 1}]);
-    false -> catch bitcask:open(?BITCASK, [{open_timeout, 1}])
+    true  -> catch bitcask:open(?BITCASK, [read_write, {max_file_size, ?FILE_SIZE}, {open_timeout, 1234}]);
+    false -> catch bitcask:open(?BITCASK, [{open_timeout, 1234}])
   end).
 
 bc_close(H)    ->
