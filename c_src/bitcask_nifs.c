@@ -610,9 +610,9 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
             return ATOM_OK;
         }
 
-        // If old_file_id and old_offset are > 0, then
-        // if test-and-set fails, then return already_exists.
-        if (old_file_id != 0 && old_offset != 0 &&
+        // If old_file_id is > 0, then test-and-set fails,
+        // then return already_exists.
+        if (old_file_id != 0 &&
             !(old_file_id == old_entry->file_id &&
               old_offset == old_entry->offset))
         {
