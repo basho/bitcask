@@ -239,7 +239,10 @@ put(Ref, Key, Value) ->
             ok
     end,
 
-    {Ret, State1} = do_put(Key, Value, State, 2, undefined),
+    %% In the real world, 2 retries is usually sufficient.  In the
+    %% world of QuickCheck, however, QC can create some diabolical
+    %% races, so use a diabolical number.
+    {Ret, State1} = do_put(Key, Value, State, 100, undefined),
     put_state(Ref, State1),
     Ret.
 
@@ -1125,7 +1128,7 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State, Retries, _LastErr)
             %% the key there.  Limit the number of recursions in case
             %% there is a different issue with the keydir.
             State3 = wrap_write_file(State2#bc_state { write_file = WriteFile2 }),
-            do_put(Key, Value, State3, Retries - 1, already_exist)
+            do_put(Key, Value, State3, Retries - 1, already_exists)
     end.
 
 
