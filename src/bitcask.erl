@@ -528,6 +528,7 @@ merge1(Dirname, Opts, FilesToMerge) ->
             %% Someone else is loading the keydir. We'll bail here and
             %% try again later.
 
+            ok = bitcask_lockops:release(Lock),
             % Make erlc happy w/ non-local exit
             LiveKeyDir = undefined, InFiles = [],
             throw({error, not_ready})
