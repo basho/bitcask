@@ -28,7 +28,7 @@
 -endif.
 
 %% API
--export([start_link/0, defer_delete/3]).
+-export([start_link/0, defer_delete/3, queue_length/0]).
 -export([testonly__delete_trigger/0]).                      % testing only
 
 %% gen_server callbacks
@@ -56,6 +56,9 @@ defer_delete(Dirname, IterGeneration, Files) ->
     gen_server:call(?SERVER, {defer_delete, Dirname, IterGeneration, Files},
                     infinity).
 
+queue_length() ->
+    gen_server:call(?SERVER, {queue_length}, infinity).
+
 testonly__delete_trigger() ->
     gen_server:call(?SERVER, {testonly__delete_trigger}, infinity).
 
@@ -69,6 +72,8 @@ init([]) ->
 handle_call({defer_delete, Dirname, IterGeneration, Files}, _From, State) ->
     {reply, ok, State#state{q = queue:in({Dirname, IterGeneration, Files},
                                          State#state.q)}, ?TIMEOUT};
+handle_call({queue_length}, _From, State) ->
+    {reply, queue:len(State#state.q), State, ?TIMEOUT};
 handle_call({testonly__delete_trigger}, _From, State) ->
     {reply, ok, check_status(State), ?TIMEOUT};
 handle_call(_Request, _From, State) ->

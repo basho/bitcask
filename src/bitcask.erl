@@ -509,7 +509,7 @@ merge1(Dirname, Opts, FilesToMerge) ->
             %% reader/writer comes along in the same VM. Note that we
             %% won't necessarily merge all these files.
             AllFiles = scan_key_files(readable_files(Dirname), LiveKeyDir, [],
-                                      false),
+                                      false, true),
 
             %% Partition all files to files we'll merge and files we
             %% won't (so that we can close those extra files once
@@ -819,25 +819,30 @@ put_state(Ref, State) ->
 reverse_sort(L) ->
     lists:reverse(lists:sort(L)).
 
-scan_key_files([], _KeyDir, Acc, _CloseFile) ->
+scan_key_files([], _KeyDir, Acc, _CloseFile, _EnoentOK) ->
     Acc;
-scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile) ->
-    {ok, File} = bitcask_fileops:open_file(Filename),
-    F = fun(K, Tstamp, {Offset, TotalSz}, _) ->
-                bitcask_nifs:keydir_put(KeyDir,
-                                        K,
-                                        bitcask_fileops:file_tstamp(File),
-                                        TotalSz,
-                                        Offset,
-                                        Tstamp)
-        end,
-    bitcask_fileops:fold_keys(File, F, undefined, recovery),
-    if CloseFile == true ->
-            bitcask_fileops:close(File);
-       true ->
-            ok
-    end,
-    scan_key_files(Rest, KeyDir, [File | Acc], CloseFile).
+scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile, EnoentOK) ->
+    %% Restrictive pattern matching below is intentional
+    case bitcask_fileops:open_file(Filename) of
+        {ok, File} ->
+            F = fun(K, Tstamp, {Offset, TotalSz}, _) ->
+                        bitcask_nifs:keydir_put(KeyDir,
+                                                K,
+                                                bitcask_fileops:file_tstamp(File),
+                                                TotalSz,
+                                                Offset,
+                                                Tstamp)
+                end,
+            bitcask_fileops:fold_keys(File, F, undefined, recovery),
+            if CloseFile == true ->
+                    bitcask_fileops:close(File);
+               true ->
+                    ok
+            end,
+            scan_key_files(Rest, KeyDir, [File | Acc], CloseFile, EnoentOK);
+        {error, enoent} when EnoentOK ->
+            scan_key_files(Rest, KeyDir, Acc, CloseFile, EnoentOK)
+    end.
 
 %%
 %% Initialize a keydir for a given directory.
@@ -856,8 +861,23 @@ init_keydir(Dirname, WaitTime) ->
             %% We've just created a new named keydir, so we need to load up all
             %% the data from disk. Build a list of all the bitcask data files
             %% and sort it in descending order (newest->oldest).
-            SortedFiles = readable_files(Dirname),
-            _ = scan_key_files(SortedFiles, KeyDir, [], true),
+            %%
+            %% We need the SortedFiles list to be stable: we might be
+            %% in a situation:
+            %% 1. Someone else starts a merge on this cask.
+            %% 2. Our caller opens the cask and gets to here.
+            %% 3. The merge races with readable_files(): creating
+            %%    new data files and deleting old ones.
+            %% 4. SortedFiles doesn't contain the list of all of the
+            %%    files that we need.
+            Lock = poll_for_merge_lock(Dirname),
+            try
+                poll_deferred_delete_queue_empty(),
+                SortedFiles = readable_files(Dirname),
+                _ = scan_key_files(SortedFiles, KeyDir, [], true, false)
+            after
+                ok = bitcask_lockops:release(Lock)
+            end,
 
             %% Now that we loaded all the data, mark the keydir as ready
             %% so other callers can use it
@@ -893,13 +913,19 @@ get_filestate(FileId,
     end.
 
 
-list_data_files(Dirname, WritingFile, Mergingfile) ->
+list_data_files(Dirname, WritingFile, MergingFile) ->
     %% Get list of {tstamp, filename} for all files in the directory then
     %% reverse sort that list and extract the fully-qualified filename.
-    Files = bitcask_fileops:data_file_tstamps(Dirname),
-    [F || {_Tstamp, F} <- reverse_sort(Files),
-          F /= WritingFile,
-          F /= Mergingfile].
+    Files1 = bitcask_fileops:data_file_tstamps(Dirname),
+    Files2 = bitcask_fileops:data_file_tstamps(Dirname),
+    if Files1 == Files2 ->
+            %% No race, Files1 is a stable list.
+            [F || {_Tstamp, F} <- reverse_sort(Files1),
+                  F /= WritingFile,
+                  F /= MergingFile];
+       true ->
+            list_data_files(Dirname, WritingFile, MergingFile)
+    end.
 
 merge_files(#mstate { input_files = [] } = State) ->
     State;
@@ -1186,6 +1212,21 @@ purge_setuid_files(Dirname) ->
         Else ->
             error_logger:info_msg("Lock failed trying deleting stale merge "
                                   "input files from ~p: ~p\n", [Dirname, Else])
+    end.
+
+poll_for_merge_lock(Dirname) ->
+    case bitcask_lockops:acquire(merge, Dirname) of
+        {ok, Lock} ->
+            Lock;
+        _ ->
+            timer:sleep(100),
+            poll_for_merge_lock(Dirname)
+    end.
+
+poll_deferred_delete_queue_empty() ->
+    case bitcask_merge_delete:queue_length() of
+        0 -> ok;
+        _ -> receive after 1100 -> poll_deferred_delete_queue_empty() end
     end.
 
 %% ===================================================================
@@ -1813,9 +1854,9 @@ leak_t0() ->
     Dir = "/tmp/goofus",
     os:cmd("rm -rf " ++ Dir),
 
-    Ref0 = bitcask:open(Dir),
+    _Ref0 = bitcask:open(Dir),
     os:cmd("cd " ++ Dir ++ "; sh -c 'for i in `seq 100 1000`; do touch $i.bitcask.data $i.bitcask.hint; done'"),
-    Ref1 = bitcask:open(Dir),
+    _Ref1 = bitcask:open(Dir),
 
     Cmd = lists:flatten(io_lib:format("lsof -nP -p ~p | wc -l", [os:getpid()])),
     io:format("Res = ~s\n", [os:cmd(Cmd)]).
