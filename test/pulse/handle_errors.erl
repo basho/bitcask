@@ -82,6 +82,8 @@ handle_event({error, _, {_, "Failed to merge ~p: ~p\n", [_, not_ready]}}, State)
   {ok, State};
 handle_event({error, _, {_, "Failed to merge ~p: ~p\n", [_, {merge_locked, _, _}]}}, State) ->
   {ok, State};
+handle_event({error, _, {_, "Failed to read lock data from ~s: ~p\n", [_, {invalid_data, <<>>}]}}, State) ->
+  {ok, State};
 handle_event({error, _, Event}, State) ->
   {ok, State#state{ errors = [Event|State#state.errors] }};
 handle_event(_Event, State) ->

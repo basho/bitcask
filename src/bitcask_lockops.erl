@@ -109,7 +109,7 @@ read_lock_data(Lock) ->
                 {match, [OsPid, LockedFilename]} ->
                     {ok, OsPid, LockedFilename};
                 nomatch ->
-                    {error, invalid_data}
+                    {error, {invalid_data, Contents}}
             end;
         {error, Reason} ->
             {error, Reason}
