@@ -1717,7 +1717,10 @@ static void merge_pending_entries(ErlNifEnv* env, bitcask_keydir* keydir)
 
     keydir->pending_updated = 0;
     keydir->pending_start = 0;
-    enif_free_compat(env, keydir->pending_awaken);
+    if (keydir->pending_awaken != NULL)
+    {
+        enif_free_compat(env, keydir->pending_awaken);
+    }
     keydir->pending_awaken = NULL;
     keydir->pending_awaken_count = 0;
     keydir->pending_awaken_size = 0;
