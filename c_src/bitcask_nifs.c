@@ -88,6 +88,7 @@ typedef struct
     uint64_t total_keys;  // total number of keys written to file
     uint64_t total_bytes; // total number of bytes written to file
     uint32_t oldest_tstamp; // oldest observed tstamp in a file
+    uint32_t newest_tstamp; // newest observed tstamp in a file
 } bitcask_fstats_entry;
 
 KHASH_MAP_INIT_INT(fstats, bitcask_fstats_entry*);
@@ -402,6 +403,11 @@ static void update_fstats(ErlNifEnv* env, bitcask_keydir* keydir,
         entry->oldest_tstamp == 0)
     {
         entry->oldest_tstamp = tstamp;
+    }
+    if ((tstamp != 0 && tstamp > entry->newest_tstamp) ||
+        entry->newest_tstamp == 0)
+    {
+        entry->newest_tstamp = tstamp;
     }
 }
 
@@ -1116,7 +1122,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_info(ErlNifEnv* env, int argc, const ERL_NIF_TE
         LOCK(keydir);
 
         // Dump fstats info into a list of [{file_id, live_keys, total_keys,
-        //                                   live_bytes, total_bytes, oldest_tstamp}]
+        //                                   live_bytes, total_bytes,
+        //                                   oldest_tstamp, newest_tstamp}]
         ERL_NIF_TERM fstats_list = enif_make_list(env, 0);
         khiter_t itr;
         bitcask_fstats_entry* curr_f;
@@ -1126,13 +1133,14 @@ ERL_NIF_TERM bitcask_nifs_keydir_info(ErlNifEnv* env, int argc, const ERL_NIF_TE
             {
                 curr_f = kh_val(keydir->fstats, itr);
                 ERL_NIF_TERM fstat =
-                    enif_make_tuple6(env,
+                    enif_make_tuple7(env,
                                      enif_make_uint(env, curr_f->file_id),
                                      enif_make_ulong(env, curr_f->live_keys),
                                      enif_make_ulong(env, curr_f->total_keys),
                                      enif_make_ulong(env, curr_f->live_bytes),
                                      enif_make_ulong(env, curr_f->total_bytes),
-                                     enif_make_uint(env, curr_f->oldest_tstamp));
+                                     enif_make_uint(env, curr_f->oldest_tstamp),
+                                     enif_make_uint(env, curr_f->newest_tstamp));
                 fstats_list = enif_make_list_cell(env, fstat, fstats_list);
             }
         }
