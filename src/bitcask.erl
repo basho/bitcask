@@ -35,6 +35,7 @@
          fold/3, fold/5,
          merge/1, merge/2, merge/3,
          needs_merge/1,
+         is_empty_estimate/1,
          status/1]).
 
 -export([get_opt/2,
@@ -659,6 +660,11 @@ expired_threshold(Cutoff) ->
             end
     end.
 
+-spec is_empty_estimate(reference()) -> boolean().
+is_empty_estimate(Ref) ->
+    State = get_state(Ref),
+    {KeyCount, _, _} = bitcask_nifs:keydir_info(State#bc_state.keydir),
+    KeyCount == 0.
 
 -spec status(reference()) -> {integer(), [{string(), integer(), integer(), integer()}]}.
 status(Ref) ->
