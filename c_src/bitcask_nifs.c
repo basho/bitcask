@@ -1003,7 +1003,14 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr(ErlNifEnv* env, int argc, const ERL_NIF_TER
             {   // Grow 16-at-a-time, expect a single alloc
                 keydir->pending_awaken_size += 16;  
                 size_t size = keydir->pending_awaken_size * sizeof(keydir->pending_awaken[0]);
-                keydir->pending_awaken = enif_realloc_compat(env, keydir->pending_awaken, size);
+                if (keydir->pending_awaken == NULL)
+                {
+                    keydir->pending_awaken = enif_alloc_compat(env, size);
+                }
+                else
+                {
+                    keydir->pending_awaken = enif_realloc_compat(env, keydir->pending_awaken, size);
+                }
             }
             enif_self(env, &keydir->pending_awaken[keydir->pending_awaken_count]);
             keydir->pending_awaken_count++;
