@@ -22,8 +22,43 @@
 -module(bitcask_time).
 
 -export([tstamp/0]).
+-export([test__set_fudge/1, test__get_fudge/0, test__incr_fudge/1]).
+
+-define(KEY, bitcask_time_fudge).
 
 %% Return number of seconds since 1970
 tstamp() ->
     {Mega, Sec, _Micro} = os:timestamp(),
-    (Mega * 1000000) + Sec.
+    (Mega * 1000000) + Sec + fudge().
+
+fudge() ->
+    test__get(?KEY).
+
+test__set_fudge(Amount) ->
+    application:set_env(bitcask, ?KEY, Amount).
+
+test__get_fudge() ->
+    test__get(?KEY).
+
+test__incr_fudge(Amount) ->
+    test__set_fudge(test__get_fudge() + Amount).
+
+test__get(Key) ->
+    %% Play games with local process dictionary to avoid looking
+    %% at application controller's ETS table for every call.
+    case get(Key) of
+        undefined ->
+            case application:get_env(bitcask, Key) of
+                undefined ->
+                    put(Key, no_testing);
+                 _ ->
+                    put(Key, yes_testing)
+            end,
+            test__get(Key);
+        no_testing ->
+            0;
+        yes_testing ->
+            {ok, Fudge} = application:get_env(bitcask, Key),
+            Fudge
+    end.
+

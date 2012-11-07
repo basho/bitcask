@@ -69,6 +69,8 @@ command(S) ->
   frequency(
     [ {2, {call, ?MODULE, fork, [not_commands(?MODULE, #state{ is_writer = false })]}}
       || S#state.is_writer ] ++
+    [ {10, {call, ?MODULE, incr_clock, []}}
+      || S#state.is_writer ] ++
     [ {10, {call, ?MODULE, get, [S#state.handle, key()]}}
       || S#state.handle /= undefined ] ++
     [ {20, {call, ?MODULE, put, [S#state.handle, key(), value()]}}
@@ -102,6 +104,8 @@ command(S) ->
 %% Precondition, checked before a command is added to the command sequence.
 precondition(S, {call, _, fork, _}) ->
   S#state.is_writer;
+precondition(S, {call, _, incr_clock, _}) ->
+  true;
 precondition(S, {call, _, get, [H, _]}) ->
   S#state.handle == H;
 precondition(S, {call, _, puts, [H, _, _]}) ->
@@ -271,6 +275,7 @@ run_commands_on_node(Cmds, Seed, Verbose) ->
     error_logger:add_report_handler(handle_errors),
     token:next_name(),
     event_logger:start_logging(),
+    bitcask_time:test__set_fudge(0),
     X =
     try
       {H, S, Res, PidRs, Trace} = pulse:run(fun() ->
@@ -337,7 +342,10 @@ prop_pulse_test_() ->
 
 %% Needed since rebar fails miserably in setting up the .eunit test directory
 copy_bitcask_app() ->
-  os:cmd("cp ../ebin/bitcask.app ."),
+  try
+      {ok, B} = file:read_file("../ebin/bitcask.app"),
+      ok = file:write_file("./bitcask.app", B)
+  catch _:_ -> ok end,
   ok.
 
 %% Using eqc_temporal to keep track of possible values for keys.
@@ -529,7 +537,7 @@ command_data({set, _, {call, _, Fun, _}}, {_S, _V}) ->
 fork_results(Pids) ->
   [ receive
       {Pid, done, R} -> {I, R}
-    %% after ?TIMEOUT -> {I, timeout}
+    after 10*1000 -> {I, timeout}
     end || {I, Pid} <- lists:zip(lists:seq(1, length(Pids)), Pids) ].
 
 %% Implementation of a the commands
@@ -553,6 +561,9 @@ fork(Cmds) ->
     bc_close(S#state.handle),
     Mama ! {self(), done, R}
   end) end).
+
+incr_clock() ->
+    bitcask_time:test__incr_fudge(1).
 
 get(H, K) ->
   ?LOG({get, H, K},
@@ -894,7 +905,8 @@ rename_from(X, Cmds) ->
         end end, Cmds).
 
 really_delete_bitcask() ->
-  os:cmd("rm -rf " ++ ?BITCASK),
+  [file:delete(X) || X <- filelib:wildcard(?BITCASK ++ "/*")],
+  file:del_dir(?BITCASK),
   case file:read_file_info(?BITCASK) of
     {error, enoent} -> ok;
     {ok, _} ->

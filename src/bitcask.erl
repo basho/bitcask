@@ -65,6 +65,7 @@
 
 -record(mstate, { dirname,
                   merge_lock,
+                  merge_start,
                   max_file_size,
                   input_files,
                   out_file,
@@ -501,7 +502,7 @@ merge1(Dirname, Opts, FilesToMerge) ->
                             end
                         end
                         || F <- FilesToMerge],
-            InFiles = [F || F <- InFiles0, F /= skip];
+            InFiles1 = [F || F <- InFiles0, F /= skip];
 
         {not_ready, LiveKeyDir} ->
             %% Live keydir is newly created. We need to go ahead and
@@ -517,7 +518,7 @@ merge1(Dirname, Opts, FilesToMerge) ->
             P = fun(F) ->
                         lists:member(bitcask_fileops:filename(F), FilesToMerge)
                 end,
-            {InFiles, UnusedFiles} = lists:partition(P, AllFiles),
+            {InFiles1, UnusedFiles} = lists:partition(P, AllFiles),
 
             %% Close the unused files
             [bitcask_fileops:close(U) || U <- UnusedFiles],
@@ -530,9 +531,29 @@ merge1(Dirname, Opts, FilesToMerge) ->
 
             ok = bitcask_lockops:release(Lock),
             % Make erlc happy w/ non-local exit
-            LiveKeyDir = undefined, InFiles = [],
+            LiveKeyDir = undefined, InFiles1 = [],
             throw({error, not_ready})
     end,
+
+    MergeStart = bitcask_time:tstamp(),
+    LiveRef = make_ref(),
+    put_state(LiveRef, #bc_state{dirname = Dirname, keydir = LiveKeyDir}),
+    {_KeyCount, Summary} = summary_info(LiveRef),
+    erlang:erase(LiveRef),
+    TooNew = [F#file_status.filename ||
+                 F <- Summary,
+                 F#file_status.newest_tstamp >= MergeStart],
+    InFiles = lists:reverse(
+                lists:foldl(fun(F, Acc) ->
+                                    case lists:member(F#filestate.filename,
+                                                      TooNew) of
+                                        false ->
+                                            [F|Acc];
+                                        true ->
+                                            bitcask_fileops:close(F),
+                                            Acc
+                                    end
+                            end, [], InFiles1)),
 
     %% Setup our first output merge file and update the merge lock accordingly
     {ok, Outfile} = bitcask_fileops:create_file(Dirname, Opts),
@@ -730,7 +751,7 @@ summary_info(Ref) ->
     %% the file stats so we can determine how much fragmentation
     %% is present
     %%
-    %% Fstat has form: [{FileId, LiveCount, TotalCount, LiveBytes, TotalBytes, OldestTstamp}]
+    %% Fstat has form: [{FileId, LiveCount, TotalCount, LiveBytes, TotalBytes, OldestTstamp, NewestTstamp}]
     %% and is only an estimate/snapshot.
     {KeyCount, _KeyBytes, Fstats, _IterStatus} =
         bitcask_nifs:keydir_info(State#bc_state.keydir),
@@ -761,12 +782,13 @@ summary_info(Ref) ->
 %% Internal functions
 %% ===================================================================
 
-summarize(Dirname, {FileId, LiveCount, TotalCount, LiveBytes, TotalBytes, OldestTstamp}) ->
+summarize(Dirname, {FileId, LiveCount, TotalCount, LiveBytes, TotalBytes, OldestTstamp, NewestTstamp}) ->
     #file_status { filename = bitcask_fileops:mk_filename(Dirname, FileId),
                    fragmented = trunc((1 - LiveCount/TotalCount) * 100),
                    dead_bytes = TotalBytes - LiveBytes,
                    total_bytes = TotalBytes,
-                   oldest_tstamp = OldestTstamp }.
+                   oldest_tstamp = OldestTstamp,
+                   newest_tstamp = NewestTstamp}.
 
 expiry_time(Opts) ->
     ExpirySecs = get_opt(expiry_secs, Opts),
@@ -933,7 +955,11 @@ merge_files(#mstate {  dirname = Dirname,
                        input_files = [File | Rest]} = State) ->
     FileId = bitcask_fileops:file_tstamp(File),
     F = fun(K, V, Tstamp, Pos, State0) ->
-                merge_single_entry(K, V, Tstamp, FileId, Pos, State0)
+                if Tstamp < State0#mstate.merge_start ->
+                        merge_single_entry(K, V, Tstamp, FileId, Pos, State0);
+                   true ->
+                        State0
+                end
         end,
     State2 = try bitcask_fileops:fold(File, F, State) of
                  State1 ->
@@ -1451,6 +1477,7 @@ merge_test() ->
     3 = length(readable_files("/tmp/bc.test.merge")),
 
     %% Merge everything
+    timer:sleep(1100),
     ok = merge("/tmp/bc.test.merge"),
 
     %% Verify we've now only got one file
@@ -1533,6 +1560,7 @@ expire_merge_test() ->
     timer:sleep(2000),
 
     %% Merge everything
+    timer:sleep(1100),
     ok = merge("/tmp/bc.test.mergeexpire",[{expiry_secs,1}]),
 
     %% Verify we've now only got one file
@@ -1599,6 +1627,7 @@ delete_merge_test() ->
     A1 = bitcask:list_keys(B1),
     close(B1),
 
+    timer:sleep(1100),
     ok = merge("/tmp/bc.test.delmerge",[]),
 
     %% Verify we've now only got one item left
@@ -1625,6 +1654,7 @@ delete_partial_merge_test() ->
 
     %% selective merge, hit all of the files with deletes but not
     %%  all of the ones with deleted data
+    timer:sleep(1100),
     ok = merge("/tmp/bc.test.pardel",[],lists:reverse(lists:nthtail(2,
                                            lists:reverse(readable_files(
                                                "/tmp/bc.test.pardel"))))),
@@ -1722,6 +1752,7 @@ expire_keydir_test() ->
     timer:sleep(2000),
 
     %% Merge everything
+    timer:sleep(1100),
     ok = merge("/tmp/bc.test.mergeexpirekeydir",[{expiry_secs,1}]),
 
     %% should be no keys in the keydir now
@@ -1811,6 +1842,7 @@ truncated_merge_test() ->
     ok = truncate_file(Hint4, 5),
     ok = corrupt_file(Data5, 15, <<"!">>),
     %% Merge everything
+    timer:sleep(1100),
     ok = merge(Dir),
 
     %% Verify we've now only got one file
@@ -1880,6 +1912,7 @@ leak_t1() ->
     [bitcask:delete(Ref, <<X:32>>) || X <- lists:seq(1, DelKeys)],
     io:format("After deleting ~p keys, lsof says: ~s", [DelKeys, Used()]),
 
+    timer:sleep(1100),
     bitcask:merge(Dir),
     io:format("After merging, lsof says: ~s", [Used()]),
 

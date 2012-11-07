@@ -19,7 +19,8 @@
                        fragmented,
                        dead_bytes,
                        total_bytes,
-                       oldest_tstamp }).
+                       oldest_tstamp,
+                       newest_tstamp }).
 
 
 -define(FMT(Str, Args), lists:flatten(io_lib:format(Str, Args))).
