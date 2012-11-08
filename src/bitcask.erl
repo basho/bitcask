@@ -34,7 +34,6 @@
          iterator/3, iterator_next/1, iterator_release/1,
          merge/1, merge/2, merge/3,
          needs_merge/1,
-         is_empty_estimate/1,
          status/1]).
 
 -export([get_opt/2,
@@ -449,7 +448,6 @@ merge(_Dirname, _Opts, []) ->
 merge(Dirname, Opts, FilesToMerge0) ->
     %% Make sure bitcask app is started so we can pull defaults from env
     ok = start_app(),
-
     %% Filter the files to merge and ensure that they all exist. It's
     %% possible in some circumstances that we'll get an out-of-date
     %% list of files.
@@ -539,11 +537,13 @@ merge1(Dirname, Opts, FilesToMerge) ->
                       opts = Opts },
 
     %% Finally, start the merge process
-    State1 = merge_files(State),
+    %%This is where we implement our fancy cache merge called cache_merge
+    State1 = cache_merge(State, FilesToMerge),
+    State2 = merge_files(State1),
 
     %% Make sure to close the final output file
-    ok = bitcask_fileops:sync(State1#mstate.out_file),
-    ok = bitcask_fileops:close(bitcask_fileops:close_for_writing(State1#mstate.out_file)),
+    ok = bitcask_fileops:sync(State2#mstate.out_file),
+    ok = bitcask_fileops:close(State2#mstate.out_file),
 
     %% Explicitly release our keydirs instead of waiting for GC
     bitcask_nifs:keydir_release(LiveKeyDir),
@@ -553,7 +553,7 @@ merge1(Dirname, Opts, FilesToMerge) ->
     [begin
          bitcask_fileops:delete(F),
          bitcask_fileops:close(F)
-     end || F <- State#mstate.input_files],
+     end || F <- State2#mstate.input_files],
     ok = bitcask_lockops:release(Lock).
 
 %% @doc Predicate which determines whether or not a file should be considered for a merge. 
@@ -636,8 +636,10 @@ needs_merge(Ref) ->
                     ok
             end,
 
-            FileNames = [Filename || {Filename, _Reasons} <- MergableFiles],
-            {true, FileNames};
+            %% Should just return MergableFiles here
+
+            %% FileNames = [Filename || {Filename, _Reasons} <- MergableFiles],
+            {true, MergableFiles};
         false ->
             false
     end.
@@ -690,11 +692,6 @@ expired_threshold(Cutoff) ->
             end
     end.
 
--spec is_empty_estimate(reference()) -> boolean().
-is_empty_estimate(Ref) ->
-    State = get_state(Ref),
-    {KeyCount, _, _} = bitcask_nifs:keydir_info(State#bc_state.keydir),
-    KeyCount == 0.
 
 -spec status(reference()) -> {integer(), [{string(), integer(), integer(), integer()}]}.
 status(Ref) ->
@@ -744,6 +741,40 @@ summary_info(Ref) ->
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
+
+%% Merge files who are only eligable for merge based on expiry.
+cache_merge([], State) ->
+    State;
+
+cache_merge([{File,Reason} | Files], State) ->
+    error_logger:info_msg("SPARROW here be: ~p\n", State#mstate.input_files),
+    case  Reason  of
+        {oldest_tstamp, _DataTime, _ExpiryTime} ->
+            % Do the magic
+            % fold over the hintfile, stop on first non-expired entry
+            % delete the entries in the key_dir and
+            % delete the data file
+            FileId = bitcask_fileops:file_tstamp(File),
+            Fun = fun(K, Tstamp, {Offset, _TotalSz}, State0) ->
+                    case State0#mstate.expiry_time < Tstamp of
+                        true  ->
+                            throw(found_not_expired);
+                        _ ->
+                            bitcask_nifs:keydir_remove(State0#mstate.live_keydir, K, Tstamp, FileId, Offset)
+                    end
+                end,
+            case bitcask_fileops:fold_keys(File, Fun, State, hintfile) of
+                found_not_expired ->
+                    State1 = State;
+                {error, _} ->
+                    State1 = State;
+                _ ->
+                    State1 = State#mstate{input_files = State#mstate.input_files}
+             end,
+            cache_merge(State1, Files);
+        _ ->
+            cache_merge(State, Files)
+    end.
 
 summarize(Dirname, {FileId, LiveCount, TotalCount, LiveBytes, TotalBytes, OldestTstamp}) ->
     #file_status { filename = bitcask_fileops:mk_filename(Dirname, FileId),
@@ -950,7 +981,7 @@ inner_merge_write(K, V, Tstamp, State) ->
             wrap ->
                 %% Close the current output file
                 ok = bitcask_fileops:sync(State#mstate.out_file),
-                ok = bitcask_fileops:close(bitcask_fileops:close_for_writing(State#mstate.out_file)),
+                ok = bitcask_fileops:close(State#mstate.out_file),
                 
                 %% Start our next file and update state
                 {ok, NewFile} = bitcask_fileops:create_file(
