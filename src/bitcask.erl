@@ -34,6 +34,7 @@
          iterator/3, iterator_next/1, iterator_release/1,
          merge/1, merge/2, merge/3,
          needs_merge/1,
+         is_empty_estimate/1,
          status/1]).
 
 -export([get_opt/2,
@@ -543,7 +544,7 @@ merge1(Dirname, Opts, FilesToMerge) ->
 
     %% Make sure to close the final output file
     ok = bitcask_fileops:sync(State2#mstate.out_file),
-    ok = bitcask_fileops:close(State2#mstate.out_file),
+    ok = bitcask_fileops:close(bitcask_fileops:close_for_writing(State2#mstate.out_file)),
 
     %% Explicitly release our keydirs instead of waiting for GC
     bitcask_nifs:keydir_release(LiveKeyDir),
@@ -636,7 +637,7 @@ needs_merge(Ref) ->
                     ok
             end,
 
-            %% Should just return MergableFiles here
+            %% Should just return MergableFiles here to use the Reasons for logics
 
             %% FileNames = [Filename || {Filename, _Reasons} <- MergableFiles],
             {true, MergableFiles};
@@ -692,6 +693,11 @@ expired_threshold(Cutoff) ->
             end
     end.
 
+--spec is_empty_estimate(reference()) -> boolean().
+is_empty_estimate(Ref) ->
+    State = get_state(Ref),
+    {KeyCount, _, _} = bitcask_nifs:keydir_info(State#bc_state.keydir),
+    KeyCount == 0.
 
 -spec status(reference()) -> {integer(), [{string(), integer(), integer(), integer()}]}.
 status(Ref) ->
@@ -741,40 +747,6 @@ summary_info(Ref) ->
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
-
-%% Merge files who are only eligable for merge based on expiry.
-cache_merge([], State) ->
-    State;
-
-cache_merge([{File,Reason} | Files], State) ->
-    error_logger:info_msg("SPARROW here be: ~p\n", State#mstate.input_files),
-    case  Reason  of
-        {oldest_tstamp, _DataTime, _ExpiryTime} ->
-            % Do the magic
-            % fold over the hintfile, stop on first non-expired entry
-            % delete the entries in the key_dir and
-            % delete the data file
-            FileId = bitcask_fileops:file_tstamp(File),
-            Fun = fun(K, Tstamp, {Offset, _TotalSz}, State0) ->
-                    case State0#mstate.expiry_time < Tstamp of
-                        true  ->
-                            throw(found_not_expired);
-                        _ ->
-                            bitcask_nifs:keydir_remove(State0#mstate.live_keydir, K, Tstamp, FileId, Offset)
-                    end
-                end,
-            case bitcask_fileops:fold_keys(File, Fun, State, hintfile) of
-                found_not_expired ->
-                    State1 = State;
-                {error, _} ->
-                    State1 = State;
-                _ ->
-                    State1 = State#mstate{input_files = State#mstate.input_files}
-             end,
-            cache_merge(State1, Files);
-        _ ->
-            cache_merge(State, Files)
-    end.
 
 summarize(Dirname, {FileId, LiveCount, TotalCount, LiveBytes, TotalBytes, OldestTstamp}) ->
     #file_status { filename = bitcask_fileops:mk_filename(Dirname, FileId),
@@ -981,7 +953,7 @@ inner_merge_write(K, V, Tstamp, State) ->
             wrap ->
                 %% Close the current output file
                 ok = bitcask_fileops:sync(State#mstate.out_file),
-                ok = bitcask_fileops:close(State#mstate.out_file),
+                ok = bitcask_fileops:close(bitcask_fileops:close_for_writing(State#mstate.out_file)),
                 
                 %% Start our next file and update state
                 {ok, NewFile} = bitcask_fileops:create_file(
@@ -1152,6 +1124,39 @@ wrap_write_file(#bc_state{write_file = WriteFile} = State) ->
                     read_files = [LastWriteFile | 
                                   State#bc_state.read_files]}.
 
+%% Merge files who are only eligable for merge based on expiry.
+cache_merge([], State) ->
+    State;
+
+cache_merge([{File,Reason} | Files], State) ->
+    error_logger:info_msg("SPARROW here be: ~p\n", State#mstate.input_files),
+    case  Reason  of
+        {oldest_tstamp, _DataTime, _ExpiryTime} ->
+            % Do the magic
+            % fold over the hintfile, stop on first non-expired entry
+            % delete the entries in the key_dir and
+            % delete the data file
+            FileId = bitcask_fileops:file_tstamp(File),
+            Fun = fun(K, Tstamp, {Offset, _TotalSz}, State0) ->
+                    case State0#mstate.expiry_time < Tstamp of
+                        true  ->
+                            throw(found_not_expired);
+                        _ ->
+                            bitcask_nifs:keydir_remove(State0#mstate.live_keydir, K, Tstamp, FileId, Offset)
+                    end
+                end,
+            case bitcask_fileops:fold_keys(File, Fun, State, hintfile) of
+                found_not_expired ->
+                    State1 = State;
+                {error, _} ->
+                    State1 = State;
+                _ ->
+                    State1 = State#mstate{input_files = State#mstate.input_files}
+             end,
+            cache_merge(State1, Files);
+        _ ->
+            cache_merge(State, Files)
+    end.
 
 %% ===================================================================
 %% EUnit tests
