@@ -446,20 +446,22 @@ merge(Dirname, Opts) ->
 -spec merge(Dirname::string(), Opts::[_], FilesToMerge::[string()]) -> ok.
 merge(_Dirname, _Opts, []) ->
     ok;
-merge(Dirname, Opts, FilesToMerge0) ->
+merge(Dirname, Opts, MergableFiles) ->
     %% Make sure bitcask app is started so we can pull defaults from env
     ok = start_app(),
     %% Filter the files to merge and ensure that they all exist. It's
     %% possible in some circumstances that we'll get an out-of-date
     %% list of files.
-    FilesToMerge = [F || F <- FilesToMerge0,
+    Files = [Filename || {Filename, _Reasons} <- MergableFiles],
+    FilesToMerge = [F || F <- Files,
                          filelib:is_file(F)],
-    merge1(Dirname, Opts, FilesToMerge).
+    merge1(Dirname, Opts, MergableFiles, FilesToMerge).
 
 %% Inner merge function, assumes that bitcask is running and all files exist.
-merge1(_Dirname, _Opts, []) ->
+merge1(_Dirname, _Opts, _MergableFiles, []) ->
     ok;
-merge1(Dirname, Opts, FilesToMerge) ->
+merge1(Dirname, Opts, MergableFiles, FilesToMerge) ->
+
     %% Test to see if this is a complete or partial merge
     Partial = not(lists:usort(readable_files(Dirname)) == 
                   lists:usort(FilesToMerge)),
@@ -539,7 +541,7 @@ merge1(Dirname, Opts, FilesToMerge) ->
 
     %% Finally, start the merge process
     %%This is where we implement our fancy cache merge called cache_merge
-    State1 = cache_merge(State, FilesToMerge),
+    State1 = cache_merge(State, MergableFiles),
     State2 = merge_files(State1),
 
     %% Make sure to close the final output file
@@ -567,7 +569,7 @@ consider_for_merge(FragTrigger, DeadBytesTrigger, ExpirationGraceTime) ->
                        )
     end.
 
--spec needs_merge(reference()) -> {true, [string()]} | false.
+-spec needs_merge(reference()) -> {true, [{string(), _Reasons}]} | false.
 needs_merge(Ref) ->
     State = get_state(Ref),
     {_KeyCount, Summary} = summary_info(Ref),
@@ -1124,14 +1126,14 @@ wrap_write_file(#bc_state{write_file = WriteFile} = State) ->
                     read_files = [LastWriteFile | 
                                   State#bc_state.read_files]}.
 
-%% Merge files who are only eligable for merge based on expiry.
+%% Internal merge function for cache_merge functionality.
 cache_merge([], State) ->
     State;
 
 cache_merge([{File,Reason} | Files], State) ->
     error_logger:info_msg("SPARROW here be: ~p\n", State#mstate.input_files),
     case  Reason  of
-        {oldest_tstamp, _DataTime, _ExpiryTime} ->
+        {oldest_tstamp, _DataTime, _ExpiryTime} when filelib:is_file(File)->
             % Do the magic
             % fold over the hintfile, stop on first non-expired entry
             % delete the entries in the key_dir and
