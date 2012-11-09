@@ -28,10 +28,6 @@
 
 %% Return number of seconds since 1970
 tstamp() ->
-    {Mega, Sec, _Micro} = os:timestamp(),
-    (Mega * 1000000) + Sec + fudge().
-
-fudge() ->
     test__get(?KEY).
 
 test__set_fudge(Amount) ->
@@ -56,7 +52,8 @@ test__get(Key) ->
             end,
             test__get(Key);
         no_testing ->
-            0;
+            {Mega, Sec, _Micro} = os:timestamp(),
+            (Mega * 1000000) + Sec;
         yes_testing ->
             {ok, Fudge} = application:get_env(bitcask, Key),
             Fudge
