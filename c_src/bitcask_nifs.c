@@ -639,6 +639,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
         if ((entry.newest_put &&
              (entry.file_id >= keydir->biggest_file_id)) ||
             (! entry.newest_put &&
+             (old_entry->tstamp < entry.tstamp)) ||
+            (! entry.newest_put &&
              ((old_entry->file_id < entry.file_id) ||
               (((old_entry->file_id == entry.file_id) &&
                 (old_entry->offset < entry.offset))))))
