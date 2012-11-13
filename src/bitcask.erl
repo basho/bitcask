@@ -54,6 +54,11 @@
 -include_lib("kernel/include/file.hrl").
 -endif.
 
+%% In the real world, 1 or 2 retries is usually sufficient.  In the
+%% world of QuickCheck, however, QC can create some diabolical
+%% races, so use a diabolical number.
+-define(DIABOLIC_BIG_INT, 100).
+
 %% @type bc_state().
 -record(bc_state, {dirname,
                    write_file,     % File for writing
@@ -240,10 +245,7 @@ put(Ref, Key, Value) ->
             ok
     end,
 
-    %% In the real world, 2 retries is usually sufficient.  In the
-    %% world of QuickCheck, however, QC can create some diabolical
-    %% races, so use a diabolical number.
-    {Ret, State1} = do_put(Key, Value, State, 100, undefined),
+    {Ret, State1} = do_put(Key, Value, State, ?DIABOLIC_BIG_INT, undefined),
     put_state(Ref, State1),
     Ret.
 
@@ -895,8 +897,7 @@ init_keydir(Dirname, WaitTime) ->
             Lock = poll_for_merge_lock(Dirname),
             try
                 poll_deferred_delete_queue_empty(),
-                SortedFiles = readable_files(Dirname),
-                _ = scan_key_files(SortedFiles, KeyDir, [], true, false)
+                init_keydir_scan_key_files(Dirname, KeyDir)
             after
                 ok = bitcask_lockops:release(Lock)
             end,
@@ -916,6 +917,22 @@ init_keydir(Dirname, WaitTime) ->
             end
     end.
 
+init_keydir_scan_key_files(Dirname, KeyDir) ->
+    init_keydir_scan_key_files(Dirname, KeyDir, ?DIABOLIC_BIG_INT).
+
+init_keydir_scan_key_files(_Dirname, _Keydir, 0) ->
+    %% If someone launches enough parallel merge operations to
+    %% interfere with our attempts to scan this keydir for this many
+    %% times, then we are just plain unlucky.  Or QuickCheck smites us
+    %% from lofty Mt. Stochastic.
+    {error, {init_keydir_scan_key_files, too_many_iterations}};
+init_keydir_scan_key_files(Dirname, KeyDir, Count) ->
+    try
+        SortedFiles = readable_files(Dirname),
+        _ = scan_key_files(SortedFiles, KeyDir, [], true, false)
+    catch _:_ ->
+            init_keydir_scan_key_files(Dirname, KeyDir, Count - 1)
+    end.
 
 get_filestate(FileId,
               State=#bc_state{ dirname = Dirname, read_files = ReadFiles }) ->
