@@ -70,7 +70,8 @@ command(S) ->
     [ {2, {call, ?MODULE, fork, [not_commands(?MODULE, #state{ is_writer = false })]}}
       || S#state.is_writer ] ++
     [ {30, {call, ?MODULE, incr_clock, []}}
-      || true ] ++
+      %% Any proc can call incr_clock
+    ] ++
     [ {10, {call, ?MODULE, get, [S#state.handle, key()]}}
       || S#state.handle /= undefined ] ++
     [ {20, {call, ?MODULE, put, [S#state.handle, key(), value()]}}
@@ -104,7 +105,7 @@ command(S) ->
 %% Precondition, checked before a command is added to the command sequence.
 precondition(S, {call, _, fork, _}) ->
   S#state.is_writer;
-precondition(S, {call, _, incr_clock, _}) ->
+precondition(_S, {call, _, incr_clock, _}) ->
   true;
 precondition(S, {call, _, get, [H, _]}) ->
   S#state.handle == H;
@@ -255,7 +256,9 @@ start_node(Verbose) ->
 stop_node() ->
   slave:stop(node_name()).
 
-run_on_node(Verbose, M, F, A) ->
+run_on_node(local, _Verbose, M, F, A) ->
+  rpc:call(node(), M, F, A);
+run_on_node(slave, Verbose, M, F, A) ->
   start_node(Verbose),
   rpc:call(node_name(), M, F, A).
 
@@ -266,8 +269,11 @@ mute(false, Fun) -> mute:run(Fun).
 %%
 %% The actual code of the property, run on remote node via rpc:call above
 %%
-run_commands_on_node(Cmds, Seed, Verbose) ->
+run_commands_on_node(LocalOrSlave, Cmds, Seed, Verbose) ->
   mute(Verbose, fun() ->
+    AfterTime = if LocalOrSlave == local -> 50000;
+                   LocalOrSlave == remote -> 1000000
+                end,
     event_logger:start_link(),
     pulse:start(),
     bitcask_nifs:set_pulse_pid(utils:whereis(pulse)),
@@ -275,21 +281,21 @@ run_commands_on_node(Cmds, Seed, Verbose) ->
     error_logger:add_report_handler(handle_errors),
     token:next_name(),
     event_logger:start_logging(),
-    bitcask_time:test__set_fudge(0),
+    bitcask_time:test__set_fudge(10),
     X =
     try
       {H, S, Res, PidRs, Trace} = pulse:run(fun() ->
           %% pulse_application_controller:start({application, kernel, []}),
           application:start(bitcask),
-          receive after 1000000 -> ok end,
+          receive after AfterTime -> ok end,
           OldVerbose = pulse:verbose([ all || Verbose ]),
           {H, S, R} = run_commands(?MODULE, Cmds),
           Pids = lists:usort(S#state.readers),
           PidRs = fork_results(Pids),
-          receive after 1000000 -> ok end,
+          receive after AfterTime -> ok end,
           pulse:verbose(OldVerbose),
           Trace = event_logger:get_events(),
-          receive after 1000000 -> ok end,
+          receive after AfterTime -> ok end,
           exit(pulse_application_controller, shutdown),
           {H, S, R, PidRs, Trace}
         end, [{seed, Seed},
@@ -305,13 +311,19 @@ run_commands_on_node(Cmds, Seed, Verbose) ->
     X end).
 
 prop_pulse() ->
-  prop_pulse(false).
+  prop_pulse(local, false).
 
-prop_pulse(Verbose) ->
-  ?FORALL(Cmds, ?LET(Cmds, more_commands(2, commands(?MODULE)), shrink_commands(Cmds)),
+prop_pulse(Boolean) ->
+    prop_pulse(local, Boolean).
+
+prop_pulse(LocalOrSlave, Verbose) ->
+  More = 2,
+  if More < 2 -> [erlang:display({"NOTE: we are using a perhaps small More value?", More}) || _ <- lists:seq(1,10)]; true -> ok end,
+  ?FORALL(Cmds, ?LET(Cmds, more_commands(More, commands(?MODULE)), shrink_commands(Cmds)),
   ?FORALL(Seed, pulse:seed(),
   begin
-    case run_on_node(Verbose, ?MODULE, run_commands_on_node, [Cmds, Seed, Verbose]) of
+    %% ok = file:write_file("/tmp/slf-stuff-just-in-case", term_to_binary({Cmds,Seed})),
+    case run_on_node(LocalOrSlave, Verbose, ?MODULE, run_commands_on_node, [LocalOrSlave, Cmds, Seed, Verbose]) of
       {'EXIT', Err} ->
         equals({'EXIT', Err}, ok);
       {H, S, Res, PidRs, Trace, Schedule, Errors} ->
@@ -337,7 +349,7 @@ prop_pulse_test_() ->
   {timeout, 1000000,
    fun() ->
        copy_bitcask_app(),
-       ?assert(eqc:quickcheck(eqc:testing_time(10,?QC_OUT(prop_pulse()))))
+       ?assert(eqc:quickcheck(eqc:testing_time(60,?QC_OUT(prop_pulse()))))
    end}.
 
 %% Needed since rebar fails miserably in setting up the .eunit test directory
@@ -537,7 +549,7 @@ command_data({set, _, {call, _, Fun, _}}, {_S, _V}) ->
 fork_results(Pids) ->
   [ receive
       {Pid, done, R} -> {I, R}
-    after 10*1000 -> {I, timeout}
+    after 99*1000 -> {I, timeout_fork_results}
     end || {I, Pid} <- lists:zip(lists:seq(1, length(Pids)), Pids) ].
 
 %% Implementation of a the commands
