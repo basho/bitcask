@@ -69,8 +69,8 @@ command(S) ->
   frequency(
     [ {2, {call, ?MODULE, fork, [not_commands(?MODULE, #state{ is_writer = false })]}}
       || S#state.is_writer ] ++
-    [ {10, {call, ?MODULE, incr_clock, []}}
-      || S#state.is_writer ] ++
+    [ {30, {call, ?MODULE, incr_clock, []}}
+      || true ] ++
     [ {10, {call, ?MODULE, get, [S#state.handle, key()]}}
       || S#state.handle /= undefined ] ++
     [ {20, {call, ?MODULE, put, [S#state.handle, key(), value()]}}
@@ -91,13 +91,13 @@ command(S) ->
       || S#state.handle /= undefined ] ++
     %% [ {1, {call, ?MODULE, merge, [S#state.handle]}}
     %%   || S#state.is_writer, not S#state.did_fork_merge, S#state.handle /= undefined ] ++
-    [ {1, {call, ?MODULE, fork_merge, [S#state.handle]}}
+    [ {12, {call, ?MODULE, fork_merge, [S#state.handle]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
     [ {0, {call, ?MODULE, join_reader, [elements(S#state.readers)]}}
       || S#state.is_writer, S#state.readers /= []] ++
     [ {1, {call, ?MODULE, kill, [elements([bitcask_merge_worker|S#state.readers])]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
-    [ {2, {call, ?MODULE, needs_merge, [S#state.handle]}}
+    [ {12, {call, ?MODULE, needs_merge, [S#state.handle]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
     []).
 
