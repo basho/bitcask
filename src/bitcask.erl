@@ -1671,6 +1671,33 @@ truncated_datafile_test() ->
     {1, [{_, _, _, 513}]} = bitcask:status(B2),
     ok.
 
+trailing_junk_big_datafile_test() ->
+    Dir = "/tmp/bc.test.trailingdata",
+    NumKeys = 400,
+    os:cmd("rm -rf " ++ Dir),
+    os:cmd("mkdir " ++ Dir),
+    B1 = bitcask:open(Dir, [read_write, {max_file_size, 1024*1024*1024}]),
+    [ok = bitcask:put(B1, <<"k", X:32>>, <<X:1024>>) || X <- lists:seq(1, NumKeys)],
+    ok = bitcask:close(B1),
+
+    [DataFile|_] = filelib:wildcard(Dir ++ "/*.data"),
+    {ok, FH} = file:open(DataFile, [read, write]),
+    {ok, _} = file:position(FH, 40*1024),
+    ok = file:write(FH, <<0:(40*1024*8)>>),
+    ok = file:close(FH),
+
+    %% Merge everything
+    ok = merge(Dir),
+
+    B2 = bitcask:open(Dir, [read_write]),
+    KeyList = bitcask:fold(B2, fun(K, _V, Acc0) -> [K|Acc0] end, []),
+    true = length(KeyList) < NumKeys,
+    ArbKey = 5,                         % get arbitrary key near start
+    {ok, <<ArbKey:1024>>} = bitcask:get(B2, <<"k", ArbKey:32>>),
+    ok = bitcask:close(B2),
+
+    ok.
+
 truncated_merge_test() ->
     Dir = "/tmp/bc.test.truncmerge",
     os:cmd("rm -rf " ++ Dir),
