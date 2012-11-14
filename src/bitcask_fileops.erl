@@ -210,7 +210,7 @@ fold(#filestate { fd=Fd, filename=Filename, tstamp=FTStamp }, Fun, Acc) ->
     case bitcask_nifs:file_read(Fd, ?HEADER_SIZE) of
         {ok, <<_Crc:?CRCSIZEFIELD, _Tstamp:?TSTAMPFIELD, _KeySz:?KEYSIZEFIELD,
               _ValueSz:?VALSIZEFIELD>> = H} ->
-            fold_loop(Fd, Filename, FTStamp, H, 0, Fun, Acc);
+            fold_loop(Fd, Filename, FTStamp, H, 0, Fun, Acc, 0);
         {ok, OtherBytes} ->
             error_logger:error_msg("~s:fold: ~s: expected ~p bytes but got "
                                    "only ~p bytes, skipping\n",
@@ -322,18 +322,23 @@ has_valid_hintfile(State) ->
 %% Internal functions
 %% ===================================================================
 
-fold_loop(Fd, Filename, FTStamp, Header, Offset, Fun, Acc0) ->
+fold_loop(_Fd, Filename, _FTStamp, _Header, Offset, _Fun, Acc, 20) ->
+    error_logger:error_msg("fold_loop: CRC error limit at file ~p offset ~p\n",
+                           [Filename, Offset]),
+    Acc;
+fold_loop(Fd, Filename, FTStamp, Header, Offset, Fun, Acc0, CrcSkipCount) ->
     <<Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
      ValueSz:?VALSIZEFIELD>> = Header,
     <<_:4/binary, HeaderMinusCRC/binary>> = Header,
     TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
     case bitcask_nifs:file_read(Fd, TotalSz) of
         {ok, <<Key:KeySz/bytes, Value:ValueSz/bytes, Rest/binary>>} ->
-            Acc = case erlang:crc32([HeaderMinusCRC, Key, Value]) of
-                      Crc32 ->
+            CrcMatch = erlang:crc32([HeaderMinusCRC, Key, Value]) =:= Crc32,
+            Acc = case CrcMatch of
+                      true ->
                           PosInfo = {Filename, FTStamp, Offset, TotalSz},
                           Fun(Key, Value, Tstamp, PosInfo, Acc0);
-                      _ ->
+                      false ->
                           error_logger:error_msg(
                             "fold_loop: CRC error at file ~s offset ~p, "
                             "skipping ~p bytes\n", [Filename, Offset, TotalSz]),
@@ -341,8 +346,11 @@ fold_loop(Fd, Filename, FTStamp, Header, Offset, Fun, Acc0) ->
                   end,
             case Rest of
                 <<NextHeader:?HEADER_SIZE/bytes>> ->
+                    NewCrcSkipCount = if (not CrcMatch) -> CrcSkipCount + 1;
+                                         true           -> CrcSkipCount
+                                      end,
                     fold_loop(Fd, Filename, FTStamp, NextHeader,
-                              Offset + TotalSz, Fun, Acc);
+                              Offset + TotalSz, Fun, Acc, NewCrcSkipCount);
                 <<>> ->
                     Acc;
                 Tail ->
