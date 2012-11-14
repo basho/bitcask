@@ -558,13 +558,8 @@ merge1(Dirname, Opts, MergableFiles, FilesToMerge) ->
     end,
     
     %% Make sure to close the final output file
-<<<<<<< HEAD
-    ok = bitcask_fileops:sync(State1#mstate.out_file),
-    ok = bitcask_fileops:close(State1#mstate.out_file),
-=======
     ok = bitcask_fileops:sync(State2#mstate.out_file),
-    ok = bitcask_fileops:close(bitcask_fileops:close_for_writing(State2#mstate.out_file)),
->>>>>>> 20ca31e95baa87b457f78fe16a2ce7fd98644ce2
+    ok = bitcask_fileops:close(State2#mstate.out_file),
 
     %% Explicitly release our keydirs instead of waiting for GC
     bitcask_nifs:keydir_release(LiveKeyDir),
