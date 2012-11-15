@@ -332,7 +332,11 @@ keydir_release(_Ref) ->
     end.
 
 
-lock_acquire(_Filename, _IsWriteLock) ->
+lock_acquire(Filename, IsWriteLock) ->
+    bitcask_bump:big(),
+    lock_acquire_int(Filename, IsWriteLock).
+
+lock_acquire_int(_Filename, _IsWriteLock) ->
     case random:uniform(999999999999) of
         666 -> {ok, make_ref()};
         667 -> {error, enoent};
@@ -341,13 +345,21 @@ lock_acquire(_Filename, _IsWriteLock) ->
         _   -> exit("NIF library not loaded")
     end.
 
-lock_release(_Ref) ->
+lock_release(Ref) ->
+    bitcask_bump:big(),
+    lock_release_int(Ref).
+
+lock_release_int(_Ref) ->
     case random:uniform(999999999999) of
         666 -> ok;
         _   -> exit("NIF library not loaded")
     end.
 
-lock_readdata(_Ref) ->
+lock_readdata(Ref) ->
+    bitcask_bump:big(),
+    lock_readdata_int(Ref).
+
+lock_readdata_int(_Ref) ->
     case random:uniform(999999999999) of
         666 -> {fstat_error, random:uniform(4242)};
         667 -> {error, allocation_error};
@@ -356,7 +368,11 @@ lock_readdata(_Ref) ->
         _   -> exit("NIF library not loaded")
     end.
 
-lock_writedata(_Ref, _Data) ->
+lock_writedata(Ref, Data) ->
+    bitcask_bump:big(),
+    lock_writedata_int(Ref, Data).
+
+lock_writedata_int(_Ref, _Data) ->
     case random:uniform(999999999999) of
         666 -> {ftruncate_error, random:uniform(4242)};
         667 -> {pwrite_error, random:uniform(4242)};
@@ -365,28 +381,60 @@ lock_writedata(_Ref, _Data) ->
         _   -> exit("NIF library not loaded")
     end.
 
-file_open(_Filename, _Opts) ->
+file_open(Filename, Opts) ->
+    bitcask_bump:big(),
+    file_open_int(Filename, Opts).
+
+file_open_int(_Filename, _Opts) ->
     erlang:nif_error({error, not_loaded}).
 
-file_close(_Ref) ->
+file_close(Ref) ->
+    bitcask_bump:big(),
+    file_close_int(Ref).
+
+file_close_int(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
-file_sync(_Ref) ->
+file_sync(Ref) ->
+    bitcask_bump:big(),
+    file_sync_int(Ref).
+
+file_sync_int(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
-file_pread(_Ref, _Offset, _Size) ->
+file_pread(Ref, Offset, Size) ->
+    bitcask_bump:big(),
+    file_pread_int(Ref, Offset, Size).
+
+file_pread_int(_Ref, _Offset, _Size) ->
     erlang:nif_error({error, not_loaded}).
 
-file_pwrite(_Ref, _Offset, _Bytes) ->
+file_pwrite(Ref, Offset, Bytes) ->
+    bitcask_bump:big(),
+    file_pwrite_int(Ref, Offset, Bytes).
+
+file_pwrite_int(_Ref, _Offset, _Bytes) ->
     erlang:nif_error({error, not_loaded}).
 
-file_read(_Ref, _Size) ->
+file_read(Ref, Size) ->
+    bitcask_bump:big(),
+    file_read_int(Ref, Size).
+
+file_read_int(_Ref, _Size) ->
     erlang:nif_error({error, not_loaded}).
 
-file_write(_Ref, _Bytes) ->
+file_write(Ref, Bytes) ->
+    bitcask_bump:big(),
+    file_write_int(Ref, Bytes).
+
+file_write_int(_Ref, _Bytes) ->
     erlang:nif_error({error, not_loaded}).
 
-file_seekbof(_Ref) ->
+file_seekbof(Ref) ->
+    bitcask_bump:big(),
+    file_seekbof_int(Ref).
+
+file_seekbof_int(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 
