@@ -245,19 +245,19 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_info", 1, bitcask_nifs_keydir_info},
     {"keydir_release", 1, bitcask_nifs_keydir_release},
 
-    {"lock_acquire",   2, bitcask_nifs_lock_acquire},
-    {"lock_release",   1, bitcask_nifs_lock_release},
-    {"lock_readdata",  1, bitcask_nifs_lock_readdata},
-    {"lock_writedata", 2, bitcask_nifs_lock_writedata},
+    {"lock_acquire_int",   2, bitcask_nifs_lock_acquire},
+    {"lock_release_int",   1, bitcask_nifs_lock_release},
+    {"lock_readdata_int",  1, bitcask_nifs_lock_readdata},
+    {"lock_writedata_int", 2, bitcask_nifs_lock_writedata},
 
-    {"file_open",   2, bitcask_nifs_file_open},
-    {"file_close",  1, bitcask_nifs_file_close},
-    {"file_sync",   1, bitcask_nifs_file_sync},
-    {"file_pread",  3, bitcask_nifs_file_pread},
-    {"file_pwrite", 3, bitcask_nifs_file_pwrite},
-    {"file_read",   2, bitcask_nifs_file_read},
-    {"file_write",  2, bitcask_nifs_file_write},
-    {"file_seekbof", 1, bitcask_nifs_file_seekbof}
+    {"file_open_int",   2, bitcask_nifs_file_open},
+    {"file_close_int",  1, bitcask_nifs_file_close},
+    {"file_sync_int",   1, bitcask_nifs_file_sync},
+    {"file_pread_int",  3, bitcask_nifs_file_pread},
+    {"file_pwrite_int", 3, bitcask_nifs_file_pwrite},
+    {"file_read_int",   2, bitcask_nifs_file_read},
+    {"file_write_int",  2, bitcask_nifs_file_write},
+    {"file_seekbof_int", 1, bitcask_nifs_file_seekbof}
 };
 
 ERL_NIF_TERM bitcask_nifs_keydir_new0(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
