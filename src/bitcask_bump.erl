@@ -24,7 +24,7 @@
 -export([big/0, small/0]).
 
 big() ->
-    erlang:bump_reductions(1500).
+    erlang:bump_reductions(1900).
 
 small() ->
     erlang:bump_reductions(500).
