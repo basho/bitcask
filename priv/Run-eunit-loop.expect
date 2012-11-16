@@ -1,0 +1,116 @@
+#!/usr/bin/expect --
+
+## usage: $0 eunit-command-as-a-single-string
+##
+## e.g.
+##
+## ./priv/Run-eunit-loop.expect "./rebar compile eunit apps=bitcask suite=bitcask_eqc"
+
+## Reminder reminder reminder: never use single quotes
+## Reminder reminder reminder: never use single quotes
+## Reminder reminder reminder: never use single quotes
+
+set default_timeout 120
+set timeout $default_timeout
+match_max -d 200100100
+
+set eunit_command [lindex $argv 0]
+set threshold [lindex $argv 1]
+set sleeptime [lindex $argv 2]
+
+spawn bash
+set main_session $spawn_id
+
+proc msg_to_user {msg} {
+    send_user "\n\n*** [exec date] $msg\r\n"
+}
+
+proc echo_and_say {msg} {
+    msg_to_user $msg
+    spawn say "$msg"
+    expect eof
+    upvar 1 main_session main_session
+    set spawn_id $main_session
+}
+
+proc wait_for_shell_prompt {} {
+    # My bash shell prompt looks like this: "bash-3.2$ "
+    set bash_prompt_string "bash"
+    expect $bash_prompt_string
+}
+
+msg_to_user "Now starting"
+set count 0
+while {1} {
+    send "$eunit_command\r"
+    incr count
+    msg_to_user "Running number $count"
+    while {1} {
+        expect {
+            {Segmentation} {
+                echo_and_say "Segmentation violation"
+                puts "cp /tmp/slf-stuff-just-in-case ./zzz.sigsegv.[exec date +%s]"
+                exec cp /tmp/slf-stuff-just-in-case ./zzz.sigsegv.[exec date +%s]
+                sleep 2
+                wait_for_shell_prompt ; echo_and_say "Got prompt"
+                break
+            }
+            {size_object} {
+                echo_and_say "Bad tag"
+                puts "cp /tmp/slf-stuff-just-in-case ./zzz.bad-tag.[exec date +%s]"
+                exec cp /tmp/slf-stuff-just-in-case ./zzz.bad-tag.[exec date +%s]
+                sleep 2
+                wait_for_shell_prompt ; echo_and_say "Got prompt"
+                break
+            }
+            {deadlock} {
+                echo_and_say "Deadlock"
+                send "\003" ; sleep 1; send "\003" ; sleep 1;
+                wait_for_shell_prompt ; echo_and_say "Got prompt"
+                break
+            }
+            {Invariant broken} {
+                msg_to_user "Invariant broken"
+                #puts "cp /tmp/slf-stuff-just-in-case ./zzz.invariant-broken.[exec date +%s]"
+                #exec cp /tmp/slf-stuff-just-in-case ./zzz.invariant-broken.[exec date +%s]
+                send "\003" ; sleep 1; send "\003" ; sleep 1;
+                wait_for_shell_prompt ; # echo_and_say "Got prompt"
+                break
+            }
+            {Shrinking} {
+                echo_and_say "Bad joss, Taipan.  We are shrinking"
+                set timeout 9999999
+            }
+            {Unknown command for pulse} {
+                set timeout $default_timeout
+                echo_and_say "Drat, unknown command for pulse"
+                puts "cp /tmp/slf-stuff-just-in-case ./zzz.unknown-command.[exec date +%s]"
+                exec cp /tmp/slf-stuff-just-in-case ./zzz.unknown-command.[exec date +%s]
+                send "\003" ; sleep 1; send "\003" ; sleep 1;
+                wait_for_shell_prompt ; echo_and_say "Got prompt"
+                break;
+            }
+            {ERROR:} {
+                send_user "Exiting now"
+                echo_and_say "Run finished, please check output"
+                exit 1
+            }
+            {Test passed} {
+                wait_for_shell_prompt ; echo_and_say "Hooray, test passed"
+                exit 0
+            }
+            timeout {
+                echo_and_say "Bummer, there was a timeout"
+                puts "cp /tmp/slf-stuff-just-in-case ./zzz.timeout.[exec date +%s]"
+                exec cp /tmp/slf-stuff-just-in-case ./zzz.timeout.[exec date +%s]
+                # set foo 15 ; sleep 2 ; echo_and_say "I am going to sleep for $foo seconds to allow a control-z to suspend and debug" ; sleep $foo
+                send "\003\r" ; sleep 1; send "\003\r" ; sleep 1;
+                wait_for_shell_prompt ; echo_and_say "Got prompt"
+                break
+            }
+            {.} {
+                send_user "~"
+            }
+        }
+    }
+}

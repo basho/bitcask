@@ -39,7 +39,9 @@
 
 -export([get_opt/2,
          get_filestate/2]).
+-export([has_setuid_bit/1]).                    % For EUnit tests
 
+-include_lib("kernel/include/file.hrl").
 -include("bitcask.hrl").
 
 
@@ -53,6 +55,11 @@
 -include_lib("kernel/include/file.hrl").
 -endif.
 
+%% In the real world, 1 or 2 retries is usually sufficient.  In the
+%% world of QuickCheck, however, QC can create some diabolical
+%% races, so use a diabolical number.
+-define(DIABOLIC_BIG_INT, 100).
+
 %% @type bc_state().
 -record(bc_state, {dirname,
                    write_file,     % File for writing
@@ -64,6 +71,7 @@
 
 -record(mstate, { dirname,
                   merge_lock,
+                  merge_start,
                   max_file_size,
                   input_files,
                   out_file,
@@ -99,7 +107,12 @@ open(Dirname, Opts) ->
     %% Do this first to avoid unnecessary processing of files for reading.
     WritingFile = case proplists:get_bool(read_write, Opts) of
         true ->
-          bitcask_lockops:delete_stale_lock(write, Dirname),
+          %% If the lock file is not stale, we'll continue initializing
+          %% and loading anyway: if later someone tries to write
+          %% something, that someone will get a write_locked exception.
+          _ = bitcask_lockops:delete_stale_lock(write, Dirname),
+          %% This purge will acquire the write lock prior to doing anything.
+          purge_setuid_files(Dirname),
           fresh;
         false -> undefined
     end,
@@ -138,13 +151,6 @@ close(Ref) ->
     State = get_state(Ref),
     erlang:erase(Ref),
 
-    %% Manually release the keydir. If, for some reason, this failed GC would
-    %% still get the job done.
-    bitcask_nifs:keydir_release(State#bc_state.keydir),
-
-    %% Clean up all the reading files
-    [ok = bitcask_fileops:close(F) || F <- State#bc_state.read_files],
-
     %% Cleanup the write file and associated lock
     case State#bc_state.write_file of
         undefined ->
@@ -154,7 +160,16 @@ close(Ref) ->
         WriteFile ->
             bitcask_fileops:close_for_writing(WriteFile),
             ok = bitcask_lockops:release(State#bc_state.write_lock)
-    end.
+    end,
+
+    %% Manually release the keydir. If, for some reason, this failed GC would
+    %% still get the job done.
+    bitcask_nifs:keydir_release(State#bc_state.keydir),
+
+    %% Clean up all the reading files
+    [ok = bitcask_fileops:close(F) || F <- State#bc_state.read_files],
+
+    ok.
 
 %% @doc Close the currently active writing file; mostly for testing purposes
 close_write_file(Ref) ->
@@ -231,7 +246,7 @@ put(Ref, Key, Value) ->
             ok
     end,
 
-    {Ret, State1} = do_put(Key, Value, State, 2, undefined),
+    {Ret, State1} = do_put(Key, Value, State, ?DIABOLIC_BIG_INT, undefined),
     put_state(Ref, State1),
     Ret.
 
@@ -480,11 +495,17 @@ merge1(Dirname, Opts, FilesToMerge) ->
             %% Simplest case; a key dir is already available and
             %% loaded. Go ahead and open just the files we wish to
             %% merge
-            InFiles = [begin 
-                           {ok, Fstate} = bitcask_fileops:open_file(F),
-                           Fstate
-                       end
-                       || F <- FilesToMerge];
+            InFiles0 = [begin 
+                            %% Handle open errors gracefully.  QuickCheck
+                            %% plus PULSE showed that there are races where
+                            %% the open below can fail.
+                            case bitcask_fileops:open_file(F) of
+                                {ok, Fstate}    -> Fstate;
+                                {error, _}      -> skip
+                            end
+                        end
+                        || F <- FilesToMerge],
+            InFiles1 = [F || F <- InFiles0, F /= skip];
 
         {not_ready, LiveKeyDir} ->
             %% Live keydir is newly created. We need to go ahead and
@@ -492,7 +513,7 @@ merge1(Dirname, Opts, FilesToMerge) ->
             %% reader/writer comes along in the same VM. Note that we
             %% won't necessarily merge all these files.
             AllFiles = scan_key_files(readable_files(Dirname), LiveKeyDir, [],
-                                      false),
+                                      false, true),
 
             %% Partition all files to files we'll merge and files we
             %% won't (so that we can close those extra files once
@@ -500,7 +521,7 @@ merge1(Dirname, Opts, FilesToMerge) ->
             P = fun(F) ->
                         lists:member(bitcask_fileops:filename(F), FilesToMerge)
                 end,
-            {InFiles, UnusedFiles} = lists:partition(P, AllFiles),
+            {InFiles1, UnusedFiles} = lists:partition(P, AllFiles),
 
             %% Close the unused files
             [bitcask_fileops:close(U) || U <- UnusedFiles],
@@ -511,10 +532,31 @@ merge1(Dirname, Opts, FilesToMerge) ->
             %% Someone else is loading the keydir. We'll bail here and
             %% try again later.
 
+            ok = bitcask_lockops:release(Lock),
             % Make erlc happy w/ non-local exit
-            LiveKeyDir = undefined, InFiles = [],
+            LiveKeyDir = undefined, InFiles1 = [],
             throw({error, not_ready})
     end,
+
+    MergeStart = bitcask_time:tstamp(),
+    LiveRef = make_ref(),
+    put_state(LiveRef, #bc_state{dirname = Dirname, keydir = LiveKeyDir}),
+    {_KeyCount, Summary} = summary_info(LiveRef),
+    erlang:erase(LiveRef),
+    TooNew = [F#file_status.filename ||
+                 F <- Summary,
+                 F#file_status.newest_tstamp >= MergeStart],
+    InFiles = lists:reverse(
+                lists:foldl(fun(F, Acc) ->
+                                    case lists:member(F#filestate.filename,
+                                                      TooNew) of
+                                        false ->
+                                            [F|Acc];
+                                        true ->
+                                            bitcask_fileops:close(F),
+                                            Acc
+                                    end
+                            end, [], InFiles1)),
 
     %% Setup our first output merge file and update the merge lock accordingly
     {ok, Outfile} = bitcask_fileops:create_file(Dirname, Opts),
@@ -545,15 +587,18 @@ merge1(Dirname, Opts, FilesToMerge) ->
     ok = bitcask_fileops:sync(State1#mstate.out_file),
     ok = bitcask_fileops:close(State1#mstate.out_file),
 
+    %% Close the original input files, schedule them for deletion,
+    %% close keydirs, and release our lock
+    [bitcask_fileops:close(F) || F <- State#mstate.input_files],
+    {_, _, _, {IterGeneration, _, _}} = bitcask_nifs:keydir_info(LiveKeyDir),
+    FileNames = [F#filestate.filename || F <- State#mstate.input_files],
+    [catch set_setuid_bit(F) || F <- FileNames],
+    bitcask_merge_delete:defer_delete(Dirname, IterGeneration, FileNames),
+
     %% Explicitly release our keydirs instead of waiting for GC
     bitcask_nifs:keydir_release(LiveKeyDir),
     bitcask_nifs:keydir_release(DelKeyDir),    
 
-    %% Cleanup the original input files and release our lock
-    [begin
-         bitcask_fileops:delete(F),
-         bitcask_fileops:close(F)
-     end || F <- State#mstate.input_files],
     ok = bitcask_lockops:release(Lock).
 
 %% @doc Predicate which determines whether or not a file should be considered for a merge. 
@@ -714,10 +759,10 @@ summary_info(Ref) ->
     %% the file stats so we can determine how much fragmentation
     %% is present
     %%
-    %% Fstat has form: [{FileId, LiveCount, TotalCount, LiveBytes, TotalBytes, OldestTstamp}]
+    %% Fstat has form: [{FileId, LiveCount, TotalCount, LiveBytes, TotalBytes, OldestTstamp, NewestTstamp}]
     %% and is only an estimate/snapshot.
-    {KeyCount, _KeyBytes, Fstats} = bitcask_nifs:keydir_info(
-                                      State#bc_state.keydir),
+    {KeyCount, _KeyBytes, Fstats, _IterStatus} =
+        bitcask_nifs:keydir_info(State#bc_state.keydir),
 
     %% We want to ignore the file currently being written when
     %% considering status!
@@ -745,12 +790,13 @@ summary_info(Ref) ->
 %% Internal functions
 %% ===================================================================
 
-summarize(Dirname, {FileId, LiveCount, TotalCount, LiveBytes, TotalBytes, OldestTstamp}) ->
+summarize(Dirname, {FileId, LiveCount, TotalCount, LiveBytes, TotalBytes, OldestTstamp, NewestTstamp}) ->
     #file_status { filename = bitcask_fileops:mk_filename(Dirname, FileId),
                    fragmented = trunc((1 - LiveCount/TotalCount) * 100),
                    dead_bytes = TotalBytes - LiveBytes,
                    total_bytes = TotalBytes,
-                   oldest_tstamp = OldestTstamp }.
+                   oldest_tstamp = OldestTstamp,
+                   newest_tstamp = NewestTstamp}.
 
 expiry_time(Opts) ->
     ExpirySecs = get_opt(expiry_secs, Opts),
@@ -803,25 +849,30 @@ put_state(Ref, State) ->
 reverse_sort(L) ->
     lists:reverse(lists:sort(L)).
 
-scan_key_files([], _KeyDir, Acc, _CloseFile) ->
+scan_key_files([], _KeyDir, Acc, _CloseFile, _EnoentOK) ->
     Acc;
-scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile) ->
-    {ok, File} = bitcask_fileops:open_file(Filename),
-    F = fun(K, Tstamp, {Offset, TotalSz}, _) ->
-                bitcask_nifs:keydir_put(KeyDir,
-                                        K,
-                                        bitcask_fileops:file_tstamp(File),
-                                        TotalSz,
-                                        Offset,
-                                        Tstamp)
-        end,
-    bitcask_fileops:fold_keys(File, F, undefined, recovery),
-    if CloseFile == true ->
-            bitcask_fileops:close(File);
-       true ->
-            ok
-    end,
-    scan_key_files(Rest, KeyDir, [File | Acc], CloseFile).
+scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile, EnoentOK) ->
+    %% Restrictive pattern matching below is intentional
+    case bitcask_fileops:open_file(Filename) of
+        {ok, File} ->
+            F = fun(K, Tstamp, {Offset, TotalSz}, _) ->
+                        bitcask_nifs:keydir_put(KeyDir,
+                                                K,
+                                                bitcask_fileops:file_tstamp(File),
+                                                TotalSz,
+                                                Offset,
+                                                Tstamp)
+                end,
+            bitcask_fileops:fold_keys(File, F, undefined, recovery),
+            if CloseFile == true ->
+                    bitcask_fileops:close(File);
+               true ->
+                    ok
+            end,
+            scan_key_files(Rest, KeyDir, [File | Acc], CloseFile, EnoentOK);
+        {error, enoent} when EnoentOK ->
+            scan_key_files(Rest, KeyDir, Acc, CloseFile, EnoentOK)
+    end.
 
 %%
 %% Initialize a keydir for a given directory.
@@ -840,8 +891,22 @@ init_keydir(Dirname, WaitTime) ->
             %% We've just created a new named keydir, so we need to load up all
             %% the data from disk. Build a list of all the bitcask data files
             %% and sort it in descending order (newest->oldest).
-            SortedFiles = readable_files(Dirname),
-            _ = scan_key_files(SortedFiles, KeyDir, [], true),
+            %%
+            %% We need the SortedFiles list to be stable: we might be
+            %% in a situation:
+            %% 1. Someone else starts a merge on this cask.
+            %% 2. Our caller opens the cask and gets to here.
+            %% 3. The merge races with readable_files(): creating
+            %%    new data files and deleting old ones.
+            %% 4. SortedFiles doesn't contain the list of all of the
+            %%    files that we need.
+            Lock = poll_for_merge_lock(Dirname),
+            try
+                poll_deferred_delete_queue_empty(),
+                init_keydir_scan_key_files(Dirname, KeyDir)
+            after
+                ok = bitcask_lockops:release(Lock)
+            end,
 
             %% Now that we loaded all the data, mark the keydir as ready
             %% so other callers can use it
@@ -858,6 +923,22 @@ init_keydir(Dirname, WaitTime) ->
             end
     end.
 
+init_keydir_scan_key_files(Dirname, KeyDir) ->
+    init_keydir_scan_key_files(Dirname, KeyDir, ?DIABOLIC_BIG_INT).
+
+init_keydir_scan_key_files(_Dirname, _Keydir, 0) ->
+    %% If someone launches enough parallel merge operations to
+    %% interfere with our attempts to scan this keydir for this many
+    %% times, then we are just plain unlucky.  Or QuickCheck smites us
+    %% from lofty Mt. Stochastic.
+    {error, {init_keydir_scan_key_files, too_many_iterations}};
+init_keydir_scan_key_files(Dirname, KeyDir, Count) ->
+    try
+        SortedFiles = readable_files(Dirname),
+        _ = scan_key_files(SortedFiles, KeyDir, [], true, false)
+    catch _:_ ->
+            init_keydir_scan_key_files(Dirname, KeyDir, Count - 1)
+    end.
 
 get_filestate(FileId,
               State=#bc_state{ dirname = Dirname, read_files = ReadFiles }) ->
@@ -877,13 +958,19 @@ get_filestate(FileId,
     end.
 
 
-list_data_files(Dirname, WritingFile, Mergingfile) ->
+list_data_files(Dirname, WritingFile, MergingFile) ->
     %% Get list of {tstamp, filename} for all files in the directory then
     %% reverse sort that list and extract the fully-qualified filename.
-    Files = bitcask_fileops:data_file_tstamps(Dirname),
-    [F || {_Tstamp, F} <- reverse_sort(Files),
-          F /= WritingFile,
-          F /= Mergingfile].
+    Files1 = bitcask_fileops:data_file_tstamps(Dirname),
+    Files2 = bitcask_fileops:data_file_tstamps(Dirname),
+    if Files1 == Files2 ->
+            %% No race, Files1 is a stable list.
+            [F || {_Tstamp, F} <- reverse_sort(Files1),
+                  F /= WritingFile,
+                  F /= MergingFile];
+       true ->
+            list_data_files(Dirname, WritingFile, MergingFile)
+    end.
 
 merge_files(#mstate { input_files = [] } = State) ->
     State;
@@ -891,7 +978,11 @@ merge_files(#mstate {  dirname = Dirname,
                        input_files = [File | Rest]} = State) ->
     FileId = bitcask_fileops:file_tstamp(File),
     F = fun(K, V, Tstamp, Pos, State0) ->
-                merge_single_entry(K, V, Tstamp, FileId, Pos, State0)
+                if Tstamp < State0#mstate.merge_start ->
+                        merge_single_entry(K, V, Tstamp, FileId, Pos, State0);
+                   true ->
+                        State0
+                end
         end,
     State2 = try bitcask_fileops:fold(File, F, State) of
                  State1 ->
@@ -911,6 +1002,8 @@ merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
     case out_of_date(K, Tstamp, FileId, Pos, State#mstate.expiry_time, false,
                      [State#mstate.live_keydir, State#mstate.del_keydir]) of
         true ->
+            %% NOTE: This remove is conditional on an exact match on
+            %%       Tstamp + FileId + Offset
             bitcask_nifs:keydir_remove(State#mstate.live_keydir, K,
                                        Tstamp, FileId, Offset),
             State;
@@ -929,18 +1022,20 @@ merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
                                                Tstamp, FileId, Offset),
 
                     case State#mstate.partial of
-                        true -> inner_merge_write(K, V, Tstamp, State);
+                        true -> inner_merge_write(K, V, Tstamp,
+                                                  FileId, Offset, State);
                         false -> State
                     end;
                 false ->
                     ok = bitcask_nifs:keydir_remove(State#mstate.del_keydir, K),
-                    inner_merge_write(K, V, Tstamp, State)
+                    inner_merge_write(K, V, Tstamp, FileId, Offset, State)
             end
     end.
 
--spec inner_merge_write(binary(), binary(), integer(), #mstate{}) -> #mstate{}.
+-spec inner_merge_write(binary(), binary(), integer(), integer(), integer(),
+                        #mstate{}) -> #mstate{}.
 
-inner_merge_write(K, V, Tstamp, State) ->
+inner_merge_write(K, V, Tstamp, OldFileId, OldOffset, State) ->
     %% write a single item while inside the merge process
 
     %% See if it's time to rotate to the next file
@@ -973,10 +1068,10 @@ inner_merge_write(K, V, Tstamp, State) ->
     %% file. It's possible that this is a noop, as
     %% someone else may have written a newer value
     %% whilst we were processing.
-    bitcask_nifs:keydir_put(
-      State#mstate.live_keydir, K,
-      bitcask_fileops:file_tstamp(Outfile),
-      Size, Offset, Tstamp),
+    _ = bitcask_nifs:keydir_put(
+          State#mstate.live_keydir, K,
+          bitcask_fileops:file_tstamp(Outfile),
+          Size, Offset, Tstamp, OldFileId, OldOffset),
     
     State1#mstate { out_file = Outfile }.
 
@@ -1051,7 +1146,11 @@ readable_files(Dirname) ->
     %% being written to. Generate our list excepting those.
     WritingFile = bitcask_lockops:read_activefile(write, Dirname),
     MergingFile = bitcask_lockops:read_activefile(merge, Dirname),
-    list_data_files(Dirname, WritingFile, MergingFile).
+
+    %% Filter out files with setuid bit set: they've been marked for
+    %% deletion by an earlier *successful* merge.
+    [F || F <- list_data_files(Dirname, WritingFile, MergingFile),
+          not has_setuid_bit(F)].
 
 %% Internal put - have validated that the file is opened for write
 %% and looked up the state at this point
@@ -1093,7 +1192,7 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State, Retries, _LastErr)
                                        Key, Value, Tstamp),
     case bitcask_nifs:keydir_put(State2#bc_state.keydir, Key,
                                  bitcask_fileops:file_tstamp(WriteFile2),
-                                 Size, Offset, Tstamp) of
+                                 Size, Offset, Tstamp, true) of
         ok ->
             {ok, State2#bc_state { write_file = WriteFile2 }};
         already_exists ->
@@ -1105,7 +1204,7 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State, Retries, _LastErr)
             %% the key there.  Limit the number of recursions in case
             %% there is a different issue with the keydir.
             State3 = wrap_write_file(State2#bc_state { write_file = WriteFile2 }),
-            do_put(Key, Value, State3, Retries - 1, already_exist)
+            do_put(Key, Value, State3, Retries - 1, already_exists)
     end.
 
 
@@ -1121,6 +1220,63 @@ wrap_write_file(#bc_state{write_file = WriteFile} = State) ->
                     read_files = [LastWriteFile | 
                                   State#bc_state.read_files]}.
 
+set_setuid_bit(File) ->
+    %% We're intentionally opinionated about pattern matching here.
+    {ok, FI} = file:read_file_info(File),
+    NewFI = FI#file_info{mode = FI#file_info.mode bor 8#4000},
+    ok = file:write_file_info(File, NewFI).
+
+has_setuid_bit(File) ->
+    try
+        {ok, FI} = file:read_file_info(File),
+        FI#file_info.mode band 8#4000 == 8#4000
+    catch _:_ ->
+            false
+    end.
+
+purge_setuid_files(Dirname) ->
+    case bitcask_lockops:acquire(write, Dirname) of
+        {ok, WriteLock} ->
+            try
+                StaleFs = [F || F <- list_data_files(Dirname,
+                                                     undefined, undefined),
+                                has_setuid_bit(F)],
+                [bitcask_fileops:delete(#filestate{filename = F}) ||
+                    F <- StaleFs],
+                if StaleFs == [] ->
+                        ok;
+                   true ->
+                        error_logger:info_msg("Deleted ~p stale merge input "
+                                              "files from ~p\n",
+                                              [length(StaleFs), Dirname])
+                end
+            catch
+                X:Y ->
+                    error_logger:error_msg("While deleting stale merge input "
+                                           "files from ~p: ~p ~p @ ~p\n",
+                                           [X, Y, erlang:get_stacktrace()])
+            after
+                bitcask_lockops:release(WriteLock)
+            end;
+        Else ->
+            error_logger:info_msg("Lock failed trying deleting stale merge "
+                                  "input files from ~p: ~p\n", [Dirname, Else])
+    end.
+
+poll_for_merge_lock(Dirname) ->
+    case bitcask_lockops:acquire(merge, Dirname) of
+        {ok, Lock} ->
+            Lock;
+        _ ->
+            timer:sleep(100),
+            poll_for_merge_lock(Dirname)
+    end.
+
+poll_deferred_delete_queue_empty() ->
+    case bitcask_merge_delete:queue_length() of
+        0 -> ok;
+        _ -> receive after 1100 -> poll_deferred_delete_queue_empty() end
+    end.
 
 %% ===================================================================
 %% EUnit tests
@@ -1344,6 +1500,7 @@ merge_test() ->
     3 = length(readable_files("/tmp/bc.test.merge")),
 
     %% Merge everything
+    timer:sleep(1100),
     ok = merge("/tmp/bc.test.merge"),
 
     %% Verify we've now only got one file
@@ -1426,9 +1583,11 @@ expire_merge_test() ->
     timer:sleep(2000),
 
     %% Merge everything
+    timer:sleep(1100),
     ok = merge("/tmp/bc.test.mergeexpire",[{expiry_secs,1}]),
 
     %% Verify we've now only got one file
+    ok = bitcask_merge_delete:testonly__delete_trigger(),
     1 = length(readable_files("/tmp/bc.test.mergeexpire")),
 
     %% Make sure all the data is present
@@ -1491,6 +1650,7 @@ delete_merge_test() ->
     A1 = bitcask:list_keys(B1),
     close(B1),
 
+    timer:sleep(1100),
     ok = merge("/tmp/bc.test.delmerge",[]),
 
     %% Verify we've now only got one item left
@@ -1517,6 +1677,7 @@ delete_partial_merge_test() ->
 
     %% selective merge, hit all of the files with deletes but not
     %%  all of the ones with deleted data
+    timer:sleep(1100),
     ok = merge("/tmp/bc.test.pardel",[],lists:reverse(lists:nthtail(2,
                                            lists:reverse(readable_files(
                                                "/tmp/bc.test.pardel"))))),
@@ -1596,7 +1757,7 @@ invalid_data_size_test() ->
 
 testhelper_keydir_count(B) ->
     KD = (get_state(B))#bc_state.keydir,
-    {KeyCount,_,_} = bitcask_nifs:keydir_info(KD),
+    {KeyCount,_,_,_} = bitcask_nifs:keydir_info(KD),
     KeyCount.
     
 expire_keydir_test() ->
@@ -1614,6 +1775,7 @@ expire_keydir_test() ->
     timer:sleep(2000),
 
     %% Merge everything
+    timer:sleep(1100),
     ok = merge("/tmp/bc.test.mergeexpirekeydir",[{expiry_secs,1}]),
 
     %% should be no keys in the keydir now
@@ -1730,9 +1892,11 @@ truncated_merge_test() ->
     ok = truncate_file(Hint4, 5),
     ok = corrupt_file(Data5, 15, <<"!">>),
     %% Merge everything
+    timer:sleep(1100),
     ok = merge(Dir),
 
     %% Verify we've now only got one file
+    ok = bitcask_merge_delete:testonly__delete_trigger(),
     1 = length(readable_files(Dir)),
 
     %% Make sure all corrupted data is missing, all good data is present
@@ -1772,9 +1936,9 @@ leak_t0() ->
     Dir = "/tmp/goofus",
     os:cmd("rm -rf " ++ Dir),
 
-    Ref0 = bitcask:open(Dir),
+    _Ref0 = bitcask:open(Dir),
     os:cmd("cd " ++ Dir ++ "; sh -c 'for i in `seq 100 1000`; do touch $i.bitcask.data $i.bitcask.hint; done'"),
-    Ref1 = bitcask:open(Dir),
+    _Ref1 = bitcask:open(Dir),
 
     Cmd = lists:flatten(io_lib:format("lsof -nP -p ~p | wc -l", [os:getpid()])),
     io:format("Res = ~s\n", [os:cmd(Cmd)]).
@@ -1798,6 +1962,7 @@ leak_t1() ->
     [bitcask:delete(Ref, <<X:32>>) || X <- lists:seq(1, DelKeys)],
     io:format("After deleting ~p keys, lsof says: ~s", [DelKeys, Used()]),
 
+    timer:sleep(1100),
     bitcask:merge(Dir),
     io:format("After merging, lsof says: ~s", [Used()]),
 

@@ -23,6 +23,9 @@
 
 -behaviour(supervisor).
 
+-ifdef(PULSE).
+-compile({parse_transform, pulse_instrument}).
+-endif.
 %% API
 -export([start_link/0]).
 
@@ -44,4 +47,5 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-    {ok, {{one_for_one, 5, 10}, [?CHILD(bitcask_merge_worker, worker)]}}.
+    {ok, {{one_for_one, 5, 10}, [?CHILD(bitcask_merge_worker, worker),
+                                 ?CHILD(bitcask_merge_delete, worker)]}}.
