@@ -1,6 +1,10 @@
 #!/usr/bin/expect --
 
 ## usage: $0 eunit-command-as-a-single-string
+##
+## e.g.
+##
+## ./priv/Run-eunit-loop.expect "./rebar compile eunit apps=bitcask suite=bitcask_eqc"
 
 ## Reminder reminder reminder: never use single quotes
 ## Reminder reminder reminder: never use single quotes
