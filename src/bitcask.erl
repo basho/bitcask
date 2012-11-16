@@ -738,7 +738,7 @@ expired_threshold(Cutoff) ->
 -spec is_empty_estimate(reference()) -> boolean().
 is_empty_estimate(Ref) ->
     State = get_state(Ref),
-    {KeyCount, _, _} = bitcask_nifs:keydir_info(State#bc_state.keydir),
+    {KeyCount, _, _, _} = bitcask_nifs:keydir_info(State#bc_state.keydir),
     KeyCount == 0.
 
 -spec status(reference()) -> {integer(), [{string(), integer(), integer(), integer()}]}.

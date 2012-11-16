@@ -236,7 +236,7 @@ fold_keys(fresh, _Fun, Acc) -> Acc;
 fold_keys(State, Fun, Acc) ->
     fold_keys(State, Fun, Acc, default).
 
--spec fold_keys(fresh | #filestate{}, fun((binary(), integer(), {integer(), integer()}, any()) -> any()), any(), datafile | hintfile | default) ->
+-spec fold_keys(fresh | #filestate{}, fun((binary(), integer(), {integer(), integer()}, any()) -> any()), any(), datafile | hintfile | default | recovery) ->
         any() | {error, any()}.
 fold_keys(#filestate { fd = Fd } = State, Fun, Acc, Mode) ->
     case Mode of
