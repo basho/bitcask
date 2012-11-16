@@ -105,12 +105,12 @@ update_fstats(put, K, {ok, OldV}, NewV, #m_fstats{live_bytes = LB,
 
 check_fstats(Ref, Expect) ->
     Aggregate = fun({_FileId, FileLiveCount, FileTotalCount, FileLiveBytes, FileTotalBytes,
-                     _FileOldestTstamp},
+                     _FileOldestTstamp, _FileNewestTstamp},
                     {LiveCount0, TotalCount0, LiveBytes0, TotalBytes0}) ->
                         {LiveCount0 + FileLiveCount, TotalCount0 + FileTotalCount, 
                          LiveBytes0 + FileLiveBytes, TotalBytes0 + FileTotalBytes}
                 end,
-    {KeyCount, KeyBytes, Fstats} = bitcask_nifs:keydir_info(get_keydir(Ref)),
+    {KeyCount, KeyBytes, Fstats, _} = bitcask_nifs:keydir_info(get_keydir(Ref)),
     {LiveCount, TotalCount, LiveBytes, TotalBytes} =
         lists:foldl(Aggregate, {0, 0, 0, 0}, Fstats),
     ?assert(Expect#m_fstats.live_keys >= 0),

@@ -25,6 +25,8 @@
          keydir_new/0, keydir_new/1,
          keydir_mark_ready/1,
          keydir_put/6,
+         keydir_put/7,
+         keydir_put/8,
          keydir_get/2,
          keydir_remove/2, keydir_remove/5,
          keydir_copy/1,
@@ -55,6 +57,8 @@
 
 -ifdef(PULSE).
 -compile({parse_transform, pulse_instrument}).
+-export([set_pulse_pid/1]).
+-compile({pulse_skip, [{init,0}]}).
 -endif.
 
 -ifdef(TEST).
@@ -77,8 +81,14 @@
 -spec keydir_put(reference(), binary(), integer(), integer(),
                  integer(), integer()) ->
         ok | already_exists.
+-spec keydir_put(reference(), binary(), integer(), integer(),
+                 integer(), integer(), boolean()) ->
+        ok | already_exists.
+-spec keydir_put(reference(), binary(), integer(), integer(),
+                 integer(), integer(), integer(), integer()) ->
+        ok | already_exists.
 -spec keydir_put_int(reference(), binary(), integer(), integer(),
-                     binary(), integer()) -> 
+                     binary(), integer(), boolean(), integer(), binary()) ->
         ok | already_exists.
 -spec keydir_get(reference(), binary()) ->
         not_found | #bitcask_entry{}.
@@ -102,7 +112,7 @@
         any() | {error, any()}.
 -spec keydir_info(reference()) ->
         {integer(), integer(),
-         [{integer(), integer(), integer(), integer(), integer()}]}.
+         [{integer(), integer(), integer(), integer(), integer()}], integer(), boolean()}.
 -spec keydir_release(reference()) ->
         ok.
 -spec lock_acquire(string(), integer()) ->
@@ -131,6 +141,14 @@ init() ->
 			SoName = filename:join(Dir, "bitcask")
     end,
     erlang:load_nif(SoName, 0).
+
+-ifdef(PULSE).
+set_pulse_pid(_Pid) ->
+    case random:uniform(999999999999) of
+        666 -> ok;
+        667 -> exit("NIF library not loaded")
+    end.
+-endif.
 
 %% ===================================================================
 %% Internal functions
@@ -164,10 +182,25 @@ keydir_mark_ready(_Ref) ->
     end.
 
 keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp) ->
-    keydir_put_int(Ref, Key, FileId, TotalSz, <<Offset:64/unsigned-native>>,
-                       Tstamp).
+    keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, false).
 
-keydir_put_int(_Ref, _Key, _FileId, _TotalSz, _Offset, _Tstamp) ->
+keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NewestPutB) ->
+    keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NewestPutB, 0, 0).
+
+keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, OldFileId, OldOffset) ->
+    keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, false,
+               OldFileId, OldOffset).
+
+keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NewestPutB,
+           OldFileId, OldOffset) ->
+    keydir_put_int(Ref, Key, FileId, TotalSz, <<Offset:64/unsigned-native>>,
+                   Tstamp, if not NewestPutB -> 0;
+                              true           -> 1
+                           end,
+                   OldFileId, <<OldOffset:64/unsigned-native>>).
+
+keydir_put_int(_Ref, _Key, _FileId, _TotalSz, _Offset, _Tstamp, _NewestPutI,
+               _OldFileId, _OldOffset) ->
     case random:uniform(999999999999) of
         666 -> ok;
         667 -> already_exists;
@@ -299,7 +332,11 @@ keydir_release(_Ref) ->
     end.
 
 
-lock_acquire(_Filename, _IsWriteLock) ->
+lock_acquire(Filename, IsWriteLock) ->
+    bitcask_bump:big(),
+    lock_acquire_int(Filename, IsWriteLock).
+
+lock_acquire_int(_Filename, _IsWriteLock) ->
     case random:uniform(999999999999) of
         666 -> {ok, make_ref()};
         667 -> {error, enoent};
@@ -308,13 +345,21 @@ lock_acquire(_Filename, _IsWriteLock) ->
         _   -> exit("NIF library not loaded")
     end.
 
-lock_release(_Ref) ->
+lock_release(Ref) ->
+    bitcask_bump:big(),
+    lock_release_int(Ref).
+
+lock_release_int(_Ref) ->
     case random:uniform(999999999999) of
         666 -> ok;
         _   -> exit("NIF library not loaded")
     end.
 
-lock_readdata(_Ref) ->
+lock_readdata(Ref) ->
+    bitcask_bump:big(),
+    lock_readdata_int(Ref).
+
+lock_readdata_int(_Ref) ->
     case random:uniform(999999999999) of
         666 -> {fstat_error, random:uniform(4242)};
         667 -> {error, allocation_error};
@@ -323,7 +368,11 @@ lock_readdata(_Ref) ->
         _   -> exit("NIF library not loaded")
     end.
 
-lock_writedata(_Ref, _Data) ->
+lock_writedata(Ref, Data) ->
+    bitcask_bump:big(),
+    lock_writedata_int(Ref, Data).
+
+lock_writedata_int(_Ref, _Data) ->
     case random:uniform(999999999999) of
         666 -> {ftruncate_error, random:uniform(4242)};
         667 -> {pwrite_error, random:uniform(4242)};
@@ -332,28 +381,60 @@ lock_writedata(_Ref, _Data) ->
         _   -> exit("NIF library not loaded")
     end.
 
-file_open(_Filename, _Opts) ->
+file_open(Filename, Opts) ->
+    bitcask_bump:big(),
+    file_open_int(Filename, Opts).
+
+file_open_int(_Filename, _Opts) ->
     erlang:nif_error({error, not_loaded}).
 
-file_close(_Ref) ->
+file_close(Ref) ->
+    bitcask_bump:big(),
+    file_close_int(Ref).
+
+file_close_int(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
-file_sync(_Ref) ->
+file_sync(Ref) ->
+    bitcask_bump:big(),
+    file_sync_int(Ref).
+
+file_sync_int(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
-file_pread(_Ref, _Offset, _Size) ->
+file_pread(Ref, Offset, Size) ->
+    bitcask_bump:big(),
+    file_pread_int(Ref, Offset, Size).
+
+file_pread_int(_Ref, _Offset, _Size) ->
     erlang:nif_error({error, not_loaded}).
 
-file_pwrite(_Ref, _Offset, _Bytes) ->
+file_pwrite(Ref, Offset, Bytes) ->
+    bitcask_bump:big(),
+    file_pwrite_int(Ref, Offset, Bytes).
+
+file_pwrite_int(_Ref, _Offset, _Bytes) ->
     erlang:nif_error({error, not_loaded}).
 
-file_read(_Ref, _Size) ->
+file_read(Ref, Size) ->
+    bitcask_bump:big(),
+    file_read_int(Ref, Size).
+
+file_read_int(_Ref, _Size) ->
     erlang:nif_error({error, not_loaded}).
 
-file_write(_Ref, _Bytes) ->
+file_write(Ref, Bytes) ->
+    bitcask_bump:big(),
+    file_write_int(Ref, Bytes).
+
+file_write_int(_Ref, _Bytes) ->
     erlang:nif_error({error, not_loaded}).
 
-file_seekbof(_Ref) ->
+file_seekbof(Ref) ->
+    bitcask_bump:big(),
+    file_seekbof_int(Ref).
+
+file_seekbof_int(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 
@@ -391,7 +472,8 @@ keydir_basic_test() ->
     {ok, Ref} = keydir_new(),
     ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
 
-    {1, 3, [{0, 1, 1, 1234, 1234, 1}]} = keydir_info(Ref),
+    {1, 3, [{0, 1, 1, 1234, 1234, 1, 1}],
+     {<<0:64/unsigned-native>>, 0, false}} = keydir_info(Ref),
 
     E = keydir_get(Ref, <<"abc">>),
     0 = E#bitcask_entry.file_id,
@@ -418,7 +500,7 @@ keydir_itr_test_base(Ref) ->
     ok = keydir_put(Ref, <<"def">>, 0, 4567, 1234, 2),
     ok = keydir_put(Ref, <<"hij">>, 1, 7890, 0, 3),
 
-    {3, 9, _} = keydir_info(Ref),
+    {3, 9, _, _} = keydir_info(Ref),
 
     List = keydir_fold(Ref, fun(E, Acc) -> [ E | Acc] end, [], -1, -1),
     3 = length(List),
