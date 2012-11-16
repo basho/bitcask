@@ -452,7 +452,8 @@ merge(Dirname, Opts, MergableFiles) ->
     %% Filter the files to merge and ensure that they all exist. It's
     %% possible in some circumstances that we'll get an out-of-date
     %% list of files.
-    case is_tuple(MergableFiles) of
+    TupleCheck =  fun(X) -> if is_tuple(X) -> true; true -> false end end,  
+    case lists:all(TupleCheck, MergableFiles) of
         true ->
             Files = [Filename || {Filename, _Reasons} <- MergableFiles],
             FilesToMerge = [F || F <- Files,
@@ -548,7 +549,8 @@ merge1(Dirname, Opts, MergableFiles, FilesToMerge) ->
     %% Finally, start the merge process
     %% This is where we implement our fancy cache merge called cache_merge
     %% If not tuple can't determine reason for merge so no guaranteed cache
-    case is_tuple(MergableFiles) of
+    TupleCheck =  fun(X) -> if is_tuple(X) -> true; true -> false end end,  
+    case lists:all(TupleCheck, MergableFiles) of
         true ->
             State1 = cache_merge(MergableFiles, State),
             State2 = merge_files(State1);
@@ -1147,21 +1149,23 @@ cache_merge([{File,Reason} | Files], State) ->
     case filelib:is_file(File) of
         true ->
             case  Reason  of
+                % IIF only reason for merge is timestamp
                 {oldest_tstamp, _DataTime, _ExpiryTime} ->
                     % Do the magic
                     % fold over the hintfile, stop on first non-expired entry
                     % delete the entries in the key_dir and
                     % delete the data file
                     FileId = bitcask_fileops:file_tstamp(File),
+                    {ok, FileDesc} = bitcask_fileops:open_file(File),
                     Fun = fun(K, Tstamp, {Offset, _TotalSz}, State0) ->
-                            case State0#mstate.expiry_time < Tstamp of
+                            case State0#mstate.expiry_time > Tstamp of
                                 true  ->
                                     throw(found_not_expired);
                                 _ ->
                                     bitcask_nifs:keydir_remove(State0#mstate.live_keydir, K, Tstamp, FileId, Offset)
                             end
                         end,
-                    case bitcask_fileops:fold_keys(File, Fun, State, hintfile) of
+                    case bitcask_fileops:fold_keys(FileDesc, Fun, State, hintfile) of
                         found_not_expired ->
                             error_logger:info_msg("Not all keys expired in: ~p\n", File),
                             State1 = State;
@@ -1170,7 +1174,7 @@ cache_merge([{File,Reason} | Files], State) ->
                             State1 = State;
                         Result ->
                             error_logger:info_msg("YAARRRRR all keys expired in: ~p\n", File),
-                            error_logger:info_msg("This was the result: ~p\n", File),
+                            error_logger:info_msg("This was the result: ~p\n", Result),
                             bitcask_fileops:delete(File),
                             bitcask_fileops:close(File),
                             State1 = State#mstate{input_files = lists:delete(File,State#mstate.input_files)}
