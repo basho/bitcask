@@ -5,5 +5,5 @@
 Bitcask uses the "rebar" build system, but we have provided a wrapper
 Makefile so that simply running "make" at the top level should work.
 
-Bitcask requires Erlang R13B04 or later.
+Bitcask requires Erlang R14B04 or later.
 
