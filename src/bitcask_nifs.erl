@@ -88,7 +88,7 @@
                  integer(), integer(), integer(), integer()) ->
         ok | already_exists.
 -spec keydir_put_int(reference(), binary(), integer(), integer(),
-                     binary(), integer(), boolean(), integer(), binary()) ->
+                     binary(), integer(), 0 | 1, integer(), binary()) ->
         ok | already_exists.
 -spec keydir_get(reference(), binary()) ->
         not_found | #bitcask_entry{}.
@@ -112,7 +112,9 @@
         any() | {error, any()}.
 -spec keydir_info(reference()) ->
         {integer(), integer(),
-         [{integer(), integer(), integer(), integer(), integer()}], integer(), boolean()}.
+         [{integer(), integer(), integer(), integer(), integer(),
+           integer(), integer()}],
+         {integer(), integer(), boolean()}}.
 -spec keydir_release(reference()) ->
         ok.
 -spec lock_acquire(string(), integer()) ->
@@ -201,11 +203,7 @@ keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NewestPutB,
 
 keydir_put_int(_Ref, _Key, _FileId, _TotalSz, _Offset, _Tstamp, _NewestPutI,
                _OldFileId, _OldOffset) ->
-    case random:uniform(999999999999) of
-        666 -> ok;
-        667 -> already_exists;
-        _   -> exit("NIF library not loaded")
-    end.
+    erlang:nif_error({error, not_loaded}).
 
 keydir_get(Ref, Key) ->
     case keydir_get_int(Ref, Key) of
@@ -320,10 +318,7 @@ keydir_wait_pending(Ref) ->
     end.
 
 keydir_info(_Ref) ->
-    case random:uniform(999999999999) of
-        666 -> {make_bogus_non_neg(), make_bogus_non_neg(), [{make_bogus_non_neg(), random:uniform(4242), random:uniform(4242), random:uniform(4242), random:uniform(4242)}]};
-        _   -> exit("NIF library not loaded")
-    end.
+    erlang:nif_error({error, not_loaded}).
 
 keydir_release(_Ref) ->
     case random:uniform(999999999999) of
