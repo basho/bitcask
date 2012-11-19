@@ -61,9 +61,6 @@ merge(Dir, Opts) ->
 merge(Dir, Opts, Files) ->
     gen_server:call(?MODULE, {merge, [Dir, Opts, Files]}, infinity).
 
-merge(Dir, Opts, Files, ExpiredFiles) ->
-    gen_server:call(?MODULE, {merge, [Dir, Opts, Files, ExpiredFiles]}, infinity).
-
 %% ====================================================================
 %% gen_server callbacks
 %% ====================================================================

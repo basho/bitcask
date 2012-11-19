@@ -32,7 +32,7 @@
          fold_keys/3, fold_keys/5,
          fold/3, fold/5,
          iterator/3, iterator_next/1, iterator_release/1,
-         merge/1, merge/2, merge/3, merge/4,
+         merge/1, merge/2, merge/3,
          needs_merge/1,
          is_empty_estimate/1,
          status/1]).
@@ -448,35 +448,20 @@ iterator_release(Ref) ->
 %%      into a more compact form.
 -spec merge(Dirname::string()) -> ok.
 merge(Dirname) ->
-    merge(Dirname, [], readable_files(Dirname)).
+    merge(Dirname, [], {readable_files(Dirname), []}).
 
 %% @doc Merge several data files within a bitcask datastore
 %%      into a more compact form.
 -spec merge(Dirname::string(), Opts::[_]) -> ok.
 merge(Dirname, Opts) ->
-    merge(Dirname, Opts, readable_files(Dirname)).
+    merge(Dirname, Opts, {readable_files(Dirname), []}).
 
 %% @doc Merge several data files within a bitcask datastore
 %%      into a more compact form.
 -spec merge(Dirname::string(), Opts::[_], FilesToMerge::[string()]) -> ok.
-merge(_Dirname, _Opts, []) ->
+merge(_Dirname, _Opts, {[],_}) ->
     ok;
-merge(Dirname, Opts, FilesToMerge0) ->
-    %% Make sure bitcask app is started so we can pull defaults from env
-    ok = start_app(),
-
-    %% Filter the files to merge and ensure that they all exist. It's
-    %% possible in some circumstances that we'll get an out-of-date
-    %% list of files.
-    FilesToMerge = [F || F <- FilesToMerge0,
-                         filelib:is_file(F)],
-    merge1(Dirname, Opts, FilesToMerge, []).
-
-%% @doc 
--spec merge(Dirname::string(), Opts::[_], FilesToMerge::[string()], ExpiredFiles::[string()]) -> ok.
-merge(Dirname, Opts, FilesToMerge0, []) ->
-    merge(Dirname, Opts, FilesToMerge0);
-merge(Dirname, Opts, FilesToMerge0, ExpiredFiles0) ->
+merge(Dirname, Opts, {FilesToMerge0, ExpiredFiles0}) ->
     %% Make sure bitcask app is started so we can pull defaults from env
     ok = start_app(),
     %% Filter the files to merge and ensure that they all exist. It's
@@ -486,7 +471,18 @@ merge(Dirname, Opts, FilesToMerge0, ExpiredFiles0) ->
                          filelib:is_file(F)],
     ExpiredFiles = [F || F <- ExpiredFiles0,
                          filelib:is_file(F)],
-    merge1(Dirname, Opts, FilesToMerge, ExpiredFiles).
+    merge1(Dirname, Opts, FilesToMerge, ExpiredFiles);
+merge(_Dirname, _Opts, []) ->
+    ok;
+merge(Dirname, Opts, FilesToMerge0) ->
+    %% Make sure bitcask app is started so we can pull defaults from env
+    ok = start_app(),
+    %% Filter the files to merge and ensure that they all exist. It's
+    %% possible in some circumstances that we'll get an out-of-date
+    %% list of files.
+    FilesToMerge = [F || F <- FilesToMerge0,
+                         filelib:is_file(F)],
+    merge1(Dirname, Opts, FilesToMerge, []).
 
 
 %% Inner merge function, assumes that bitcask is running and all files exist.
@@ -582,7 +578,6 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
                             end, [], InFiles1)),
     InExpiredFiles = [F#file_status.filename || F <- Summary,
                         F#file_status.newest_tstamp < expiry_time(Opts)],
-    expiry_merge(InExpiredFiles, LiveKeyDir),
 
     %% Setup our first output merge file and update the merge lock accordingly
     {ok, Outfile} = bitcask_fileops:create_file(Dirname, Opts),
@@ -607,6 +602,7 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
                       opts = Opts },
 
     %% Finally, start the merge process
+    expiry_merge(InExpiredFiles, LiveKeyDir),
     State1 = merge_files(State),
 
     %% Make sure to close the final output file
@@ -708,7 +704,7 @@ needs_merge(Ref) ->
             end,
             FileNames = [Filename || {Filename, _Reasons} <- MergableFiles],
             ExpiredFiles = [Filename || {Filename, [{oldest_tstamp,_,_}]} <- MergableFiles],
-            {true, FileNames, ExpiredFiles};
+            {true, {FileNames, ExpiredFiles}};
         false ->
             false
     end.
@@ -1020,6 +1016,7 @@ merge_files(#mstate {  dirname = Dirname,
                        [File#filestate.filename, Dirname, Error]),
                      State
              after
+                    error_logger:info_msg("BRIAN SPARROW! Just folded over ~p\n", [File]),
                      catch bitcask_fileops:close(File)
              end,
     merge_files(State2#mstate { input_files = Rest }).
@@ -1315,10 +1312,10 @@ expiry_merge([File | Files], LiveKeyDir) ->
                 bitcask_nifs:keydir_remove(LiveKeyDir, K, Tstamp, FileId, Offset),
                 Acc
         end,
-    case bitcask_fileops:fold_keys(FileDesc, Fun, accumulator, hintfile) of
+    case bitcask_fileops:fold_keys(FileDesc, Fun, ok, hintfile) of
         {error, Stuff} ->
             error_logger:error_msg("Ohhh nooo! something went wrong: ~p\n", Stuff);
-        Result ->
+        ok ->
             error_logger:info_msg("YAARRRRR all keys expired in: ~p\n", [File]),
             bitcask_fileops:delete(FileDesc),
             bitcask_fileops:close(FileDesc)
@@ -1725,9 +1722,9 @@ delete_partial_merge_test() ->
     %% selective merge, hit all of the files with deletes but not
     %%  all of the ones with deleted data
     timer:sleep(1100),
-    ok = merge("/tmp/bc.test.pardel",[],lists:reverse(lists:nthtail(2,
+    ok = merge("/tmp/bc.test.pardel",[],{lists:reverse(lists:nthtail(2,
                                            lists:reverse(readable_files(
-                                               "/tmp/bc.test.pardel"))))),
+                                               "/tmp/bc.test.pardel")))),[]}),
 
     %% Verify we've now only got one item left
     B2 = bitcask:open("/tmp/bc.test.pardel"),
