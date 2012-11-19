@@ -61,6 +61,9 @@ merge(Dir, Opts) ->
 merge(Dir, Opts, Files) ->
     gen_server:call(?MODULE, {merge, [Dir, Opts, Files]}, infinity).
 
+merge(Dir, Opts, Files, ExpiredFiles) ->
+    gen_server:call(?MODULE, {merge, [Dir, Opts, Files, ExpiredFiles]}, infinity).
+
 %% ====================================================================
 %% gen_server callbacks
 %% ====================================================================
@@ -134,6 +137,7 @@ do_merge(Args) ->
             ElapsedSecs = timer:now_diff(os:timestamp(), Start) / 1000000,
             case Result of
                 ok ->
+                    % TODO: Don't log all the Args, just the merged file names
                     error_logger:info_msg("Merged ~p in ~p seconds.\n",
                                           [Args, ElapsedSecs]);
                 {Error, Reason} when Error == error; Error == 'EXIT' ->
