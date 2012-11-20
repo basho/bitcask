@@ -579,7 +579,7 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
                                     end
                             end, [], InFiles1)),
     InExpiredFiles = lists:reverse(
-                lists:foldl(fun(F, Acc) ->
+                        lists:foldl(fun(F, Acc) ->
                                     case not(lists:member(F#filestate.filename,
                                                     TooNew)) andalso lists:member(F#filestate.filename,
                                                     ExpiredFiles) andalso lists:member(F#filestate.filename,
@@ -1330,8 +1330,8 @@ expiry_merge([File | Files], LiveKeyDir, Acc0) ->
             Acc = Acc0;
         _ ->
             error_logger:info_msg("All keys expired in: ~p\n, scheduling file for deletion", [File]),
-            error_logger:info_msg("Here are my variables\nAcc0: ~p\n", [Acc0]),
-            Acc = Acc0 ++ File
+            error_logger:info_msg("HERE ARE MY VARIABLES\nAcc0: ~p\n", [Acc0]),
+            Acc = lists:append(Acc0, [File])
      end,
     expiry_merge(Files, LiveKeyDir, Acc).
 
