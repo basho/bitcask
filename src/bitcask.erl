@@ -486,7 +486,7 @@ merge(Dirname, Opts, FilesToMerge0) ->
 
 
 %% Inner merge function, assumes that bitcask is running and all files exist.
-merge1(_Dirname, _Opts, [], []) ->
+merge1(_Dirname, _Opts, [], _ExpiredFiles) ->
     ok;
 merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
     %% Test to see if this is a complete or partial merge
@@ -559,6 +559,8 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
     TooNew = [F#file_status.filename ||
                  F <- Summary,
                  F#file_status.newest_tstamp >= MergeStart],
+    CheckedExpiredFiles = [F#file_status.filename || F <- Summary,
+                        F#file_status.newest_tstamp < expiry_time(Opts)],
     InFiles = lists:reverse(
                 lists:foldl(fun(F, Acc) ->
                                     case lists:member(F#filestate.filename,
@@ -576,8 +578,19 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
                                             Acc
                                     end
                             end, [], InFiles1)),
-    InExpiredFiles = [F#file_status.filename || F <- Summary,
-                        F#file_status.newest_tstamp < expiry_time(Opts)],
+    InExpiredFiles = lists:reverse(
+                lists:foldl(fun(F, Acc) ->
+                                    case not(lists:member(F#filestate.filename,
+                                                    TooNew)) andalso lists:member(F#filestate.filename,
+                                                    ExpiredFiles) andalso lists:member(F#filestate.filename,
+                                                    CheckedExpiredFiles)of
+                                        false ->
+                                            Acc;
+                                        true ->
+                                            [F|Acc]
+                                    end
+                            end, [], InFiles1)),
+    error_logger:info_msg("This is the InFiles: ~p\nThis is the InExpiredFiles: ~p\n", [InFiles, InExpiredFiles]),
 
     %% Setup our first output merge file and update the merge lock accordingly
     {ok, Outfile} = bitcask_fileops:create_file(Dirname, Opts),
@@ -602,7 +615,7 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
                       opts = Opts },
 
     %% Finally, start the merge process
-    expiry_merge(InExpiredFiles, LiveKeyDir),
+    ExpiredFilesFinished = expiry_merge(InExpiredFiles, LiveKeyDir, []),
     State1 = merge_files(State),
 
     %% Make sure to close the final output file
@@ -611,9 +624,9 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
 
     %% Close the original input files, schedule them for deletion,
     %% close keydirs, and release our lock
-    [bitcask_fileops:close(F) || F <- State#mstate.input_files],
+    [bitcask_fileops:close(F) || F <- State#mstate.input_files ++ ExpiredFilesFinished],
     {_, _, _, {IterGeneration, _, _}} = bitcask_nifs:keydir_info(LiveKeyDir),
-    FileNames = [F#filestate.filename || F <- State#mstate.input_files],
+    FileNames = [F#filestate.filename || F <- State#mstate.input_files ++ ExpiredFilesFinished],
     [catch set_setuid_bit(F) || F <- FileNames],
     bitcask_merge_delete:defer_delete(Dirname, IterGeneration, FileNames),
 
@@ -1017,7 +1030,7 @@ merge_files(#mstate {  dirname = Dirname,
                      State
              after
                     error_logger:info_msg("BRIAN SPARROW! Just folded over ~p\n", [File]),
-                     catch bitcask_fileops:close(File)
+                    catch bitcask_fileops:close(File)
              end,
     merge_files(State2#mstate { input_files = Rest }).
 
@@ -1302,25 +1315,25 @@ poll_deferred_delete_queue_empty() ->
     end.
 
 %% Internal merge function for cache_merge functionality.
-expiry_merge([], _LiveKeyDir) ->
-    ok;
+expiry_merge([], _LiveKeyDir, Acc) ->
+    Acc;
 
-expiry_merge([File | Files], LiveKeyDir) ->
+expiry_merge([File | Files], LiveKeyDir, Acc0) ->
     FileId = bitcask_fileops:file_tstamp(File),
-    {ok, FileDesc} = bitcask_fileops:open_file(File),
     Fun = fun(K, Tstamp, {Offset, _TotalSz}, Acc) ->
                 bitcask_nifs:keydir_remove(LiveKeyDir, K, Tstamp, FileId, Offset),
                 Acc
         end,
-    case bitcask_fileops:fold_keys(FileDesc, Fun, ok, hintfile) of
-        {error, Stuff} ->
-            error_logger:error_msg("Ohhh nooo! something went wrong: ~p\n", Stuff);
-        ok ->
-            error_logger:info_msg("YAARRRRR all keys expired in: ~p\n", [File]),
-            bitcask_fileops:delete(FileDesc),
-            bitcask_fileops:close(FileDesc)
+    case bitcask_fileops:fold_keys(File, Fun, ok, hintfile) of
+        {error, Reason} ->
+            error_logger:error_msg("Error folding hintfile for ~p: ~p\n", [File,Reason]),
+            Acc = Acc0;
+        _ ->
+            error_logger:info_msg("All keys expired in: ~p\n, scheduling file for deletion", [File]),
+            error_logger:info_msg("Here are my variables\nAcc0: ~p\n", [Acc0]),
+            Acc = Acc0 ++ File
      end,
-    expiry_merge(Files, LiveKeyDir).
+    expiry_merge(Files, LiveKeyDir, Acc).
 
 %% ===================================================================
 %% EUnit tests
