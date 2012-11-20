@@ -590,7 +590,6 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
                                             [F|Acc]
                                     end
                             end, [], InFiles1)),
-    error_logger:info_msg("This is the InFiles: ~p\nThis is the InExpiredFiles: ~p\n", [InFiles, InExpiredFiles]),
 
     %% Setup our first output merge file and update the merge lock accordingly
     {ok, Outfile} = bitcask_fileops:create_file(Dirname, Opts),
@@ -643,6 +642,7 @@ consider_for_merge(FragTrigger, DeadBytesTrigger, ExpirationGraceTime) ->
                 orelse (F#file_status.dead_bytes >= DeadBytesTrigger)
                 orelse (        (F#file_status.oldest_tstamp > 0)     %% means that the file has data
                         andalso (F#file_status.oldest_tstamp < ExpirationGraceTime)
+                        andalso (F#file_status.newest_tstamp < ExpirationGraceTime)
                        )
     end.
 
@@ -1029,7 +1029,6 @@ merge_files(#mstate {  dirname = Dirname,
                        [File#filestate.filename, Dirname, Error]),
                      State
              after
-                    error_logger:info_msg("BRIAN SPARROW! Just folded over ~p\n", [File]),
                     catch bitcask_fileops:close(File)
              end,
     merge_files(State2#mstate { input_files = Rest }).
@@ -1324,13 +1323,12 @@ expiry_merge([File | Files], LiveKeyDir, Acc0) ->
                 bitcask_nifs:keydir_remove(LiveKeyDir, K, Tstamp, FileId, Offset),
                 Acc
         end,
-    case bitcask_fileops:fold_keys(File, Fun, ok, hintfile) of
+    case bitcask_fileops:fold_keys(File, Fun, ok, default) of
         {error, Reason} ->
-            error_logger:error_msg("Error folding hintfile for ~p: ~p\n", [File,Reason]),
+            error_logger:error_msg("Error folding keys for ~p: ~p\n", [File#filestate.filename,Reason]),
             Acc = Acc0;
         _ ->
-            error_logger:info_msg("All keys expired in: ~p\n, scheduling file for deletion", [File]),
-            error_logger:info_msg("HERE ARE MY VARIABLES\nAcc0: ~p\n", [Acc0]),
+            error_logger:info_msg("All keys expired in: ~p scheduling file for deletion", [File#filestate.filename]),
             Acc = lists:append(Acc0, [File])
      end,
     expiry_merge(Files, LiveKeyDir, Acc).
