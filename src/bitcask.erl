@@ -459,7 +459,7 @@ merge(Dirname, Opts) ->
 %% @doc Merge several data files within a bitcask datastore
 %%      into a more compact form.
 -spec merge(Dirname::string(), Opts::[_], FilesToMerge::[string()]) -> ok.
-merge(Dirname, Opts, []) ->
+merge(_Dirname, _Opts, []) ->
     ok;
 merge(Dirname,Opts,FilesToMerge) when is_list(FilesToMerge) -> 
     merge(Dirname,Opts,{FilesToMerge,[]});
@@ -551,10 +551,7 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
     TooNew = [F#file_status.filename ||
                  F <- Summary,
                  F#file_status.newest_tstamp >= MergeStart],
-    CheckedExpiredFiles = [F#file_status.filename || F <- Summary,
-                        F#file_status.newest_tstamp < expiry_time(Opts)],
-    {InFiles,InExpiredFiles} = lists:reverse(
-                lists:foldl(fun(F, {InFilesAcc,InExpiredAcc} = Acc) ->
+    {InFiles,InExpiredFiles} = lists:foldl(fun(F, {InFilesAcc,InExpiredAcc} = Acc) ->
                                     case lists:member(F#filestate.filename,
                                                       TooNew) of
                                         false ->
@@ -563,19 +560,13 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
                                                 false ->
                                                     {[F|InFilesAcc],InExpiredAcc};
                                                 true ->
-                                                    case lists:member(F#filestate.filename, CheckedExpiredFiles) of
-                                                       true -> 
-                                                           {InFilesAcc,[F|InExpiredAcc]};
-                                                       false ->
-                                                           bitcask_fileops:close(F),
-                                                           Acc
-                                                    end
+                                                    {InFilesAcc,[F|InExpiredAcc]}
                                             end;
                                         true ->
                                             bitcask_fileops:close(F),
                                             Acc
                                     end
-                            end, {[],[]}, InFiles1)),
+                            end, {[],[]}, InFiles1),
     %% Setup our first output merge file and update the merge lock accordingly
     {ok, Outfile} = bitcask_fileops:create_file(Dirname, Opts),
     ok = bitcask_lockops:write_activefile(
@@ -613,6 +604,11 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
     FileNames = [F#filestate.filename || F <- State#mstate.input_files ++ ExpiredFilesFinished],
     [catch set_setuid_bit(F) || F <- FileNames],
     bitcask_merge_delete:defer_delete(Dirname, IterGeneration, FileNames),
+    if InFiles == [] ->
+            bitcask_fileops:delete(Outfile);
+        true ->
+            ok
+    end,
 
     %% Explicitly release our keydirs instead of waiting for GC
     bitcask_nifs:keydir_release(LiveKeyDir),
@@ -625,9 +621,8 @@ consider_for_merge(FragTrigger, DeadBytesTrigger, ExpirationGraceTime) ->
     fun (F) ->
             (F#file_status.fragmented >= FragTrigger)
                 orelse (F#file_status.dead_bytes >= DeadBytesTrigger)
-                orelse (        (F#file_status.oldest_tstamp > 0)     %% means that the file has data
-                        andalso (F#file_status.oldest_tstamp < ExpirationGraceTime)
-                        andalso (F#file_status.newest_tstamp < ExpirationGraceTime)
+                orelse ((F#file_status.oldest_tstamp > 0) andalso   %% means that the file has data
+                        (F#file_status.newest_tstamp < ExpirationGraceTime)
                        )
     end.
 
@@ -701,7 +696,7 @@ needs_merge(Ref) ->
                     ok
             end,
             FileNames = [Filename || {Filename, _Reasons} <- MergableFiles],
-            ExpiredFiles = [Filename || {Filename, [{oldest_tstamp,_,_}]} <- MergableFiles],
+            ExpiredFiles = [Filename || {Filename, [{data_expired,_,_}]} <- MergableFiles],
             {true, {FileNames, ExpiredFiles}};
         false ->
             false
@@ -748,8 +743,8 @@ small_file_threshold(Opts) ->
 
 expired_threshold(Cutoff) ->
     fun(F) ->
-            if F#file_status.oldest_tstamp < Cutoff ->
-                    [{oldest_tstamp, F#file_status.oldest_tstamp, Cutoff}];
+            if F#file_status.newest_tstamp < Cutoff  ->
+                    [{data_expired, F#file_status.newest_tstamp, Cutoff}];
                true ->
                     []
             end
@@ -1313,7 +1308,7 @@ expiry_merge([File | Files], LiveKeyDir, Acc0) ->
             error_logger:error_msg("Error folding keys for ~p: ~p\n", [File#filestate.filename,Reason]),
             Acc = Acc0;
         _ ->
-            error_logger:info_msg("All keys expired in: ~p scheduling file for deletion", [File#filestate.filename]),
+            error_logger:info_msg("All keys expired in: ~p scheduling file for deletion\n", [File#filestate.filename]),
             Acc = lists:append(Acc0, [File])
      end,
     expiry_merge(Files, LiveKeyDir, Acc).
@@ -1638,19 +1633,6 @@ expire_merge_test() ->
 
     close(B),
     ok.
-
-expire_delete_test() ->
-    %% Initialize dataset with max_file_size set to 1 so that each file will
-    %% only contain a single key.
-    close(init_dataset("/tmp/bc.test.expiredelete", [{max_file_size, 1}],
-                       default_dataset())),
-
-    %% Wait for it all to expire
-    timer:sleep(2000),
-
-    %% Merge everything
-    timer:sleep(1100),
-    ok = merge()
 
 fold_deleted_test() ->    
     os:cmd("rm -rf /tmp/bc.test.fold_delete"),
