@@ -459,6 +459,10 @@ merge(Dirname, Opts) ->
 %% @doc Merge several data files within a bitcask datastore
 %%      into a more compact form.
 -spec merge(Dirname::string(), Opts::[_], FilesToMerge::[string()]) -> ok.
+merge(Dirname, Opts, []) ->
+    ok;
+merge(Dirname,Opts,FilesToMerge) when is_list(FilesToMerge) -> 
+    merge(Dirname,Opts,{FilesToMerge,[]});
 merge(_Dirname, _Opts, {[],_}) ->
     ok;
 merge(Dirname, Opts, {FilesToMerge0, ExpiredFiles0}) ->
@@ -471,19 +475,7 @@ merge(Dirname, Opts, {FilesToMerge0, ExpiredFiles0}) ->
                          filelib:is_file(F)],
     ExpiredFiles = [F || F <- ExpiredFiles0,
                          filelib:is_file(F)],
-    merge1(Dirname, Opts, FilesToMerge, ExpiredFiles);
-merge(_Dirname, _Opts, []) ->
-    ok;
-merge(Dirname, Opts, FilesToMerge0) ->
-    %% Make sure bitcask app is started so we can pull defaults from env
-    ok = start_app(),
-    %% Filter the files to merge and ensure that they all exist. It's
-    %% possible in some circumstances that we'll get an out-of-date
-    %% list of files.
-    FilesToMerge = [F || F <- FilesToMerge0,
-                         filelib:is_file(F)],
-    merge1(Dirname, Opts, FilesToMerge, []).
-
+    merge1(Dirname, Opts, FilesToMerge, ExpiredFiles).
 
 %% Inner merge function, assumes that bitcask is running and all files exist.
 merge1(_Dirname, _Opts, [], _ExpiredFiles) ->
@@ -561,36 +553,29 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
                  F#file_status.newest_tstamp >= MergeStart],
     CheckedExpiredFiles = [F#file_status.filename || F <- Summary,
                         F#file_status.newest_tstamp < expiry_time(Opts)],
-    InFiles = lists:reverse(
-                lists:foldl(fun(F, Acc) ->
+    {InFiles,InExpiredFiles} = lists:reverse(
+                lists:foldl(fun(F, {InFilesAcc,InExpiredAcc} = Acc) ->
                                     case lists:member(F#filestate.filename,
                                                       TooNew) of
                                         false ->
                                             case lists:member(F#filestate.filename,
                                                     ExpiredFiles) of
                                                 false ->
-                                                    [F|Acc];
+                                                    {[F|InFilesAcc],InExpiredAcc};
                                                 true ->
-                                                    Acc
+                                                    case lists:member(F#filestate.filename, CheckedExpiredFiles) of
+                                                       true -> 
+                                                           {InFilesAcc,[F|InExpiredAcc]};
+                                                       false ->
+                                                           bitcask_fileops:close(F),
+                                                           Acc
+                                                    end
                                             end;
                                         true ->
                                             bitcask_fileops:close(F),
                                             Acc
                                     end
-                            end, [], InFiles1)),
-    InExpiredFiles = lists:reverse(
-                        lists:foldl(fun(F, Acc) ->
-                                    case not(lists:member(F#filestate.filename,
-                                                    TooNew)) andalso lists:member(F#filestate.filename,
-                                                    ExpiredFiles) andalso lists:member(F#filestate.filename,
-                                                    CheckedExpiredFiles)of
-                                        false ->
-                                            Acc;
-                                        true ->
-                                            [F|Acc]
-                                    end
-                            end, [], InFiles1)),
-
+                            end, {[],[]}, InFiles1)),
     %% Setup our first output merge file and update the merge lock accordingly
     {ok, Outfile} = bitcask_fileops:create_file(Dirname, Opts),
     ok = bitcask_lockops:write_activefile(
@@ -1653,6 +1638,19 @@ expire_merge_test() ->
 
     close(B),
     ok.
+
+expire_delete_test() ->
+    %% Initialize dataset with max_file_size set to 1 so that each file will
+    %% only contain a single key.
+    close(init_dataset("/tmp/bc.test.expiredelete", [{max_file_size, 1}],
+                       default_dataset())),
+
+    %% Wait for it all to expire
+    timer:sleep(2000),
+
+    %% Merge everything
+    timer:sleep(1100),
+    ok = merge()
 
 fold_deleted_test() ->    
     os:cmd("rm -rf /tmp/bc.test.fold_delete"),
