@@ -58,18 +58,18 @@
 
 -compile([{nowarn_unused_function,
            [
-            {lock_acquire_int, 2},
-            {lock_release_int, 1},
-            {lock_readdata_int, 1},
-            {lock_writedata_int, 2},
-            {file_open_int, 2},
-            {file_close_int, 1},
-            {file_sync_int, 1},
-            {file_pread_int, 3},
-            {file_pwrite_int, 3},
-            {file_read_int, 2},
-            {file_write_int, 2},
-            {file_seekbof_int, 1}]
+            {lock_acquire_int, 3},
+            {lock_release_int, 2},
+            {lock_readdata_int, 2},
+            {lock_writedata_int, 3},
+            {file_open_int, 3},
+            {file_close_int, 2},
+            {file_sync_int, 2},
+            {file_pread_int, 4},
+            {file_pwrite_int, 4},
+            {file_read_int, 3},
+            {file_write_int, 3},
+            {file_seekbof_int, 2}]
           }]).
 
 -ifdef(PULSE).
@@ -305,73 +305,73 @@ keydir_release(_Ref) ->
 lock_acquire(Filename, IsWriteLock) ->
     ?ASYNC_NIF_CALL(lock_acquire_int, [Filename, IsWriteLock]).
 
-lock_acquire_int(_Filename, _IsWriteLock) ->
+lock_acquire_int(_MsgRef, _Filename, _IsWriteLock) ->
     erlang:nif_error({error, not_loaded}).
 
 lock_release(Ref) ->
     ?ASYNC_NIF_CALL(lock_release_int, [Ref]).
 
-lock_release_int(_Ref) ->
+lock_release_int(_MsgRef, _Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 lock_readdata(Ref) ->
     ?ASYNC_NIF_CALL(lock_readdata_int, [Ref]).
 
-lock_readdata_int(_Ref) ->
+lock_readdata_int(_MsgRef, _Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 lock_writedata(Ref, Data) ->
     ?ASYNC_NIF_CALL(lock_writedata_inf, [Ref, Data]).
 
-lock_writedata_int(_Ref, _Data) ->
+lock_writedata_int(_MsgRef, _Ref, _Data) ->
     erlang:nif_error({error, not_loaded}).
 
 file_open(Filename, Opts) ->
     ?ASYNC_NIF_CALL(file_open_int, [Filename, Opts]).
 
-file_open_int(_Filename, _Opts) ->
+file_open_int(_MsgRef, _Filename, _Opts) ->
     erlang:nif_error({error, not_loaded}).
 
 file_close(Ref) ->
     ?ASYNC_NIF_CALL(file_close_int, [Ref]).
 
-file_close_int(_Ref) ->
+file_close_int(_MsgRef, _Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 file_sync(Ref) ->
     ?ASYNC_NIF_CALL(file_sync_int, [Ref]).
 
-file_sync_int(_Ref) ->
+file_sync_int(_MsgRef, _Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 file_pread(Ref, Offset, Size) ->
     ?ASYNC_NIF_CALL(file_pread_int, [Ref, Offset, Size]).
 
-file_pread_int(_Ref, _Offset, _Size) ->
+file_pread_int(_MsgRef, _Ref, _Offset, _Size) ->
     erlang:nif_error({error, not_loaded}).
 
 file_pwrite(Ref, Offset, Bytes) ->
     ?ASYNC_NIF_CALL(file_pwrite_int, [Ref, Offset, Bytes]).
 
-file_pwrite_int(_Ref, _Offset, _Bytes) ->
+file_pwrite_int(_MsgRef, _Ref, _Offset, _Bytes) ->
     erlang:nif_error({error, not_loaded}).
 
 file_read(Ref, Size) ->
     ?ASYNC_NIF_CALL(file_read_int, [Ref, Size]).
 
-file_read_int(_Ref, _Size) ->
+file_read_int(_MsgRef, _Ref, _Size) ->
     erlang:nif_error({error, not_loaded}).
 
 file_write(Ref, Bytes) ->
     ?ASYNC_NIF_CALL(file_write_int, [Ref, Bytes]).
 
-file_write_int(_Ref, _Bytes) ->
+file_write_int(_MsgRef, _Ref, _Bytes) ->
     erlang:nif_error({error, not_loaded}).
 
 file_seekbof(Ref) ->
     ?ASYNC_NIF_CALL(file_seekbof_int, [Ref]).
 
-file_seekbof_int(_Ref) ->
+file_seekbof_int(_MsgRef, _Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 
