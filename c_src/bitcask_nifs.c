@@ -52,6 +52,8 @@ void DEBUG(const char *fmt, ...)
 #include "pulse_c_send.h"
 #endif
 
+#include "async_nif.h"
+
 static ErlNifResourceType* bitcask_keydir_RESOURCE;
 
 static ErlNifResourceType* bitcask_lock_RESOURCE;
@@ -1886,6 +1888,7 @@ static void dump_fstats(bitcask_keydir* keydir)
 
 static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
 {
+    ASYNC_NIF_LOAD();
     bitcask_keydir_RESOURCE = enif_open_resource_type_compat(env, "bitcask_keydir_resource",
                                                       &bitcask_nifs_keydir_resource_cleanup,
                                                       ERL_NIF_RT_CREATE | ERL_NIF_RT_TAKEOVER,
@@ -1942,4 +1945,14 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
     return 0;
 }
 
-ERL_NIF_INIT(bitcask_nifs, nif_funcs, &on_load, NULL, NULL, NULL);
+static void on_unload(ErlNifEnv* env, void* priv_data){
+    ASYNC_NIF_UNLOAD()
+}
+
+static int on_upgrade(ErlNifEnv* env, void** priv_data, void** old_priv_data, ERL_NIF_TERM load_info)
+{
+  ASYNC_NIF_UPGRADE()
+  return 0;
+}
+
+ERL_NIF_INIT(bitcask_nifs, nif_funcs, &on_load, NULL, &on_upgrade, &on_unload);

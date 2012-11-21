@@ -6,7 +6,11 @@ extern "C" {
 #endif
 
 /* Redefine this in your NIF implementation before including this file to
-   change the thread pool size. */
+   change the thread pool size.  The maximum number of threads might be
+   bounded on your OS.  For instance, to allow 1,000,000 threads on a Linux
+   system you must do the following before launching the process.
+     echo 1000000 > /proc/sys/kernel/threads-max
+   and for all UNIX systems there will be ulimit maximums. */
 #ifndef ANIF_MAX_WORKERS
 #define ANIF_MAX_WORKERS 64
 #endif
@@ -42,16 +46,13 @@ static ErlNifMutex *anif_worker_mutex = NULL;
 static ErlNifCond *anif_cnd = NULL;
 static struct anif_worker_entry anif_worker_entries[ANIF_MAX_WORKERS];
 
-#define ET2_2A(A, B) enif_make_tuple2(env, enif_make_atom(env, A), enif_make_atom(env, B))
-#define ET2_1A1I(A, B) enif_make_tuple2(env, enif_make_atom(env, A), enif_make_int(env, B))
-
 #define ASYNC_NIF_DECL(name, frame, pre_block, work_block, post_block)  \
   struct name ## _args frame;                                           \
   static void fn_work_ ## name (ErlNifEnv *env, ErlNifPid *pid, struct name ## _args *args) \
        work_block                                                       \
   static void fn_post_ ## name (struct name ## _args *args) {           \
     do post_block while(0);                                             \
-  enif_free(args);                                                      \
+    enif_free(args);                                                    \
   }                                                                     \
   static ERL_NIF_TERM name(ErlNifEnv* env_in, int argc, const ERL_NIF_TERM argv_in[]) { \
     struct name ## _args on_stack_args;                                 \
@@ -65,28 +66,33 @@ static struct anif_worker_entry anif_worker_entries[ANIF_MAX_WORKERS];
       enif_send(NULL, &pid, env_in,                                     \
                 enif_make_tuple2(env_in, enif_make_atom(env_in, "error"), \
                                  enif_make_atom(env_in, "shutdown")));  \
-      return ET2_2A("error", "shutdown");                               \
+      return enif_make_tuple2(env_in, enif_make_atom(env_in, "error"),  \
+                              enif_make_atom(env_in, "shutdown"));      \
     }                                                                   \
     env = enif_alloc_env();                                             \
     if (!env)                                                           \
-      return ET2_2A("error", "enomem");                                 \
-    argv = enif_alloc(sizeof(ERL_NIF_TERM) * argc);                     \
+      return enif_make_tuple2(env_in, enif_make_atom(env_in, "error"),  \
+                              enif_make_atom(env_in, "enomem"));        \
+    argv = (ERL_NIF_TERM *)enif_alloc(sizeof(ERL_NIF_TERM) * argc);     \
     if (!argv) {                                                        \
       enif_free_env(env);                                               \
-      return ET2_2A("error", "enomem");                                 \
+      return enif_make_tuple2(env_in, enif_make_atom(env_in, "error"),  \
+                              enif_make_atom(env_in, "enomem"));        \
     }                                                                   \
     for (unsigned int i = 0; i < argc; i++) {                           \
       argv[i] = enif_make_copy(env, argv_in[i]);                        \
       if (!argv[i]) {                                                   \
         enif_free(argv);                                                \
         enif_free_env(env);                                             \
-        return ET2_2A("error", "enomem");                               \
+        return enif_make_tuple2(env_in, enif_make_atom(env_in, "error"),\
+                                enif_make_atom(env_in, "enomem"));      \
       }                                                                 \
     }                                                                   \
     if (!enif_self(env_in, &pid)) {                                     \
       enif_free(argv);                                                  \
       enif_free_env(env);                                               \
-      return ET2_2A("error", "pid");                                    \
+      return enif_make_tuple2(env_in, enif_make_atom(env_in, "error"),  \
+                              enif_make_atom(env_in, "pid"));           \
     }                                                                   \
     do pre_block while(0);                                              \
     enif_free(argv);                                                    \
@@ -94,14 +100,16 @@ static struct anif_worker_entry anif_worker_entries[ANIF_MAX_WORKERS];
     if (!r) {                                                           \
       fn_post_ ## name (args);                                          \
       enif_free_env(env);                                               \
-      return ET2_2A("error", "enomem");                                 \
+      return enif_make_tuple2(env_in, enif_make_atom(env_in, "error"),  \
+                              enif_make_atom(env_in, "enomem"));        \
     }                                                                   \
     copy_of_args = (struct name ## _args *)enif_alloc(sizeof(struct name ## _args)); \
     if (!copy_of_args) {                                                \
       fn_post_ ## name (args);                                          \
       enif_free_env(env);                                               \
       enif_free(r);                                                     \
-      return ET2_2A("error", "enomem");                                 \
+      return enif_make_tuple2(env_in, enif_make_atom(env_in, "error"),  \
+                              enif_make_atom(env_in, "enomem"));        \
     }                                                                   \
     memcpy(copy_of_args, args, sizeof(struct name ## _args));           \
     memcpy(&(r->pid), &pid, sizeof(ErlNifPid));                         \
@@ -110,12 +118,17 @@ static struct anif_worker_entry anif_worker_entries[ANIF_MAX_WORKERS];
     r->fn_work = (void (*)(ErlNifEnv *, ErlNifPid*, void *))fn_work_ ## name ; \
     r->fn_post = (void (*)(void *))fn_post_ ## name;                    \
     anif_enqueue_req(r);                                                \
-    return ET2_1A1I("ok", anif_req_count);                              \
+    return enif_make_tuple2(env, enif_make_atom(env, "ok"),             \
+                            enif_make_int(env, anif_req_count));        \
   }
 
 #define ASYNC_NIF_LOAD() if (anif_init() != 0) return -1;
 #define ASYNC_NIF_UNLOAD() anif_unload();
 #define ASYNC_NIF_UPGRADE() anif_unload();
+
+#define ASYNC_NIF_PRE_ENV() env_in
+#define ASYNC_NIF_PRE_RETURN_CLEANUP() enif_free(argv); enif_free_env(env);
+#define ASYNC_NIF_RETURN_BADARG() ASYNC_NIF_PRE_RETURN_CLEANUP(); return enif_make_badarg(env_in);
 
 #define ASYNC_NIF_REPLY(msg) enif_send(NULL, pid, env, msg)
 
