@@ -54,6 +54,23 @@
 -on_load(init/0).
 
 -include("bitcask.hrl").
+-include("async_nif.hrl").
+
+-compile([{nowarn_unused_function,
+           [
+            {lock_acquire_int, 2},
+            {lock_release_int, 1},
+            {lock_readdata_int, 1},
+            {lock_writedata_int, 2},
+            {file_open_int, 2},
+            {file_close_int, 1},
+            {file_sync_int, 1},
+            {file_pread_int, 3},
+            {file_pwrite_int, 3},
+            {file_read_int, 2},
+            {file_write_int, 2},
+            {file_seekbof_int, 1}]
+          }]).
 
 -ifdef(PULSE).
 -compile({parse_transform, pulse_instrument}).
@@ -131,17 +148,17 @@
         {error, lock_not_writable}.
 
 init() ->
-    case code:priv_dir(bitcask) of
-        {error, bad_name} ->
-            case code:which(?MODULE) of
-                Filename when is_list(Filename) ->
-                    SoName = filename:join([filename:dirname(Filename),"../priv", "bitcask"]);
-                _ ->
-                    SoName = filename:join("../priv", "bitcask")
-            end;
-         Dir ->
-			SoName = filename:join(Dir, "bitcask")
-    end,
+    SoName = case code:priv_dir(bitcask) of
+                 {error, bad_name} ->
+                     case code:which(?MODULE) of
+                         Filename when is_list(Filename) ->
+                             filename:join([filename:dirname(Filename),"../priv", "bitcask"]);
+                         _ ->
+                             filename:join("../priv", "bitcask")
+                     end;
+                 Dir ->
+                     filename:join(Dir, "bitcask")
+             end,
     erlang:load_nif(SoName, 0).
 
 -ifdef(PULSE).
@@ -152,11 +169,11 @@ set_pulse_pid(_Pid) ->
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
-%% 
+%%
 %% Most of the functions below are actually defined in c_src/bitcask_nifs.c
 %% See that file for the real functionality of the bitcask_nifs module.
 %% The definitions here are only to satisfy trivial static analysis.
-%% 
+%%
 
 
 keydir_new() ->
@@ -260,7 +277,7 @@ keydir_frozen(Ref, FrozenFun, MaxAge, MaxPuts) ->
         {error, Reason} ->
             {error, Reason}
     end.
-    
+
 %% Wait for any pending interation to complete
 keydir_wait_pending(Ref) ->
     %% Create an iterator, passing a zero timestamp to force waiting for
@@ -286,85 +303,73 @@ keydir_release(_Ref) ->
 
 
 lock_acquire(Filename, IsWriteLock) ->
-    bitcask_bump:big(),
-    lock_acquire_int(Filename, IsWriteLock).
+    ?ASYNC_NIF_CALL(lock_acquire_int, [Filename, IsWriteLock]).
 
 lock_acquire_int(_Filename, _IsWriteLock) ->
     erlang:nif_error({error, not_loaded}).
 
 lock_release(Ref) ->
-    bitcask_bump:big(),
-    lock_release_int(Ref).
+    ?ASYNC_NIF_CALL(lock_release_int, [Ref]).
 
 lock_release_int(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 lock_readdata(Ref) ->
-    bitcask_bump:big(),
-    lock_readdata_int(Ref).
+    ?ASYNC_NIF_CALL(lock_readdata_int, [Ref]).
 
 lock_readdata_int(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 lock_writedata(Ref, Data) ->
-    bitcask_bump:big(),
-    lock_writedata_int(Ref, Data).
+    ?ASYNC_NIF_CALL(lock_writedata_inf, [Ref, Data]).
 
 lock_writedata_int(_Ref, _Data) ->
     erlang:nif_error({error, not_loaded}).
 
 file_open(Filename, Opts) ->
-    bitcask_bump:big(),
-    file_open_int(Filename, Opts).
+    ?ASYNC_NIF_CALL(file_open_int, [Filename, Opts]).
 
 file_open_int(_Filename, _Opts) ->
     erlang:nif_error({error, not_loaded}).
 
 file_close(Ref) ->
-    bitcask_bump:big(),
-    file_close_int(Ref).
+    ?ASYNC_NIF_CALL(file_close_int, [Ref]).
 
 file_close_int(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 file_sync(Ref) ->
-    bitcask_bump:big(),
-    file_sync_int(Ref).
+    ?ASYNC_NIF_CALL(file_sync_int, [Ref]).
 
 file_sync_int(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 file_pread(Ref, Offset, Size) ->
-    bitcask_bump:big(),
-    file_pread_int(Ref, Offset, Size).
+    ?ASYNC_NIF_CALL(file_pread_int, [Ref, Offset, Size]).
 
 file_pread_int(_Ref, _Offset, _Size) ->
     erlang:nif_error({error, not_loaded}).
 
 file_pwrite(Ref, Offset, Bytes) ->
-    bitcask_bump:big(),
-    file_pwrite_int(Ref, Offset, Bytes).
+    ?ASYNC_NIF_CALL(file_pwrite_int, [Ref, Offset, Bytes]).
 
 file_pwrite_int(_Ref, _Offset, _Bytes) ->
     erlang:nif_error({error, not_loaded}).
 
 file_read(Ref, Size) ->
-    bitcask_bump:big(),
-    file_read_int(Ref, Size).
+    ?ASYNC_NIF_CALL(file_read_int, [Ref, Size]).
 
 file_read_int(_Ref, _Size) ->
     erlang:nif_error({error, not_loaded}).
 
 file_write(Ref, Bytes) ->
-    bitcask_bump:big(),
-    file_write_int(Ref, Bytes).
+    ?ASYNC_NIF_CALL(file_write_int, [Ref, Bytes]).
 
 file_write_int(_Ref, _Bytes) ->
     erlang:nif_error({error, not_loaded}).
 
 file_seekbof(Ref) ->
-    bitcask_bump:big(),
-    file_seekbof_int(Ref).
+    ?ASYNC_NIF_CALL(file_seekbof_int, [Ref]).
 
 file_seekbof_int(_Ref) ->
     erlang:nif_error({error, not_loaded}).
@@ -475,7 +480,7 @@ keydir_del_while_pending_test() ->
     ok = keydir_put(Ref1, Key, 0, 1234, 0, 1),
     keydir_mark_ready(Ref1),
     ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
-                                offset = <<0:64/unsigned-native>>, tstamp = 1}, 
+                                offset = <<0:64/unsigned-native>>, tstamp = 1},
                  keydir_get_int(Ref1, Key)),
     {ready, Ref2} = keydir_new(Name),
     try
@@ -488,7 +493,7 @@ keydir_del_while_pending_test() ->
         %% Keep iterating on Ref2 and check result is [Key]
         Fun = fun(IterKey, Acc) -> [IterKey | Acc] end,
         ?assertEqual([#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
-                                     offset = 0, tstamp = 1}], 
+                                     offset = 0, tstamp = 1}],
                      keydir_fold_cont(keydir_itr_next(Ref2), Ref2, Fun, []))
     after
         %% End iteration
@@ -509,7 +514,7 @@ keydir_create_del_while_pending_test() ->
         %% Delete Key
         ok = keydir_put(Ref1, Key, 0, 1234, 0, 1),
         ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
-                                     offset = <<0:64/unsigned-native>>, tstamp = 1}, 
+                                     offset = <<0:64/unsigned-native>>, tstamp = 1},
                      keydir_get_int(Ref1, Key)),
         ?assertEqual(ok, keydir_remove(Ref1, Key)),
         ?assertEqual(not_found, keydir_get(Ref1, Key)),
@@ -537,7 +542,7 @@ keydir_del_put_while_pending_test() ->
         ?assertEqual(ok, keydir_remove(Ref1, Key)),
         ok = keydir_put(Ref1, Key, 0, 1234, 0, 1),
         ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
-                                     offset = <<0:64/unsigned-native>>, tstamp = 1}, 
+                                     offset = <<0:64/unsigned-native>>, tstamp = 1},
                      keydir_get_int(Ref1, Key)),
 
         %% Keep iterating on Ref2 and check result is [] it was started after iter
@@ -549,7 +554,7 @@ keydir_del_put_while_pending_test() ->
     end,
     %% Check key is still present
     ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
-                                offset = <<0:64/unsigned-native>>, tstamp = 1}, 
+                                offset = <<0:64/unsigned-native>>, tstamp = 1},
                  keydir_get_int(Ref1, Key)).
 
 keydir_multi_put_during_itr_test() ->
@@ -612,7 +617,7 @@ keydir_itr_many_update_test() ->
     {not_ready, Ref1} = bitcask_nifs:keydir_new(Name),
     bitcask_nifs:keydir_mark_ready(Ref1),
     ok = bitcask_nifs:keydir_itr_int(Ref1, <<1000000:64/unsigned-native>>, 0, 0),
-    ok = keydir_put(Ref1, <<"key">>, 1, 2, 3, 4), 
+    ok = keydir_put(Ref1, <<"key">>, 1, 2, 3, 4),
     Me = self(),
     F = fun() ->
                 {ready, Ref2} = bitcask_nifs:keydir_new(Name),
