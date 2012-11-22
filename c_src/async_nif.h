@@ -48,13 +48,13 @@ static struct anif_worker_entry anif_worker_entries[ANIF_MAX_WORKERS];
 
 #define ASYNC_NIF_DECL(name, frame, pre_block, work_block, post_block)  \
   struct name ## _args frame;                                           \
-  static void fn_work_ ## name (ErlNifEnv *env, ErlNifPid *pid, struct name ## _args *args) \
+  void fn_work_ ## name (ErlNifEnv *env, ErlNifPid *pid, struct name ## _args *args) \
        work_block                                                       \
-  static void fn_post_ ## name (struct name ## _args *args) {           \
+  void fn_post_ ## name (struct name ## _args *args) {                  \
     do post_block while(0);                                             \
     enif_free(args);                                                    \
   }                                                                     \
-  static ERL_NIF_TERM name(ErlNifEnv* env_in, int argc, const ERL_NIF_TERM argv_in[]) { \
+  ERL_NIF_TERM name(ErlNifEnv* env_in, int argc, const ERL_NIF_TERM argv_in[]) { \
     struct name ## _args on_stack_args;                                 \
     struct name ## _args *args = &on_stack_args;                        \
     struct name ## _args *copy_of_args;                                 \
