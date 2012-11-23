@@ -45,17 +45,17 @@ static ErlNifMutex *anif_worker_mutex = NULL;
 static ErlNifCond *anif_cnd = NULL;
 static struct anif_worker_entry anif_worker_entries[ANIF_MAX_WORKERS];
 
-#define ASYNC_NIF_DECL(name, frame, pre_block, work_block, post_block)  \
-  struct name ## _args frame;                                           \
-  static void fn_work_ ## name (ErlNifEnv *env, ERL_NIF_TERM ref, ErlNifPid *pid, struct name ## _args *args) \
+#define ASYNC_NIF_DECL(decl, frame, pre_block, work_block, post_block)  \
+  struct decl ## _args frame;                                           \
+  static void fn_work_ ## decl (ErlNifEnv *env, ERL_NIF_TERM ref, ErlNifPid *pid, struct decl ## _args *args) \
        work_block                                                       \
-  static void fn_post_ ## name (struct name ## _args *args) {           \
+  static void fn_post_ ## decl (struct decl ## _args *args) {           \
     do post_block while(0);                                             \
   }                                                                     \
-  static ERL_NIF_TERM name(ErlNifEnv* env_in, int argc_in, const ERL_NIF_TERM argv_in[]) { \
-    struct name ## _args on_stack_args;                                 \
-    struct name ## _args *args = &on_stack_args;                        \
-    struct name ## _args *copy_of_args;                                 \
+  static ERL_NIF_TERM decl(ErlNifEnv* env_in, int argc_in, const ERL_NIF_TERM argv_in[]) { \
+    struct decl ## _args on_stack_args;                                 \
+    struct decl ## _args *args = &on_stack_args;                        \
+    struct decl ## _args *copy_of_args;                                 \
     struct anif_req_entry *req = NULL;                                  \
     ErlNifPid pid_in;                                                   \
     ErlNifEnv *env = NULL;                                              \
@@ -80,7 +80,7 @@ static struct anif_worker_entry anif_worker_entries[ANIF_MAX_WORKERS];
       return enif_make_tuple2(env_in, enif_make_atom(env_in, "error"),  \
                               enif_make_atom(env_in, "enomem"));        \
     }                                                                   \
-    copy_of_args = (struct name ## _args *)enif_alloc(sizeof(struct name ## _args)); \
+    copy_of_args = (struct decl ## _args *)enif_alloc(sizeof(struct decl ## _args)); \
     if (!copy_of_args) {                                                \
       enif_free_env(env);                                               \
       return enif_make_tuple2(env_in, enif_make_atom(env_in, "error"),  \
@@ -113,14 +113,14 @@ static struct anif_worker_entry anif_worker_entries[ANIF_MAX_WORKERS];
       }                                                                 \
     }                                                                   \
     do pre_block while(0);                                              \
-    memcpy(copy_of_args, args, sizeof(struct name ## _args));           \
+    memcpy(copy_of_args, args, sizeof(struct decl ## _args));           \
     req->ref = ref;                                                     \
     req->pid = enif_make_pid(env, &pid_in);                             \
     req->args = (void*)copy_of_args;                                    \
     req->argv = argv;                                                   \
     req->env = env;                                                     \
-    req->fn_work = (void (*)(ErlNifEnv *, ERL_NIF_TERM, ErlNifPid*, void *))fn_work_ ## name ; \
-    req->fn_post = (void (*)(void *))fn_post_ ## name;                  \
+    req->fn_work = (void (*)(ErlNifEnv *, ERL_NIF_TERM, ErlNifPid*, void *))fn_work_ ## decl ; \
+    req->fn_post = (void (*)(void *))fn_post_ ## decl;                  \
     anif_enqueue_req(req);                                              \
     return enif_make_tuple2(env, enif_make_atom(env, "ok"),             \
                             enif_make_int(env, anif_req_count));        \
