@@ -168,7 +168,7 @@ keydir_new() ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -183,7 +183,7 @@ keydir_new(Name) when is_list(Name) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -198,7 +198,7 @@ keydir_mark_ready(DbRef) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -232,7 +232,7 @@ keydir_put_int(DbRef, Key, FileId, TotalSz, Offset, Tstamp, NewestPutI,
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -257,7 +257,7 @@ keydir_get_int(DbRef, Key) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -272,7 +272,7 @@ keydir_remove(DbRef, Key) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -290,7 +290,7 @@ keydir_remove_int(DbRef, Key, Tstamp, FileId, Offset) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -305,7 +305,7 @@ keydir_copy(DbRef) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -325,7 +325,7 @@ keydir_itr_int(DbRef, Ts, MaxAge, MaxPuts) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -349,7 +349,7 @@ keydir_itr_next_int(DbRef) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -364,7 +364,7 @@ keydir_itr_release(DbRef) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -420,7 +420,7 @@ keydir_info(DbRef) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -435,7 +435,7 @@ keydir_release(DbRef) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -450,7 +450,7 @@ lock_acquire(Filename, IsWriteLock) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -465,7 +465,7 @@ lock_release(DbRef) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -480,7 +480,7 @@ lock_readdata(DbRef) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -495,7 +495,7 @@ lock_writedata(DbRef, Data) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -510,7 +510,7 @@ file_open(Filename, Opts) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -525,7 +525,7 @@ file_close(DbRef) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -540,7 +540,7 @@ file_sync(DbRef) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -555,7 +555,7 @@ file_pread(DbRef, Offset, Size) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -570,7 +570,7 @@ file_pwrite(DbRef, Offset, Bytes) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -585,7 +585,7 @@ file_read(DbRef, Size) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -600,7 +600,7 @@ file_write(DbRef, Bytes) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
@@ -615,7 +615,7 @@ file_seekbof(DbRef) ->
         {error, _Reason}=Error ->
             %% Work unit returned an error.
             Error;
-        {ok, Result} ->
+        _ = Result ->
             Result
     end.
 
