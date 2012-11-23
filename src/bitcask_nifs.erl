@@ -287,73 +287,181 @@ keydir_release(_Ref) ->
 
 
 lock_acquire(Filename, IsWriteLock) ->
-    ?ASYNC_NIF_CALL(fun lock_acquire_int/3, [Filename, IsWriteLock]).
+    case ?ASYNC_NIF_CALL(fun lock_acquire_int/3, [Filename, IsWriteLock]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
 
 lock_acquire_int(_MsgRef, _Filename, _IsWriteLock) ->
     erlang:nif_error({error, not_loaded}).
 
 lock_release(Ref) ->
-    ?ASYNC_NIF_CALL(fun lock_release_int/2, [Ref]).
+    case ?ASYNC_NIF_CALL(fun lock_release_int/2, [Ref]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
 
 lock_release_int(_MsgRef, _Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 lock_readdata(Ref) ->
-    ?ASYNC_NIF_CALL(fun lock_readdata_int/2, [Ref]).
+    case ?ASYNC_NIF_CALL(fun lock_readdata_int/2, [Ref]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
 
 lock_readdata_int(_MsgRef, _Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 lock_writedata(Ref, Data) ->
-    ?ASYNC_NIF_CALL(fun lock_writedata_int/3, [Ref, Data]).
+    case ?ASYNC_NIF_CALL(fun lock_writedata_int/3, [Ref, Data]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
 
 lock_writedata_int(_MsgRef, _Ref, _Data) ->
     erlang:nif_error({error, not_loaded}).
 
 file_open(Filename, Opts) ->
-    ?ASYNC_NIF_CALL(fun file_open_int/3, [Filename, Opts]).
+    case ?ASYNC_NIF_CALL(fun file_open_int/3, [Filename, Opts]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
 
 file_open_int(_MsgRef, _Filename, _Opts) ->
     erlang:nif_error({error, not_loaded}).
 
 file_close(Ref) ->
-    ?ASYNC_NIF_CALL(fun file_close_int/2, [Ref]).
+    case ?ASYNC_NIF_CALL(fun file_close_int/2, [Ref]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
 
 file_close_int(_MsgRef, _Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 file_sync(Ref) ->
-    ?ASYNC_NIF_CALL(fun file_sync_int/2, [Ref]).
+    case ?ASYNC_NIF_CALL(fun file_sync_int/2, [Ref]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
 
 file_sync_int(_MsgRef, _Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 file_pread(Ref, Offset, Size) ->
-    ?ASYNC_NIF_CALL(fun file_pread_int/4, [Ref, Offset, Size]).
+    case ?ASYNC_NIF_CALL(fun file_pread_int/4, [Ref, Offset, Size]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
 
 file_pread_int(_MsgRef, _Ref, _Offset, _Size) ->
     erlang:nif_error({error, not_loaded}).
 
 file_pwrite(Ref, Offset, Bytes) ->
-    ?ASYNC_NIF_CALL(fun file_pwrite_int/4, [Ref, Offset, Bytes]).
+    case ?ASYNC_NIF_CALL(fun file_pwrite_int/4, [Ref, Offset, Bytes]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
 
 file_pwrite_int(_MsgRef, _Ref, _Offset, _Bytes) ->
     erlang:nif_error({error, not_loaded}).
 
 file_read(Ref, Size) ->
-    ?ASYNC_NIF_CALL(fun file_read_int/3, [Ref, Size]).
+    case ?ASYNC_NIF_CALL(fun file_read_int/3, [Ref, Size]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
 
 file_read_int(_MsgRef, _Ref, _Size) ->
     erlang:nif_error({error, not_loaded}).
 
 file_write(Ref, Bytes) ->
-    ?ASYNC_NIF_CALL(fun file_write_int/3, [Ref, Bytes]).
+    case ?ASYNC_NIF_CALL(fun file_write_int/3, [Ref, Bytes]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
 
 file_write_int(_MsgRef, _Ref, _Bytes) ->
     erlang:nif_error({error, not_loaded}).
 
 file_seekbof(Ref) ->
-    ?ASYNC_NIF_CALL(fun file_seekbof_int/2, [Ref]).
+    case ?ASYNC_NIF_CALL(fun file_seekbof_int/2, [Ref]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
 
 file_seekbof_int(_MsgRef, _Ref) ->
     erlang:nif_error({error, not_loaded}).
