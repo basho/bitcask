@@ -11,7 +11,10 @@ endif
 
 all: deps compile
 
-compile:
+c_src/bitcask_nifs.o: c_src/async_nif.h
+	touch c_src/bitcask_nifs.c
+
+compile: c_src/bitcask_nifs.o
 	$(REBAR_BIN) compile eunit
 
 deps:
