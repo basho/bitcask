@@ -161,12 +161,48 @@ set_pulse_pid(_Pid) ->
 
 
 keydir_new() ->
+    case ?ASYNC_NIF_CALL(fun keydir_new_nif/1, []) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
+
+keydir_new_nif(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_new(Name) when is_list(Name) ->
+    case ?ASYNC_NIF_CALL(fun keydir_new_nif/2, [Name]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
+
+keydir_new_nif(_Ref, Name) when is_list(Name) ->
     erlang:nif_error({error, not_loaded}).
 
-keydir_mark_ready(_Ref) ->
+keydir_mark_ready(DbRef) ->
+    case ?ASYNC_NIF_CALL(fun keydir_mark_ready_nif/2, [DbRef]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
+
+keydir_mark_ready_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp) ->
@@ -187,7 +223,20 @@ keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NewestPutB,
                            end,
                    OldFileId, <<OldOffset:64/unsigned-native>>).
 
-keydir_put_int(_Ref, _Key, _FileId, _TotalSz, _Offset, _Tstamp, _NewestPutI,
+keydir_put_int(DbRef, Key, FileId, TotalSz, Offset, Tstamp, NewestPutI,
+               OldFileId, OldOffset) ->
+    case ?ASYNC_NIF_CALL(fun keydir_put_nif/10, [DbRef, Key, FileId, TotalSz, Offset, Tstamp, NewestPutI, OldFileId, OldOffset]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
+
+keydir_put_nif(_Ref, _DbRef, _Key, _FileId, _TotalSz, _Offset, _Tstamp, _NewestPutI,
                _OldFileId, _OldOffset) ->
     erlang:nif_error({error, not_loaded}).
 
@@ -200,19 +249,67 @@ keydir_get(Ref, Key) ->
             not_found
     end.
 
-keydir_get_int(_Ref, _Key) ->
+keydir_get_int(DbRef, Key) ->
+    case ?ASYNC_NIF_CALL(fun keydir_get_nif/3, [DbRef, Key]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
+
+keydir_get_nif(_Ref, _DbRef, _Key) ->
     erlang:nif_error({error, not_loaded}).
 
-keydir_remove(_Ref, _Key) ->
+keydir_remove(DbRef, Key) ->
+    case ?ASYNC_NIF_CALL(fun keydir_remove_nif/3, [DbRef, Key]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
+
+keydir_remove_nif(_Ref, _DbRef, _Key) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_remove(Ref, Key, Tstamp, FileId, Offset) ->
     keydir_remove_int(Ref, Key, Tstamp, FileId, <<Offset:64/unsigned-native>>).
 
-keydir_remove_int(_Ref, _Key, _Tstamp, _FileId, _Offset) ->
+keydir_remove_int(DbRef, Key, Tstamp, FileId, Offset) ->
+    case ?ASYNC_NIF_CALL(fun keydir_remove_nif/6, [DbRef, Key, Tstamp, FileId, Offset]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
+
+keydir_remove_nif(_Ref, _DbRef, _Key, _Tstamp, _FileId, _Offset) ->
     erlang:nif_error({error, not_loaded}).
 
-keydir_copy(_Ref) ->
+keydir_copy(DbRef) ->
+    case ?ASYNC_NIF_CALL(fun keydir_copy_nif/2, [DbRef]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
+
+keydir_copy_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_itr(Ref, MaxAge, MaxPuts) ->
@@ -220,7 +317,19 @@ keydir_itr(Ref, MaxAge, MaxPuts) ->
     TS = <<((Mega * 1000000 + Secs) * 1000000 + Micro):64/unsigned-native>>,
     keydir_itr_int(Ref, TS, MaxAge, MaxPuts).
 
-keydir_itr_int(_Ref, _Ts, _MaxAge, _MaxPuts) ->
+keydir_itr_int(DbRef, Ts, MaxAge, MaxPuts) ->
+    case ?ASYNC_NIF_CALL(fun keydir_itr_nif/5, [DbRef, Ts, MaxAge, MaxPuts]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
+
+keydir_itr_nif(_Ref, _DbRef, _Ts, _MaxAge, _MaxPuts) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_itr_next(Ref) ->
@@ -232,11 +341,35 @@ keydir_itr_next(Ref) ->
             Other
     end.
 
-keydir_itr_next_int(_Ref) ->
+keydir_itr_next_int(DbRef) ->
+    case ?ASYNC_NIF_CALL(fun keydir_itr_next_nif/2, [DbRef]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
+
+keydir_itr_next_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
-keydir_itr_release(_Ref) ->
-    ok.
+keydir_itr_release(DbRef) ->
+    case ?ASYNC_NIF_CALL(fun keydir_itr_release_nif/2, [DbRef]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
+
+keydir_itr_release_nif(_Ref, _DbRef) ->
+    erlang:nif_error({error, not_loaded}).
 
 keydir_fold(Ref, Fun, Acc0, MaxAge, MaxPuts) ->
     FrozenFun = fun() -> keydir_fold_cont(keydir_itr_next(Ref), Ref, Fun, Acc0) end,
@@ -279,15 +412,38 @@ keydir_wait_pending(Ref) ->
             ok
     end.
 
-keydir_info(_Ref) ->
+keydir_info(DbRef) ->
+    case ?ASYNC_NIF_CALL(fun keydir_info_nif/2, [DbRef]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
+
+keydir_info_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
-keydir_release(_Ref) ->
-    erlang:nif_error({error, not_loaded}).
+keydir_release(DbRef) ->
+    case ?ASYNC_NIF_CALL(fun keydir_release_nif/2, [DbRef]) of
+        {error, shutdown}=Error ->
+            %% Work unit was not executed, requeue it.
+            Error;
+        {error, _Reason}=Error ->
+            %% Work unit returned an error.
+            Error;
+        {ok, Result} ->
+            Result
+    end.
 
+keydir_release_nif(_Ref, _DbRef) ->
+    erlang:nif_error({error, not_loaded}).
 
 lock_acquire(Filename, IsWriteLock) ->
-    case ?ASYNC_NIF_CALL(fun lock_acquire_int/3, [Filename, IsWriteLock]) of
+    case ?ASYNC_NIF_CALL(fun lock_acquire_nif/3, [Filename, IsWriteLock]) of
         {error, shutdown}=Error ->
             %% Work unit was not executed, requeue it.
             Error;
@@ -298,11 +454,11 @@ lock_acquire(Filename, IsWriteLock) ->
             Result
     end.
 
-lock_acquire_int(_MsgRef, _Filename, _IsWriteLock) ->
+lock_acquire_nif(_Ref, _Filename, _IsWriteLock) ->
     erlang:nif_error({error, not_loaded}).
 
-lock_release(Ref) ->
-    case ?ASYNC_NIF_CALL(fun lock_release_int/2, [Ref]) of
+lock_release(DbRef) ->
+    case ?ASYNC_NIF_CALL(fun lock_release_nif/2, [DbRef]) of
         {error, shutdown}=Error ->
             %% Work unit was not executed, requeue it.
             Error;
@@ -313,11 +469,11 @@ lock_release(Ref) ->
             Result
     end.
 
-lock_release_int(_MsgRef, _Ref) ->
+lock_release_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
-lock_readdata(Ref) ->
-    case ?ASYNC_NIF_CALL(fun lock_readdata_int/2, [Ref]) of
+lock_readdata(DbRef) ->
+    case ?ASYNC_NIF_CALL(fun lock_readdata_nif/2, [DbRef]) of
         {error, shutdown}=Error ->
             %% Work unit was not executed, requeue it.
             Error;
@@ -328,11 +484,11 @@ lock_readdata(Ref) ->
             Result
     end.
 
-lock_readdata_int(_MsgRef, _Ref) ->
+lock_readdata_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
-lock_writedata(Ref, Data) ->
-    case ?ASYNC_NIF_CALL(fun lock_writedata_int/3, [Ref, Data]) of
+lock_writedata(DbRef, Data) ->
+    case ?ASYNC_NIF_CALL(fun lock_writedata_nif/3, [DbRef, Data]) of
         {error, shutdown}=Error ->
             %% Work unit was not executed, requeue it.
             Error;
@@ -343,11 +499,11 @@ lock_writedata(Ref, Data) ->
             Result
     end.
 
-lock_writedata_int(_MsgRef, _Ref, _Data) ->
+lock_writedata_nif(_Ref, _DbRef, _Data) ->
     erlang:nif_error({error, not_loaded}).
 
 file_open(Filename, Opts) ->
-    case ?ASYNC_NIF_CALL(fun file_open_int/3, [Filename, Opts]) of
+    case ?ASYNC_NIF_CALL(fun file_open_nif/3, [Filename, Opts]) of
         {error, shutdown}=Error ->
             %% Work unit was not executed, requeue it.
             Error;
@@ -358,11 +514,11 @@ file_open(Filename, Opts) ->
             Result
     end.
 
-file_open_int(_MsgRef, _Filename, _Opts) ->
+file_open_nif(_Ref, _Filename, _Opts) ->
     erlang:nif_error({error, not_loaded}).
 
-file_close(Ref) ->
-    case ?ASYNC_NIF_CALL(fun file_close_int/2, [Ref]) of
+file_close(DbRef) ->
+    case ?ASYNC_NIF_CALL(fun file_close_nif/2, [DbRef]) of
         {error, shutdown}=Error ->
             %% Work unit was not executed, requeue it.
             Error;
@@ -373,11 +529,11 @@ file_close(Ref) ->
             Result
     end.
 
-file_close_int(_MsgRef, _Ref) ->
+file_close_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
-file_sync(Ref) ->
-    case ?ASYNC_NIF_CALL(fun file_sync_int/2, [Ref]) of
+file_sync(DbRef) ->
+    case ?ASYNC_NIF_CALL(fun file_sync_nif/2, [DbRef]) of
         {error, shutdown}=Error ->
             %% Work unit was not executed, requeue it.
             Error;
@@ -388,11 +544,11 @@ file_sync(Ref) ->
             Result
     end.
 
-file_sync_int(_MsgRef, _Ref) ->
+file_sync_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
-file_pread(Ref, Offset, Size) ->
-    case ?ASYNC_NIF_CALL(fun file_pread_int/4, [Ref, Offset, Size]) of
+file_pread(DbRef, Offset, Size) ->
+    case ?ASYNC_NIF_CALL(fun file_pread_nif/4, [DbRef, Offset, Size]) of
         {error, shutdown}=Error ->
             %% Work unit was not executed, requeue it.
             Error;
@@ -403,11 +559,11 @@ file_pread(Ref, Offset, Size) ->
             Result
     end.
 
-file_pread_int(_MsgRef, _Ref, _Offset, _Size) ->
+file_pread_nif(_Ref, _DbRef, _Offset, _Size) ->
     erlang:nif_error({error, not_loaded}).
 
-file_pwrite(Ref, Offset, Bytes) ->
-    case ?ASYNC_NIF_CALL(fun file_pwrite_int/4, [Ref, Offset, Bytes]) of
+file_pwrite(DbRef, Offset, Bytes) ->
+    case ?ASYNC_NIF_CALL(fun file_pwrite_nif/4, [DbRef, Offset, Bytes]) of
         {error, shutdown}=Error ->
             %% Work unit was not executed, requeue it.
             Error;
@@ -418,11 +574,11 @@ file_pwrite(Ref, Offset, Bytes) ->
             Result
     end.
 
-file_pwrite_int(_MsgRef, _Ref, _Offset, _Bytes) ->
+file_pwrite_nif(_Ref, _DbRef, _Offset, _Bytes) ->
     erlang:nif_error({error, not_loaded}).
 
-file_read(Ref, Size) ->
-    case ?ASYNC_NIF_CALL(fun file_read_int/3, [Ref, Size]) of
+file_read(DbRef, Size) ->
+    case ?ASYNC_NIF_CALL(fun file_read_nif/3, [DbRef, Size]) of
         {error, shutdown}=Error ->
             %% Work unit was not executed, requeue it.
             Error;
@@ -433,11 +589,11 @@ file_read(Ref, Size) ->
             Result
     end.
 
-file_read_int(_MsgRef, _Ref, _Size) ->
+file_read_nif(_Ref, _DbRef, _Size) ->
     erlang:nif_error({error, not_loaded}).
 
-file_write(Ref, Bytes) ->
-    case ?ASYNC_NIF_CALL(fun file_write_int/3, [Ref, Bytes]) of
+file_write(DbRef, Bytes) ->
+    case ?ASYNC_NIF_CALL(fun file_write_nif/3, [DbRef, Bytes]) of
         {error, shutdown}=Error ->
             %% Work unit was not executed, requeue it.
             Error;
@@ -448,11 +604,11 @@ file_write(Ref, Bytes) ->
             Result
     end.
 
-file_write_int(_MsgRef, _Ref, _Bytes) ->
+file_write_nif(_Ref, _DbRef, _Bytes) ->
     erlang:nif_error({error, not_loaded}).
 
-file_seekbof(Ref) ->
-    case ?ASYNC_NIF_CALL(fun file_seekbof_int/2, [Ref]) of
+file_seekbof(DbRef) ->
+    case ?ASYNC_NIF_CALL(fun file_seekbof_nif/2, [DbRef]) of
         {error, shutdown}=Error ->
             %% Work unit was not executed, requeue it.
             Error;
@@ -463,7 +619,7 @@ file_seekbof(Ref) ->
             Result
     end.
 
-file_seekbof_int(_MsgRef, _Ref) ->
+file_seekbof_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
 

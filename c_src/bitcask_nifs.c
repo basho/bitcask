@@ -497,7 +497,7 @@ static void remove_entry(ErlNifEnv* env, bitcask_keydir* keydir, khiter_t itr,
 }
 
 ASYNC_NIF_DECL(
-    bitcask_nifs_keydir_put_int,
+    bitcask_nifs_keydir_put,
     { // struct
       bitcask_keydir_handle* handle;
       bitcask_keydir_entry entry;
@@ -670,7 +670,7 @@ ASYNC_NIF_DECL(
     });
 
 ASYNC_NIF_DECL(
-    bitcask_nifs_keydir_get_int,
+    bitcask_nifs_keydir_get,
     { // struct
 
       bitcask_keydir_handle* handle;
@@ -2025,33 +2025,31 @@ static ErlNifFunc nif_funcs[] =
 #ifdef PULSE
     {"set_pulse_pid", 1, set_pulse_pid},
 #endif
-    {"keydir_new", 0, bitcask_nifs_keydir_new0},
-    {"keydir_new", 1, bitcask_nifs_keydir_new1},
-    {"keydir_mark_ready", 1, bitcask_nifs_keydir_mark_ready},
-    {"keydir_put_int", 9, bitcask_nifs_keydir_put_int},
-    {"keydir_get_int", 2, bitcask_nifs_keydir_get_int},
-    {"keydir_remove", 2, bitcask_nifs_keydir_remove},
-    {"keydir_remove_int", 5, bitcask_nifs_keydir_remove},
-    {"keydir_copy", 1, bitcask_nifs_keydir_copy},
-    {"keydir_itr_int", 4, bitcask_nifs_keydir_itr},
-    {"keydir_itr_next_int", 1, bitcask_nifs_keydir_itr_next},
-    {"keydir_itr_release", 1, bitcask_nifs_keydir_itr_release},
-    {"keydir_info", 1, bitcask_nifs_keydir_info},
-    {"keydir_release", 1, bitcask_nifs_keydir_release},
-
-    {"lock_acquire_int",   3, bitcask_nifs_lock_acquire},
-    {"lock_release_int",   2, bitcask_nifs_lock_release},
-    {"lock_readdata_int",  2, bitcask_nifs_lock_readdata},
-    {"lock_writedata_int", 3, bitcask_nifs_lock_writedata},
-
-    {"file_open_int",   3, bitcask_nifs_file_open},
-    {"file_close_int",  2, bitcask_nifs_file_close},
-    {"file_sync_int",   2, bitcask_nifs_file_sync},
-    {"file_pread_int",  4, bitcask_nifs_file_pread},
-    {"file_pwrite_int", 4, bitcask_nifs_file_pwrite},
-    {"file_read_int",   3, bitcask_nifs_file_read},
-    {"file_write_int",  3, bitcask_nifs_file_write},
-    {"file_seekbof_int", 2, bitcask_nifs_file_seekbof}
+    {"keydir_new_nif", 1, bitcask_nifs_keydir_new0},
+    {"keydir_new_nif", 2, bitcask_nifs_keydir_new1},
+    {"keydir_mark_ready_nif", 2, bitcask_nifs_keydir_mark_ready},
+    {"keydir_put_nif", 10, bitcask_nifs_keydir_put},
+    {"keydir_get_nif", 3, bitcask_nifs_keydir_get},
+    {"keydir_remove_nif", 3, bitcask_nifs_keydir_remove},
+    {"keydir_remove_nif", 6, bitcask_nifs_keydir_remove},
+    {"keydir_copy_nif", 2, bitcask_nifs_keydir_copy},
+    {"keydir_itr_nif", 5, bitcask_nifs_keydir_itr},
+    {"keydir_itr_next_nif", 2, bitcask_nifs_keydir_itr_next},
+    {"keydir_itr_release_nif", 2, bitcask_nifs_keydir_itr_release},
+    {"keydir_info_nif", 2, bitcask_nifs_keydir_info},
+    {"keydir_release_nif", 2, bitcask_nifs_keydir_release},
+    {"lock_acquire_nif",   3, bitcask_nifs_lock_acquire},
+    {"lock_release_nif",   2, bitcask_nifs_lock_release},
+    {"lock_readdata_nif",  2, bitcask_nifs_lock_readdata},
+    {"lock_writedata_nif", 3, bitcask_nifs_lock_writedata},
+    {"file_open_nif",   3, bitcask_nifs_file_open},
+    {"file_close_nif",  2, bitcask_nifs_file_close},
+    {"file_sync_nif",   2, bitcask_nifs_file_sync},
+    {"file_pread_nif",  4, bitcask_nifs_file_pread},
+    {"file_pwrite_nif", 4, bitcask_nifs_file_pwrite},
+    {"file_read_nif",   3, bitcask_nifs_file_read},
+    {"file_write_nif",  3, bitcask_nifs_file_write},
+    {"file_seekbof_nif", 2, bitcask_nifs_file_seekbof}
 };
 
 ERL_NIF_INIT(bitcask_nifs, nif_funcs, &on_load, NULL, &on_upgrade, &on_unload);
