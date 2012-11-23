@@ -30,6 +30,8 @@
 #include "erl_nif_compat.h"
 #include "erl_nif_util.h"
 
+#include "async_nif.h"
+
 #include "khash.h"
 #include "murmurhash.h"
 
@@ -51,9 +53,6 @@ void DEBUG(const char *fmt, ...)
 #ifdef PULSE
 #include "pulse_c_send.h"
 #endif
-
-#include "async_nif.h"
-
 
 static ErlNifResourceType* bitcask_keydir_RESOURCE;
 
