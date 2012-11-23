@@ -15,13 +15,18 @@ c_src/bitcask_nifs.o: c_src/async_nif.h
 	touch c_src/bitcask_nifs.c
 
 compile: c_src/bitcask_nifs.o
-	$(REBAR_BIN) compile eunit
+	@$(REBAR_BIN) compile
+
+test: eunit
+
+eunit: compile
+	@$(REBAR_BIN) eunit skip_deps=true
 
 deps:
-	$(REBAR_BIN) get-deps
+	@$(REBAR_BIN) get-deps
 
 clean:
-	$(REBAR_BIN) clean
+	@$(REBAR_BIN) clean
 
 # Release tarball creation
 # Generates a tarball that includes all the deps sources so no checkouts are necessary
