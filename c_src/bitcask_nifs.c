@@ -1202,10 +1202,10 @@ ASYNC_NIF_DECL(
         char filename[4096];
         int is_write_lock;
     },
-    { //pre
+    { // pre
         args->is_write_lock = 0;
-        if (!(enif_get_string(env, argv[1], args->filename, sizeof(args->filename), ERL_NIF_LATIN1) &&
-              enif_get_int(env, argv[2], &(args->is_write_lock)))) {
+        if (!(enif_get_string(env, argv[0], args->filename, sizeof(args->filename), ERL_NIF_LATIN1) &&
+              enif_get_int(env, argv[1], &(args->is_write_lock)))) {
             ASYNC_NIF_RETURN_BADARG();
         }
         args->ref = argv[0];
@@ -1576,8 +1576,8 @@ ASYNC_NIF_DECL(
         size_t count;
     },
     { // pre
-        if (!(enif_get_resource(env, argv[1], bitcask_file_RESOURCE, (void**)&(args->handle)) &&
-              enif_get_ulong(env, argv[2], &(args->count)))) { /* Count */
+        if (!(enif_get_resource(env, argv[0], bitcask_file_RESOURCE, (void**)&(args->handle)) &&
+              enif_get_ulong(env, argv[1], &(args->count)))) { /* Count */
           ASYNC_NIF_RETURN_BADARG();
         }
         enif_keep_resource((void*)args->handle);
