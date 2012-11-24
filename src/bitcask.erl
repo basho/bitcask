@@ -1291,7 +1291,7 @@ init_dataset(Dirname, Opts, KVs) ->
 
     B = bitcask:open(Dirname, [read_write] ++ Opts),
     lists:foldl(fun({K, V}, _) ->
-                        ok = bitcask:put(B, K, V)
+                        ?assertEqual(ok, bitcask:put(B, K, V))
                 end, undefined, KVs),
     B.
 
@@ -1310,23 +1310,23 @@ a0_test() ->
 openclose_test() ->
     os:cmd("rm -rf /tmp/bc.test.openclose"),
     B = bitcask:open("/tmp/bc.test.openclose", [read_write]),
-    close(B).
+    ?assertEqual(ok, bitcask:close(B)).
 
 roundtrip_test() ->
     os:cmd("rm -rf /tmp/bc.test.roundtrip"),
     B = bitcask:open("/tmp/bc.test.roundtrip", [read_write]),
-    ok = bitcask:put(B,<<"k">>,<<"v">>),
-    {ok, <<"v">>} = bitcask:get(B,<<"k">>),
-    ok = bitcask:put(B, <<"k2">>, <<"v2">>),
-    ok = bitcask:put(B, <<"k">>,<<"v3">>),
-    {ok, <<"v2">>} = bitcask:get(B, <<"k2">>),
-    {ok, <<"v3">>} = bitcask:get(B, <<"k">>),
+    ?assertEqual(ok, bitcask:put(B,<<"k">>,<<"v">>)),
+    ?assertEqual({ok, <<"v">>}, bitcask:get(B,<<"k">>)),
+    ?assertEqual(ok, bitcask:put(B, <<"k2">>, <<"v2">>)),
+    ?assertEqual(ok, bitcask:put(B, <<"k">>,<<"v3">>)),
+    ?assertEqual({ok, <<"v2">>}, bitcask:get(B, <<"k2">>)),
+    ?assertEqual({ok, <<"v3">>}, bitcask:get(B, <<"k">>)),
     close(B).
 
 write_lock_perms_test() ->
     os:cmd("rm -rf /tmp/bc.test.writelockperms"),
     B = bitcask:open("/tmp/bc.test.writelockperms", [read_write]),
-    ok = bitcask:put(B, <<"k">>, <<"v">>),
+    ?assertEqual(ok, bitcask:put(B, <<"k">>, <<"v">>)),
     {ok, Info} = file:read_file_info("/tmp/bc.test.writelockperms/bitcask.write.lock"),
     ?assertEqual(8#00600, Info#file_info.mode band 8#00600).
 
@@ -1351,15 +1351,15 @@ fold_test() ->
                                            [{K, V} | Acc]
                                    end, []),
     ?assertEqual(default_dataset(), lists:reverse(L)),
-    close(B).
+    ?assertEqual(ok, close(B)).
 
 iterator_test() ->
     B = init_dataset("/tmp/bc.iterator.test.fold", default_dataset()),
-    ok = iterator(B, 0, 0),
+    ?assertEqual(ok, bitcask:iterator(B, 0, 0)),
     Keys = [ begin #bitcask_entry{ key = Key } = iterator_next(B), Key end || 
              _ <- default_dataset() ],
     ?assertEqual(lists:sort(Keys), lists:sort([ Key  || {Key, _} <- default_dataset() ])), 
-    iterator_release(B).
+    ?assertEqual(ok, bitcask:iterator_release(B)).
 
 
 fold_corrupt_file_test() ->
@@ -1368,15 +1368,15 @@ fold_corrupt_file_test() ->
 
     os:cmd("rm -rf " ++ TestDir),
     B = bitcask:open(TestDir, [read_write]),
-    ok = bitcask:put(B,<<"k">>,<<"v">>),
-    close(B),
+    ?assertEqual(ok, bitcask:put(B,<<"k">>,<<"v">>)),
+    ?assertEqual(ok, close(B)),
 
     DataList = [{<<"k">>, <<"v">>}],
     FoldFun = fun (K, V, Acc) -> [{K, V} | Acc] end,
 
     B2 = bitcask:open(TestDir),
     ?assertEqual(DataList, bitcask:fold(B2, FoldFun,[])),
-    close(B2),
+    ?assertEqual(ok, bitcask:close(B2)),
 
     % Incomplete header
     {ok, F} = file:open(TestDataFile, [append, raw, binary]),
@@ -1384,7 +1384,7 @@ fold_corrupt_file_test() ->
     file:close(F),
     B3 = bitcask:open(TestDir),
     ?assertEqual(DataList, bitcask:fold(B3, FoldFun,[])),
-    close(B3),
+    ?assertEqual(ok, close(B3)),
 
     % Header without any data
     {ok, F2} = file:open(TestDataFile, [append, raw, binary]),
@@ -1392,9 +1392,10 @@ fold_corrupt_file_test() ->
     file:close(F2),
     B4 = bitcask:open(TestDir),
     ?assertEqual(DataList, bitcask:fold(B4, FoldFun,[])),
-    close(B4),
+    ?assertEqual(ok, close(B4)),
     ok.
 
+-ifdef(GSB).
 %%
 %% Check that fold visits the objects at the point the keydir
 %% was frozen.  Check with and without wrapping the cask.
@@ -1411,22 +1412,24 @@ fold_visits_frozen_test(RollOver) ->
         Me = self(),
         
         %% Freeze the keydir with default_dataset written
-        FrozenFun = fun() ->
-                            Me ! frozen,
-                            receive
-                                done ->
-                                ok
-                            end
-                    end,
-        FreezeWaiter = proc_lib:spawn_link(
-                         fun() ->
-                                 B2 = bitcask:open(Cask, [read]),
-                                 Ref2 = (get_state(B2))#bc_state.keydir,
-                                 %% Start a function that waits in a frozen keydir for a message
-                                 %% so the test fold can guarantee a frozen keydir
-                                 ok = bitcask_nifs:keydir_frozen(Ref2, FrozenFun, -1, -1),
-                                 bitcask:close(B2)
-                         end),
+        FrozenFun =
+            fun() ->
+                    Me ! frozen,
+                    receive
+                        done ->
+                            ok
+                    end
+            end,
+        FreezeWaiter =
+            proc_lib:spawn_link(
+              fun() ->
+                      B2 = bitcask:open(Cask, [read]),
+                      Ref2 = (get_state(B2))#bc_state.keydir,
+                      %% Start a function that waits in a frozen keydir for a message
+                      %% so the test fold can guarantee a frozen keydir
+                      ?assertEqual(ok, bitcask_nifs:keydir_frozen(Ref2, FrozenFun, -1, -1)),
+                      ?assertEqual(ok, bitcask:close(B2))
+              end),
         receive
             frozen ->
                 ok
@@ -1446,9 +1449,9 @@ fold_visits_frozen_test(RollOver) ->
         end,
         
         %% A delete, an update and an insert
-        ok = delete(B, <<"k">>),
-        ok = put(B, <<"k2">>, <<"v2-2">>),
-        ok = put(B, <<"k4">>, <<"v4">>),
+        ?assertEqual(ok, bitcask:delete(B, <<"k">>)),
+        ?assertEqual(ok, bitcask:put(B, <<"k2">>, <<"v2-2">>)),
+        ?assertEqual(ok, bitcask:put(B, <<"k4">>, <<"v4">>)),
 
         CollectAll = fun(K, V, Acc) ->
                              [{K, V} | Acc]
@@ -1458,7 +1461,7 @@ fold_visits_frozen_test(RollOver) ->
 
         %% Unfreeze the keydir, waiting until complete
         FreezeWaiter ! done,
-        bitcask_nifs:keydir_wait_pending(Ref),
+        ?assertEqual(ok, bitcask_nifs:keydir_wait_pending(Ref)),
 
         %% Check we see the updated fold
         L2 = fold(B, CollectAll, [], -1, -1),
@@ -1466,11 +1469,12 @@ fold_visits_frozen_test(RollOver) ->
                       {<<"k3">>,<<"v3">>},
                       {<<"k4">>,<<"v4">>}], lists:sort(L2))
     after
-        bitcask:close(B)
+        ?assertEqual(ok, bitcask:close(B))
     end.
-    
+-endif.
+
 open_test() ->
-    close(init_dataset("/tmp/bc.test.open", default_dataset())),
+    ?assertEqual(ok, bitcask:close(init_dataset("/tmp/bc.test.open", default_dataset()))),
 
     B = bitcask:open("/tmp/bc.test.open"),
     lists:foldl(fun({K, V}, _) ->
@@ -1480,8 +1484,8 @@ open_test() ->
 wrap_test() ->
     %% Initialize dataset with max_file_size set to 1 so that each file will
     %% only contain a single key.
-    close(init_dataset("/tmp/bc.test.wrap",
-                       [{max_file_size, 1}], default_dataset())),
+    ?assertEqual(ok, bitcask:close(
+                       init_dataset("/tmp/bc.test.wrap", [{max_file_size, 1}], default_dataset()))),
 
     B = bitcask:open("/tmp/bc.test.wrap"),
 
@@ -1492,24 +1496,24 @@ wrap_test() ->
 
     %% Finally, verify that there are 3 files currently opened for read
     %% (one for each key)
-    3 = length(readable_files("/tmp/bc.test.wrap")).
+    ?assertEqual(3, length(readable_files("/tmp/bc.test.wrap"))).
 
 
 merge_test() ->
     %% Initialize dataset with max_file_size set to 1 so that each file will
     %% only contain a single key.
-    close(init_dataset("/tmp/bc.test.merge",
-                       [{max_file_size, 1}], default_dataset())),
+    ?assertEqual(ok, close(
+                       init_dataset("/tmp/bc.test.merge", [{max_file_size, 1}], default_dataset()))),
 
     %% Verify number of files in directory
-    3 = length(readable_files("/tmp/bc.test.merge")),
+    ?assertEqual(3, length(readable_files("/tmp/bc.test.merge"))),
 
     %% Merge everything
     timer:sleep(1100),
-    ok = merge("/tmp/bc.test.merge"),
+    ?assertEqual(ok, bitcask:merge("/tmp/bc.test.merge")),
 
     %% Verify we've now only got one file
-    1 = length(readable_files("/tmp/bc.test.merge")),
+    ?assertEqual(1, length(readable_files("/tmp/bc.test.merge"))),
 
     %% Make sure all the data is present
     B = bitcask:open("/tmp/bc.test.merge"),
@@ -1521,97 +1525,100 @@ merge_test() ->
 bitfold_test() ->
     os:cmd("rm -rf /tmp/bc.test.bitfold"),
     B = bitcask:open("/tmp/bc.test.bitfold", [read_write]),
-    ok = bitcask:put(B,<<"k">>,<<"v">>),
-    {ok, <<"v">>} = bitcask:get(B,<<"k">>),
-    ok = bitcask:put(B, <<"k2">>, <<"v2">>),
-    ok = bitcask:put(B, <<"k">>,<<"v3">>),
-    {ok, <<"v2">>} = bitcask:get(B, <<"k2">>),
-    {ok, <<"v3">>} = bitcask:get(B, <<"k">>),
-    ok = bitcask:delete(B,<<"k">>),
-    ok = bitcask:put(B, <<"k7">>,<<"v7">>),
-    close(B),
+    ?assertEqual(ok, bitcask:put(B,<<"k">>,<<"v">>)),
+    ?assertEqual({ok, <<"v">>}, bitcask:get(B,<<"k">>)),
+    ?assertEqual(ok, bitcask:put(B, <<"k2">>, <<"v2">>)),
+    ?assertEqual(ok, bitcask:put(B, <<"k">>,<<"v3">>)),
+    ?assertEqual({ok, <<"v2">>}, bitcask:get(B, <<"k2">>)),
+    ?assertEqual({ok, <<"v3">>}, bitcask:get(B, <<"k">>)),
+    ?assertEqual(ok, bitcask:delete(B,<<"k">>)),
+    ?assertEqual(ok, bitcask:put(B, <<"k7">>,<<"v7">>)),
+    ?assertEqual(ok, bitcask:close(B)),
     B2 = bitcask:open("/tmp/bc.test.bitfold"),
-    true = ([{<<"k7">>,<<"v7">>},{<<"k2">>,<<"v2">>}] =:=
-            bitcask:fold(B2,fun(K,V,Acc) -> [{K,V}|Acc] end,[])),
-    close(B2),
+    ?assert([{<<"k7">>,<<"v7">>},{<<"k2">>,<<"v2">>}] =:=
+                bitcask:fold(B2,fun(K,V,Acc) -> [{K,V}|Acc] end,[])),
+    ?assertEqual(ok, bitcask:close(B2)),
     ok.
 
 fold1_test() ->
     os:cmd("rm -rf /tmp/bc.test.fold1"),
     B = bitcask:open("/tmp/bc.test.fold1", [read_write,{max_file_size, 1}]),
-    ok = bitcask:put(B,<<"k">>,<<"v">>),
-    ok = bitcask:put(B,<<"k">>,<<"v1">>),
-    close(B),
+    ?assertEqual(ok, bitcask:put(B,<<"k">>,<<"v">>)),
+    ?assertEqual(ok, bitcask:put(B,<<"k">>,<<"v1">>)),
+    ?assertEqual(ok, bitcask:close(B)),
     B2 = bitcask:open("/tmp/bc.test.fold1"),
-    true = ([{<<"k">>,<<"v1">>}] =:=
+    ?assert([{<<"k">>,<<"v1">>}] =:=
                 bitcask:fold(B2,fun(K,V,Acc) -> [{K,V}|Acc] end,[])),
-    close(B2),
+    ?assertEqual(ok, bitcask:close(B2)),
     ok.
 
 list_keys_test() ->
     os:cmd("rm -rf /tmp/bc.test.listkeys"),
     B = bitcask:open("/tmp/bc.test.listkeys", [read_write]),
-    ok = bitcask:put(B,<<"k">>,<<"v">>),
-    {ok, <<"v">>} = bitcask:get(B,<<"k">>),
-    ok = bitcask:put(B, <<"k2">>, <<"v2">>),
-    ok = bitcask:put(B, <<"k">>,<<"v3">>),
-    {ok, <<"v2">>} = bitcask:get(B, <<"k2">>),
-    {ok, <<"v3">>} = bitcask:get(B, <<"k">>),
-    ok = bitcask:delete(B,<<"k">>),
-    ok = bitcask:put(B, <<"k7">>,<<"v7">>),
-    true = ([<<"k2">>,<<"k7">>] =:= lists:sort(bitcask:list_keys(B))),
-    close(B),
+    ?assertEqual(ok, bitcask:put(B,<<"k">>,<<"v">>)),
+    ?assertEqual({ok, <<"v">>}, bitcask:get(B,<<"k">>)),
+    ?assertEqual(ok, bitcask:put(B, <<"k2">>, <<"v2">>)),
+    ?assertEqual(ok, bitcask:put(B, <<"k">>,<<"v3">>)),
+    ?assertEqual({ok, <<"v2">>}, bitcask:get(B, <<"k2">>)),
+    ?assertEqual({ok, <<"v3">>}, bitcask:get(B, <<"k">>)),
+    ?assertEqual(ok, bitcask:delete(B,<<"k">>)),
+    ?assertEqual(ok, bitcask:put(B, <<"k7">>,<<"v7">>)),
+    ?assert([<<"k2">>,<<"k7">>] =:= lists:sort(bitcask:list_keys(B))),
+    ?assertEqual(ok, bitcask:close(B)),
     ok.
 
+-ifdef(GSB).
 expire_test() ->
     os:cmd("rm -rf /tmp/bc.test.expire"),
     B = bitcask:open("/tmp/bc.test.expire", [read_write,{expiry_secs,1}]),
-    ok = bitcask:put(B,<<"k">>,<<"v">>),
-    {ok, <<"v">>} = bitcask:get(B,<<"k">>),
-    ok = bitcask:put(B, <<"k2">>, <<"v2">>),
-    ok = bitcask:put(B, <<"k">>,<<"v3">>),
-    {ok, <<"v2">>} = bitcask:get(B, <<"k2">>),
-    {ok, <<"v3">>} = bitcask:get(B, <<"k">>),
+    ?assertEqual(ok, bitcask:put(B,<<"k">>,<<"v">>)),
+    ?assertEqual({ok, <<"v">>}, bitcask:get(B,<<"k">>)),
+    ?assertEqual(ok, bitcask:put(B, <<"k2">>, <<"v2">>)),
+    ?assertEqual(ok, bitcask:put(B, <<"k">>,<<"v3">>)),
+    ?assertEqual({ok, <<"v2">>}, bitcask:get(B, <<"k2">>)),
+    ?assertEqual({ok, <<"v3">>}, bitcask:get(B, <<"k">>)),
     timer:sleep(2000),
-    ok = bitcask:put(B, <<"k7">>,<<"v7">>),
-    true = ([<<"k7">>] =:= bitcask:list_keys(B)),
-    close(B),
+    ?assertEqual(ok, bitcask:put(B, <<"k7">>,<<"v7">>)),
+    ?assert([<<"k7">>] =:= bitcask:list_keys(B)),
+    ?assertEqual(ok, bitcask:close(B)),
     ok.
+-endif.
 
 expire_merge_test() ->
     %% Initialize dataset with max_file_size set to 1 so that each file will
     %% only contain a single key.
-    close(init_dataset("/tmp/bc.test.mergeexpire", [{max_file_size, 1}],
-                       default_dataset())),
+    ?assertEqual(ok, bitcask:close(
+                       init_dataset("/tmp/bc.test.mergeexpire", [{max_file_size, 1}],
+                                    default_dataset()))),
 
     %% Wait for it all to expire
     timer:sleep(2000),
 
     %% Merge everything
     timer:sleep(1100),
-    ok = merge("/tmp/bc.test.mergeexpire",[{expiry_secs,1}]),
+    ?assertEqual(ok, merge("/tmp/bc.test.mergeexpire",[{expiry_secs,1}])),
 
     %% Verify we've now only got one file
-    ok = bitcask_merge_delete:testonly__delete_trigger(),
-    1 = length(readable_files("/tmp/bc.test.mergeexpire")),
+    ?assertEqual(ok, bitcask_merge_delete:testonly__delete_trigger()),
+    ?assertEqual(1, length(readable_files("/tmp/bc.test.mergeexpire"))),
 
     %% Make sure all the data is present
     B = bitcask:open("/tmp/bc.test.mergeexpire"),
 
     %% It's gone!
-    true = ([] =:= bitcask:list_keys(B)),
+    ?assert([] =:= bitcask:list_keys(B)),
 
-    close(B),
+    ?assertEqual(ok, bitcask:close(B)),
     ok.
 
 fold_deleted_test() ->    
     os:cmd("rm -rf /tmp/bc.test.fold_delete"),
     B = bitcask:open("/tmp/bc.test.fold_delete",
                      [read_write,{max_file_size, 1}]),
-    ok = bitcask:put(B,<<"k">>,<<"v">>),
-    ok = bitcask:delete(B,<<"k">>),
-    true = ([] =:= bitcask:fold(B, fun(K, V, Acc0) -> [{K,V}|Acc0] end, [])),
-    close(B),
+    ?assertEqual(ok, bitcask:put(B,<<"k">>,<<"v">>)),
+    ?assertEqual(ok, bitcask:delete(B,<<"k">>)),
+    ?assert([] =:= bitcask:fold(B, fun(K, V, Acc0) -> [{K,V}|Acc0] end, [])),
+    ?assertEqual(ok, bitcask:close(B)),
     ok.
 
 lazy_open_test() ->
@@ -1619,88 +1626,87 @@ lazy_open_test() ->
 
     %% Just opening/closing should not create any files.
     B1 = bitcask:open("/tmp/bc.test.opp_open", [read_write]),
-    bitcask:close(B1),
-    0 = length(readable_files("/tmp/bc.test.opp_open")),
+    ?assertEqual(ok, bitcask:close(B1)),
+    ?assertEqual(0, length(readable_files("/tmp/bc.test.opp_open"))),
 
     B2 = bitcask:open("/tmp/bc.test.opp_open", [read_write]),
-    ok = bitcask:put(B2,<<"k">>,<<"v">>),
-    bitcask:close(B2),
+    ?assertEqual(ok, bitcask:put(B2,<<"k">>,<<"v">>)),
+    ?assertEqual(ok, bitcask:close(B2)),
     B3 = bitcask:open("/tmp/bc.test.opp_open", [read_write]),
-    bitcask:close(B3),
-    1 = length(readable_files("/tmp/bc.test.opp_open")),
+    ?assertEqual(ok, bitcask:close(B3)),
+    ?assertEqual(1, length(readable_files("/tmp/bc.test.opp_open"))),
     ok.
 
 open_reset_open_test() ->
     os:cmd("rm -rf /tmp/bc.test.twice"),
     B1 = bitcask:open("/tmp/bc.test.twice", [read_write]),
-    ok = bitcask:put(B1,<<"k">>,<<"v">>),
-    bitcask:close(B1),
+    ?assertEqual(ok, bitcask:put(B1,<<"k">>,<<"v">>)),
+    ?assertEqual(ok, bitcask:close(B1)),
     os:cmd("rm -rf /tmp/bc.test.twice"),
     B2 = bitcask:open("/tmp/bc.test.twice", [read_write]),
-    ok = bitcask:put(B2,<<"x">>,<<"q">>),
-    not_found = bitcask:get(B2,<<"k">>),
-    bitcask:close(B2).
+    ?assertEqual(ok, bitcask:put(B2,<<"x">>,<<"q">>)),
+    ?assertEqual(not_found, bitcask:get(B2,<<"k">>)),
+    ?assertEqual(ok, bitcask:close(B2)),
+    ok.
 
 delete_merge_test() ->
     %% Initialize dataset with max_file_size set to 1 so that each file will
     %% only contain a single key.
-    close(init_dataset("/tmp/bc.test.delmerge", [{max_file_size, 1}],
-                       default_dataset())),
+    ?assertEqual(ok, bitcask:close(
+                       init_dataset("/tmp/bc.test.delmerge", [{max_file_size, 1}],
+                                    default_dataset()))),
 
     %% perform some deletes, tombstones should go in their own files
     B1 = bitcask:open("/tmp/bc.test.delmerge", [read_write,{max_file_size, 1}]),
-    ok = bitcask:delete(B1,<<"k2">>),
-    ok = bitcask:delete(B1,<<"k3">>),
+    ?assertEqual(ok, bitcask:delete(B1,<<"k2">>)),
+    ?assertEqual(ok, bitcask:delete(B1,<<"k3">>)),
     A1 = [<<"k">>],
-    A1 = bitcask:list_keys(B1),
-    close(B1),
+    ?assertEqual(A1, bitcask:list_keys(B1)),
+    ?assertEqual(ok, bitcask:close(B1)),
 
     timer:sleep(1100),
-    ok = merge("/tmp/bc.test.delmerge",[]),
+    ?assertEqual(ok, merge("/tmp/bc.test.delmerge",[])),
 
     %% Verify we've now only got one item left
     B2 = bitcask:open("/tmp/bc.test.delmerge"),
     A = [<<"k">>],
-    A = bitcask:list_keys(B2),
-    close(B2),
-
+    ?assertEqual(A, bitcask:list_keys(B2)),
+    ?assertEqual(ok, bitcask:close(B2)),
     ok.
 
 delete_partial_merge_test() ->
     %% Initialize dataset with max_file_size set to 1 so that each file will
     %% only contain a single key.
-    close(init_dataset("/tmp/bc.test.pardel", [{max_file_size, 1}],
-                       default_dataset())),
+    ?assertEqual(ok, bitcask:close(
+                       init_dataset("/tmp/bc.test.pardel", [{max_file_size, 1}],
+                                    default_dataset()))),
 
     %% perform some deletes, tombstones should go in their own files
     B1 = bitcask:open("/tmp/bc.test.pardel", [read_write,{max_file_size, 1}]),
-    ok = bitcask:delete(B1,<<"k2">>),
-    ok = bitcask:delete(B1,<<"k3">>),
+    ?assertEqual(ok, bitcask:delete(B1,<<"k2">>)),
+    ?assertEqual(ok, bitcask:delete(B1,<<"k3">>)),
     A1 = [<<"k">>],
-    A1 = bitcask:list_keys(B1),
-    close(B1),
+    ?assertEqual(A1, bitcask:list_keys(B1)),
+    ?assertEqual(ok, bitcask:close(B1)),
 
     %% selective merge, hit all of the files with deletes but not
     %%  all of the ones with deleted data
     timer:sleep(1100),
-    ok = merge("/tmp/bc.test.pardel",[],lists:reverse(lists:nthtail(2,
-                                           lists:reverse(readable_files(
-                                               "/tmp/bc.test.pardel"))))),
+    ?assertEqual(ok, bitcask:merge("/tmp/bc.test.pardel",[], lists:reverse(lists:nthtail(2, lists:reverse(readable_files("/tmp/bc.test.pardel")))))),
 
     %% Verify we've now only got one item left
     B2 = bitcask:open("/tmp/bc.test.pardel"),
     A = [<<"k">>],
-    A = bitcask:list_keys(B2),
-    close(B2),
-
+    ?assertEqual(A, bitcask:list_keys(B2)),
+    ?assertEqual(ok, bitcask:close(B2)),
     ok.
 
 corrupt_file_test() ->
     os:cmd("rm -rf /tmp/bc.test.corrupt"),
     B1 = bitcask:open("/tmp/bc.test.corrupt", [read_write]),
-    ok = bitcask:put(B1,<<"k">>,<<"v">>),
-    {ok, <<"v">>} = bitcask:get(B1,<<"k">>),
-    close(B1),
+    ?assertEqual(ok, bitcask:put(B1,<<"k">>,<<"v">>)),
+    ?assertEqual({ok, <<"v">>}, bitcask:get(B1,<<"k">>)),
+    ?assertEqual(ok, bitcask:close(B1)),
 
     %% write bogus data at end of hintfile, verify non-crash
     os:cmd("rm -rf /tmp/bc.test.corrupt.hint"),
@@ -1712,8 +1718,8 @@ corrupt_file_test() ->
     ok = file:write(HFD, <<"1">>),
     file:close(HFD),    
     B2 = bitcask:open("/tmp/bc.test.corrupt.hint"),
-    {ok, <<"v">>} = bitcask:get(B2,<<"k">>),
-    close(B2),
+    ?assertEqual({ok, <<"v">>}, bitcask:get(B2,<<"k">>)),
+    ?assertEqual(ok, bitcask:close(B2)),
 
     %% write bogus data at end of datafile, no hintfile, verify non-crash
     os:cmd("rm -rf /tmp/bc.test.corrupt.data"),
@@ -1721,11 +1727,11 @@ corrupt_file_test() ->
     os:cmd("cp -r /tmp/bc.test.corrupt/*data /tmp/bc.test.corrupt.data/100.bitcask.data"),
     DFN = "/tmp/bc.test.corrupt.data/100.bitcask.data",
     {ok, DFD} = file:open(DFN, [append, raw, binary]),
-    ok = file:write(DFD, <<"2">>),
+    ?assertEqual(ok, file:write(DFD, <<"2">>)),
     file:close(DFD),    
     B3 = bitcask:open("/tmp/bc.test.corrupt.data"),
-    {ok, <<"v">>} = bitcask:get(B3,<<"k">>),
-    close(B3),
+    ?assertEqual({ok, <<"v">>}, bitcask:get(B3,<<"k">>)),
+    ?assertEqual(ok, bitcask:close(B3)),
 
     %% as above, but more than just headersize data
     os:cmd("rm -rf /tmp/bc.test.corrupt.data2"),
@@ -1736,9 +1742,8 @@ corrupt_file_test() ->
     ok = file:write(D2FD, <<"123456789012345">>),
     file:close(D2FD),    
     B4 = bitcask:open("/tmp/bc.test.corrupt.data2"),
-    {ok, <<"v">>} = bitcask:get(B4,<<"k">>),
-    close(B4),
-
+    ?assertEqual({ok, <<"v">>}, bitcask:get(B4,<<"k">>)),
+    ?assertEqual(ok, bitcask:close(B4)),
     ok.
 
 invalid_data_size_test() ->
@@ -1747,8 +1752,8 @@ invalid_data_size_test() ->
 
     os:cmd("rm -rf " ++ TestDir),
     B = bitcask:open(TestDir, [read_write]),
-    ok = bitcask:put(B,<<"k">>,<<"v">>),
-    close(B),
+    ?assertEqual(ok, bitcask:put(B,<<"k">>,<<"v">>)),
+    ?assertEqual(ok, bitcask:close(B)),
 
     % Alter data size
     {ok, F} = file:open(TestDataFile, [read, write, raw, binary]),
@@ -1757,7 +1762,7 @@ invalid_data_size_test() ->
     file:close(F),
     B2 = bitcask:open(TestDir),
     ?assertEqual({error, bad_crc}, bitcask:get(B2, <<"k">>)),
-    close(B2),
+    ?assertEqual(ok, bitcask:close(B2)),
     ok.
 
 testhelper_keydir_count(B) ->
@@ -1768,55 +1773,57 @@ testhelper_keydir_count(B) ->
 expire_keydir_test() ->
     %% Initialize dataset with max_file_size set to 1 so that each file will
     %% only contain a single key.
-    close(init_dataset("/tmp/bc.test.mergeexpirekeydir", [{max_file_size, 1}],
-                       default_dataset())),
+    ?assertEqual(ok, bitcask:close(
+                       init_dataset("/tmp/bc.test.mergeexpirekeydir", [{max_file_size, 1}],
+                                    default_dataset()))),
 
     KDB = bitcask:open("/tmp/bc.test.mergeexpirekeydir"),
 
-    %% three keys in the keydir now
-    3 = testhelper_keydir_count(KDB),
+    %% Three keys in the keydir now
+    ?assertEqual(3, testhelper_keydir_count(KDB)),
 
     %% Wait for it all to expire
     timer:sleep(2000),
 
     %% Merge everything
     timer:sleep(1100),
-    ok = merge("/tmp/bc.test.mergeexpirekeydir",[{expiry_secs,1}]),
+    ?assertEqual(ok, bitcask:merge("/tmp/bc.test.mergeexpirekeydir",[{expiry_secs,1}])),
 
     %% should be no keys in the keydir now
-    0 = testhelper_keydir_count(KDB),
+    ?assertEqual(0, testhelper_keydir_count(KDB)),
 
-    bitcask:close(KDB),
+    ?assertEqual(ok, bitcask:close(KDB)),
     ok.
 
 delete_keydir_test() ->
-    close(init_dataset("/tmp/bc.test.deletekeydir", [],
-                       default_dataset())),
+    ?assertEqual(ok, bitcask:close(
+                       init_dataset("/tmp/bc.test.deletekeydir", [],
+                                    default_dataset()))),
 
     KDB = bitcask:open("/tmp/bc.test.deletekeydir", [read_write]),
 
-    %% three keys in the keydir now
-    3 = testhelper_keydir_count(KDB),
+    %% Three keys in the keydir now
+    ?assertEqual(3, testhelper_keydir_count(KDB)),
 
     %% Delete something
-    ok = bitcask:delete(KDB, <<"k">>),
+    ?assertEqual(ok, bitcask:delete(KDB, <<"k">>)),
 
-    %% should be 2 keys in the keydir now
-    2 = testhelper_keydir_count(KDB),
+    %% Should be 2 keys in the keydir now
+    ?assertEqual(2, testhelper_keydir_count(KDB)),
 
-    bitcask:close(KDB),
+    ?assertEqual(ok, bitcask:close(KDB)),
     ok.
 
 frag_status_test() ->
     os:cmd("rm -rf /tmp/bc.test.fragtest"),
     os:cmd("mkdir /tmp/bc.test.fragtest"),
     B1 = bitcask:open("/tmp/bc.test.fragtest", [read_write]),
-    ok = bitcask:put(B1,<<"k">>,<<"v">>),
-    ok = bitcask:put(B1,<<"k">>,<<"z">>),
-    ok = bitcask:close(B1),
+    ?assertEqual(ok, bitcask:put(B1,<<"k">>,<<"v">>)),
+    ?assertEqual(ok, bitcask:put(B1,<<"k">>,<<"z">>)),
+    ?assertEqual(ok, bitcask:close(B1)),
     % close and reopen so that status can reflect a closed file
     B2 = bitcask:open("/tmp/bc.test.fragtest", [read_write]),
-    {1,[{_,50,16,32}]} = bitcask:status(B2),
+    ?assert({1,[{_,50,16,32}]} = bitcask:status(B2)),
     %% 1 key, 50% frag, 16 dead bytes, 32 total bytes
     ok.
 
@@ -1826,8 +1833,8 @@ truncated_datafile_test() ->
     os:cmd("rm -rf " ++ Dir),
     os:cmd("mkdir " ++ Dir),
     B1 = bitcask:open(Dir, [read_write]),
-    [ok = bitcask:put(B1, <<"k">>, <<X:32>>) || X <- lists:seq(1, 100)],
-    ok = bitcask:close(B1),
+    [?assertEqual(ok, bitcask:put(B1, <<"k">>, <<X:32>>)) || X <- lists:seq(1, 100)],
+    ?assertEqual(ok, bitcask:close(B1)),
 
     [DataFile|_] = filelib:wildcard(Dir ++ "/*.data"),
     truncate_file(DataFile, 512),
@@ -1835,7 +1842,7 @@ truncated_datafile_test() ->
     % close and reopen so that status can reflect a closed file
     B2 = bitcask:open(Dir, [read_write]),
 
-    {1, [{_, _, _, 513}]} = bitcask:status(B2),
+    ?assert({1, [{_, _, _, 513}]} = bitcask:status(B2)),
     ok.
 
 trailing_junk_big_datafile_test() ->
@@ -1844,8 +1851,8 @@ trailing_junk_big_datafile_test() ->
     os:cmd("rm -rf " ++ Dir),
     os:cmd("mkdir " ++ Dir),
     B1 = bitcask:open(Dir, [read_write, {max_file_size, 1024*1024*1024}]),
-    [ok = bitcask:put(B1, <<"k", X:32>>, <<X:1024>>) || X <- lists:seq(1, NumKeys)],
-    ok = bitcask:close(B1),
+    [?assertEqual(ok, bitcask:put(B1, <<"k", X:32>>, <<X:1024>>)) || X <- lists:seq(1, NumKeys)],
+    ?assertEqual(ok, bitcask:close(B1)),
 
     [DataFile|_] = filelib:wildcard(Dir ++ "/*.data"),
     {ok, FH} = file:open(DataFile, [read, write]),
@@ -1854,14 +1861,14 @@ trailing_junk_big_datafile_test() ->
     ok = file:close(FH),
 
     %% Merge everything
-    ok = merge(Dir),
+    ?assertEqual(ok, bitcask:merge(Dir)),
 
     B2 = bitcask:open(Dir, [read_write]),
     KeyList = bitcask:fold(B2, fun(K, _V, Acc0) -> [K|Acc0] end, []),
-    true = length(KeyList) < NumKeys,
+    ?assert(length(KeyList) < NumKeys),
     ArbKey = 5,                         % get arbitrary key near start
-    {ok, <<ArbKey:1024>>} = bitcask:get(B2, <<"k", ArbKey:32>>),
-    ok = bitcask:close(B2),
+    ?assertEqual({ok, <<ArbKey:1024>>}, bitcask:get(B2, <<"k", ArbKey:32>>)),
+    ?assertEqual(ok, bitcask:close(B2)),
 
     ok.
 
@@ -1876,10 +1883,10 @@ truncated_merge_test() ->
     %% elements, this test will break.
     DataSet = default_dataset() ++ [{<<"k98">>, <<"v98">>},
                                     {<<"k99">>, <<"v99">>}],
-    close(init_dataset(Dir, [{max_file_size, 1}], DataSet)),
+    ?assertEqual(ok, bitcask:close(init_dataset(Dir, [{max_file_size, 1}], DataSet))),
 
     %% Verify number of files in directory
-    5 = length(readable_files(Dir)),
+    ?assertEqual(5, length(readable_files(Dir))),
 
     [Data1, Data2, _, _, Data5|_] = filelib:wildcard(Dir ++ "/*.data"),
     [_, _, Hint3, Hint4|_] = filelib:wildcard(Dir ++ "/*.hint"),
@@ -1898,11 +1905,11 @@ truncated_merge_test() ->
     ok = corrupt_file(Data5, 15, <<"!">>),
     %% Merge everything
     timer:sleep(1100),
-    ok = merge(Dir),
+    ?assertEqual(ok, bitcask:merge(Dir)),
 
     %% Verify we've now only got one file
-    ok = bitcask_merge_delete:testonly__delete_trigger(),
-    1 = length(readable_files(Dir)),
+    ?assertEqual(ok, bitcask_merge_delete:testonly__delete_trigger()),
+    ?assertEqual(1, length(readable_files(Dir))),
 
     %% Make sure all corrupted data is missing, all good data is present
     B = bitcask:open(Dir),
@@ -1968,13 +1975,13 @@ leak_t1() ->
     io:format("After deleting ~p keys, lsof says: ~s", [DelKeys, Used()]),
 
     timer:sleep(1100),
-    bitcask:merge(Dir),
+    ?assertEqual(ok, bitcask:merge(Dir)),
     io:format("After merging, lsof says: ~s", [Used()]),
 
     io:format("Q: Are all keys fetchable? ..."),
     [{ok, _} = bitcask:get(Ref, <<X:32>>) ||
         X <- lists:seq(DelKeys + 1, NumKeys)],
-    [not_found = bitcask:get(Ref, <<X:32>>) || X <- lists:seq(1, DelKeys)],
+    [?assertEqual(not_found, bitcask:get(Ref, <<X:32>>)) || X <- lists:seq(1, DelKeys)],
     io:format("A: yes\n"),
     io:format("Now, lsof says: ~s", [Used()]),
 
