@@ -88,12 +88,7 @@
 -spec keydir_put(reference(), binary(), integer(), integer(),
                  integer(), integer(), integer(), integer()) ->
         ok | already_exists.
--spec keydir_put_int(reference(), binary(), integer(), integer(),
-                     binary(), integer(), 0 | 1, integer(), binary()) ->
-        ok | already_exists.
 -spec keydir_get(reference(), binary()) ->
-        not_found | #bitcask_entry{}.
--spec keydir_get_int(reference(), binary()) ->
         not_found | #bitcask_entry{}.
 -spec keydir_remove(reference(), binary()) ->
         ok.
@@ -161,46 +156,19 @@ set_pulse_pid(_Pid) ->
 
 
 keydir_new() ->
-    case ?ASYNC_NIF_CALL(fun keydir_new_nif/1, []) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    ?ASYNC_NIF_CALL(fun keydir_new_nif/1, []).
 
 keydir_new_nif(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_new(Name) when is_list(Name) ->
-    case ?ASYNC_NIF_CALL(fun keydir_new_nif/2, [Name]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    ?ASYNC_NIF_CALL(fun keydir_new_nif/2, [Name]).
 
 keydir_new_nif(_Ref, _Name) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_mark_ready(DbRef) ->
-    case ?ASYNC_NIF_CALL(fun keydir_mark_ready_nif/2, [DbRef]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    ?ASYNC_NIF_CALL(fun keydir_mark_ready_nif/2, [DbRef]).
 
 keydir_mark_ready_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
@@ -215,33 +183,22 @@ keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, OldFileId, OldOffset) ->
     keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, false,
                OldFileId, OldOffset).
 
-keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NewestPutB,
+keydir_put(DbRef, Key, FileId, TotalSz, Offset, Tstamp, NewestPutB,
            OldFileId, OldOffset) ->
-    keydir_put_int(Ref, Key, FileId, TotalSz, <<Offset:64/unsigned-native>>,
-                   Tstamp, if not NewestPutB -> 0;
-                              true           -> 1
-                           end,
-                   OldFileId, <<OldOffset:64/unsigned-native>>).
-
-keydir_put_int(DbRef, Key, FileId, TotalSz, Offset, Tstamp, NewestPutI,
-               OldFileId, OldOffset) ->
-    case ?ASYNC_NIF_CALL(fun keydir_put_nif/10, [DbRef, Key, FileId, TotalSz, Offset, Tstamp, NewestPutI, OldFileId, OldOffset]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    NewestPutI = if not NewestPutB -> 0;
+                    true           -> 1
+                 end,
+    OffsetBin = <<Offset:64/unsigned-native>>,
+    OldOffsetBin = <<OldOffset:64/unsigned-native>>,
+    ?ASYNC_NIF_CALL(fun keydir_put_nif/10,
+                    [DbRef, Key, FileId, TotalSz, OffsetBin, Tstamp, NewestPutI, OldFileId, OldOffsetBin]).
 
 keydir_put_nif(_Ref, _DbRef, _Key, _FileId, _TotalSz, _Offset, _Tstamp, _NewestPutI,
                _OldFileId, _OldOffset) ->
     erlang:nif_error({error, not_loaded}).
 
-keydir_get(Ref, Key) ->
-    case keydir_get_int(Ref, Key) of
+keydir_get(DbRef, Key) ->
+    case ?ASYNC_NIF_CALL(fun keydir_get_nif/3, [DbRef, Key]) of
         E when is_record(E, bitcask_entry) ->
             <<Offset:64/unsigned-native>> = E#bitcask_entry.offset,
             E#bitcask_entry{offset = Offset};
@@ -249,124 +206,49 @@ keydir_get(Ref, Key) ->
             not_found
     end.
 
-keydir_get_int(DbRef, Key) ->
-    case ?ASYNC_NIF_CALL(fun keydir_get_nif/3, [DbRef, Key]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
-
 keydir_get_nif(_Ref, _DbRef, _Key) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_remove(DbRef, Key) ->
-    case ?ASYNC_NIF_CALL(fun keydir_remove_nif/3, [DbRef, Key]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    ?ASYNC_NIF_CALL(fun keydir_remove_nif/3, [DbRef, Key]).
 
 keydir_remove_nif(_Ref, _DbRef, _Key) ->
     erlang:nif_error({error, not_loaded}).
 
-keydir_remove(Ref, Key, Tstamp, FileId, Offset) ->
-    keydir_remove_int(Ref, Key, Tstamp, FileId, <<Offset:64/unsigned-native>>).
-
-keydir_remove_int(DbRef, Key, Tstamp, FileId, Offset) ->
-    case ?ASYNC_NIF_CALL(fun keydir_remove_nif/6, [DbRef, Key, Tstamp, FileId, Offset]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+keydir_remove(DbRef, Key, Tstamp, FileId, Offset) ->
+    ?ASYNC_NIF_CALL(fun keydir_remove_nif/6, [DbRef, Key, Tstamp, FileId, <<Offset:64/unsigned-native>>]).
 
 keydir_remove_nif(_Ref, _DbRef, _Key, _Tstamp, _FileId, _Offset) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_copy(DbRef) ->
-    case ?ASYNC_NIF_CALL(fun keydir_copy_nif/2, [DbRef]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    ?ASYNC_NIF_CALL(fun keydir_copy_nif/2, [DbRef]).
 
 keydir_copy_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
-keydir_itr(Ref, MaxAge, MaxPuts) ->
+keydir_itr(DbRef, MaxAge, MaxPuts) ->
     {Mega,Secs,Micro} = os:timestamp(),
     TS = <<((Mega * 1000000 + Secs) * 1000000 + Micro):64/unsigned-native>>,
-    keydir_itr_int(Ref, TS, MaxAge, MaxPuts).
-
-keydir_itr_int(DbRef, Ts, MaxAge, MaxPuts) ->
-    case ?ASYNC_NIF_CALL(fun keydir_itr_nif/5, [DbRef, Ts, MaxAge, MaxPuts]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    ?ASYNC_NIF_CALL(fun keydir_itr_nif/5, [DbRef, TS, MaxAge, MaxPuts]).
 
 keydir_itr_nif(_Ref, _DbRef, _Ts, _MaxAge, _MaxPuts) ->
     erlang:nif_error({error, not_loaded}).
 
-keydir_itr_next(Ref) ->
-    case keydir_itr_next_int(Ref) of
+keydir_itr_next(DbRef) ->
+    case ?ASYNC_NIF_CALL(fun keydir_itr_next_nif/2, [DbRef]) of
         E when is_record(E, bitcask_entry) ->
             <<Offset:64/unsigned-native>> = E#bitcask_entry.offset,
             E#bitcask_entry { offset = Offset };
-        Other ->
-            Other
-    end.
-
-keydir_itr_next_int(DbRef) ->
-    case ?ASYNC_NIF_CALL(fun keydir_itr_next_nif/2, [DbRef]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
+        Else ->
+            Else
     end.
 
 keydir_itr_next_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_itr_release(DbRef) ->
-    case ?ASYNC_NIF_CALL(fun keydir_itr_release_nif/2, [DbRef]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    ?ASYNC_NIF_CALL(fun keydir_itr_release_nif/2, [DbRef]).
 
 keydir_itr_release_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
@@ -396,10 +278,10 @@ keydir_frozen(Ref, FrozenFun, MaxAge, MaxPuts) ->
     end.
 
 %% Wait for any pending interation to complete
-keydir_wait_pending(Ref) ->
+keydir_wait_pending(DbRef) ->
     %% Create an iterator, passing a zero timestamp to force waiting for
     %% any current iteration to complete
-    case keydir_itr_int(Ref, <<0:64/unsigned-native>>, 0, 0) of
+    case ?ASYNC_NIF_CALL(fun keydir_itr_nif/5, [DbRef, <<0:64/unsigned-native>>, 0, 0]) of
         out_of_date -> % no iter created, wait for message from last fold_keys
             receive
                 ready ->
@@ -408,216 +290,90 @@ keydir_wait_pending(Ref) ->
                     {error, shutdown}
             end;
         ok ->
-            keydir_itr_release(Ref),
+            keydir_itr_release(DbRef),
             ok
     end.
 
 keydir_info(DbRef) ->
-    case ?ASYNC_NIF_CALL(fun keydir_info_nif/2, [DbRef]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    ?ASYNC_NIF_CALL(fun keydir_info_nif/2, [DbRef]).
 
 keydir_info_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_release(DbRef) ->
-    case ?ASYNC_NIF_CALL(fun keydir_release_nif/2, [DbRef]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    ?ASYNC_NIF_CALL(fun keydir_release_nif/2, [DbRef]).
 
 keydir_release_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
 lock_acquire(Filename, IsWriteLock) ->
-    case ?ASYNC_NIF_CALL(fun lock_acquire_nif/3, [Filename, IsWriteLock]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    ?ASYNC_NIF_CALL(fun lock_acquire_nif/3, [Filename, IsWriteLock]).
 
 lock_acquire_nif(_Ref, _Filename, _IsWriteLock) ->
     erlang:nif_error({error, not_loaded}).
 
 lock_release(DbRef) ->
-    case ?ASYNC_NIF_CALL(fun lock_release_nif/2, [DbRef]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    ?ASYNC_NIF_CALL(fun lock_release_nif/2, [DbRef]).
 
 lock_release_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
 lock_readdata(DbRef) ->
-    case ?ASYNC_NIF_CALL(fun lock_readdata_nif/2, [DbRef]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    ?ASYNC_NIF_CALL(fun lock_readdata_nif/2, [DbRef]).
 
 lock_readdata_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
 lock_writedata(DbRef, Data) ->
-    case ?ASYNC_NIF_CALL(fun lock_writedata_nif/3, [DbRef, Data]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    ?ASYNC_NIF_CALL(fun lock_writedata_nif/3, [DbRef, Data]).
 
 lock_writedata_nif(_Ref, _DbRef, _Data) ->
     erlang:nif_error({error, not_loaded}).
 
 file_open(Filename, Opts) ->
-    case ?ASYNC_NIF_CALL(fun file_open_nif/3, [Filename, Opts]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    ?ASYNC_NIF_CALL(fun file_open_nif/3, [Filename, Opts]).
 
 file_open_nif(_Ref, _Filename, _Opts) ->
     erlang:nif_error({error, not_loaded}).
 
 file_close(DbRef) ->
-    case ?ASYNC_NIF_CALL(fun file_close_nif/2, [DbRef]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    ?ASYNC_NIF_CALL(fun file_close_nif/2, [DbRef]).
 
 file_close_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
 file_sync(DbRef) ->
-    case ?ASYNC_NIF_CALL(fun file_sync_nif/2, [DbRef]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    ?ASYNC_NIF_CALL(fun file_sync_nif/2, [DbRef]).
 
 file_sync_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
 file_pread(DbRef, Offset, Size) ->
-    case ?ASYNC_NIF_CALL(fun file_pread_nif/4, [DbRef, Offset, Size]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    ?ASYNC_NIF_CALL(fun file_pread_nif/4, [DbRef, Offset, Size]).
 
 file_pread_nif(_Ref, _DbRef, _Offset, _Size) ->
     erlang:nif_error({error, not_loaded}).
 
 file_pwrite(DbRef, Offset, Bytes) ->
-    case ?ASYNC_NIF_CALL(fun file_pwrite_nif/4, [DbRef, Offset, Bytes]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    ?ASYNC_NIF_CALL(fun file_pwrite_nif/4, [DbRef, Offset, Bytes]).
 
 file_pwrite_nif(_Ref, _DbRef, _Offset, _Bytes) ->
     erlang:nif_error({error, not_loaded}).
 
 file_read(DbRef, Size) ->
-    case ?ASYNC_NIF_CALL(fun file_read_nif/3, [DbRef, Size]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    ?ASYNC_NIF_CALL(fun file_read_nif/3, [DbRef, Size]).
 
 file_read_nif(_Ref, _DbRef, _Size) ->
     erlang:nif_error({error, not_loaded}).
 
 file_write(DbRef, Bytes) ->
-    case ?ASYNC_NIF_CALL(fun file_write_nif/3, [DbRef, Bytes]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    ?ASYNC_NIF_CALL(fun file_write_nif/3, [DbRef, Bytes]).
 
 file_write_nif(_Ref, _DbRef, _Bytes) ->
     erlang:nif_error({error, not_loaded}).
 
 file_seekbof(DbRef) ->
-    case ?ASYNC_NIF_CALL(fun file_seekbof_nif/2, [DbRef]) of
-        {error, shutdown}=Error ->
-            %% Work unit was not executed, requeue it.
-            Error;
-        {error, _Reason}=Error ->
-            %% Work unit returned an error.
-            Error;
-        _ = Result ->
-            Result
-    end.
+    ?ASYNC_NIF_CALL(fun file_seekbof_nif/2, [DbRef]).
 
 file_seekbof_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
@@ -729,7 +485,7 @@ keydir_del_while_pending_test() ->
     keydir_mark_ready(Ref1),
     ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
                                 offset = <<0:64/unsigned-native>>, tstamp = 1},
-                 keydir_get_int(Ref1, Key)),
+                 ?ASYNC_NIF_CALL(fun keydir_get_nif/3, [Ref1, Key])),
     {ready, Ref2} = keydir_new(Name),
     try
         %% Start keyfold iterator on Ref2
@@ -763,7 +519,7 @@ keydir_create_del_while_pending_test() ->
         ok = keydir_put(Ref1, Key, 0, 1234, 0, 1),
         ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
                                      offset = <<0:64/unsigned-native>>, tstamp = 1},
-                     keydir_get_int(Ref1, Key)),
+                     ?ASYNC_NIF_CALL(fun keydir_get_nif/3, [Ref1, Key])),
         ?assertEqual(ok, keydir_remove(Ref1, Key)),
         ?assertEqual(not_found, keydir_get(Ref1, Key)),
 
@@ -791,7 +547,7 @@ keydir_del_put_while_pending_test() ->
         ok = keydir_put(Ref1, Key, 0, 1234, 0, 1),
         ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
                                      offset = <<0:64/unsigned-native>>, tstamp = 1},
-                     keydir_get_int(Ref1, Key)),
+                     ?ASYNC_NIF_CALL(fun keydir_get_nif/3, [Ref1, Key])),
 
         %% Keep iterating on Ref2 and check result is [] it was started after iter
         Fun = fun(IterKey, Acc) -> [IterKey | Acc] end,
@@ -803,7 +559,7 @@ keydir_del_put_while_pending_test() ->
     %% Check key is still present
     ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
                                 offset = <<0:64/unsigned-native>>, tstamp = 1},
-                 keydir_get_int(Ref1, Key)).
+                 ?ASYNC_NIF_CALL(fun keydir_get_nif/3, [Ref1, Key])).
 
 keydir_multi_put_during_itr_test() ->
     {not_ready, Ref} = bitcask_nifs:keydir_new("t"),
