@@ -53,6 +53,14 @@
 
 -on_load(init/0).
 
+-ifdef(TEST).
+-ifdef(EQC).
+-include_lib("eqc/include/eqc.hrl").
+-endif.
+-compile(export_all).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -include("bitcask.hrl").
 -include("async_nif.hrl").
 
@@ -60,14 +68,6 @@
 -compile({parse_transform, pulse_instrument}).
 -export([set_pulse_pid/1]).
 -compile({pulse_skip, [{init,0}]}).
--endif.
-
--ifdef(TEST).
--ifdef(EQC).
--include_lib("eqc/include/eqc.hrl").
--endif.
--compile(export_all).
--include_lib("eunit/include/eunit.hrl").
 -endif.
 
 -spec init() ->
@@ -396,21 +396,21 @@ keydir_fold_cont(Curr, Ref, Fun, Acc0) ->
 
 keydir_basic_test() ->
     {ok, Ref} = keydir_new(),
-    ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
+    ?assertEqual(ok, keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1)),
 
-    {1, 3, [{0, 1, 1, 1234, 1234, 1, 1}],
-     {<<0:64/unsigned-native>>, 0, false}} = keydir_info(Ref),
+    ?assertEqual({1, 3, [{0, 1, 1, 1234, 1234, 1, 1}],
+     {<<0:64/unsigned-native>>, 0, false}}, keydir_info(Ref)),
 
     E = keydir_get(Ref, <<"abc">>),
-    0 = E#bitcask_entry.file_id,
-    1234 = E#bitcask_entry.total_sz,
-    0 = E#bitcask_entry.offset,
-    1 = E#bitcask_entry.tstamp,
+    ?assertEqual(0, E#bitcask_entry.file_id),
+    ?assertEqual(1234, E#bitcask_entry.total_sz),
+    ?assertEqual(0, E#bitcask_entry.offset),
+    ?assertEqual(1, E#bitcask_entry.tstamp),
 
-    already_exists = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 0),
+    ?assertEqual(already_exists, keydir_put(Ref, <<"abc">>, 0, 1234, 0, 0)),
 
-    ok = keydir_remove(Ref, <<"abc">>),
-    not_found = keydir_get(Ref, <<"abc">>).
+    ?assertEqual(ok, keydir_remove(Ref, <<"abc">>)),
+    ?assertEqual(not_found, keydir_get(Ref, <<"abc">>)).
 
 keydir_itr_anon_test() ->
     {ok, Ref} = keydir_new(),
@@ -422,44 +422,44 @@ keydir_itr_named_test() ->
     keydir_itr_test_base(Ref).
 
 keydir_itr_test_base(Ref) ->
-    ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
-    ok = keydir_put(Ref, <<"def">>, 0, 4567, 1234, 2),
-    ok = keydir_put(Ref, <<"hij">>, 1, 7890, 0, 3),
+    ?assertEqual(ok, keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1)),
+    ?assertEqual(ok, keydir_put(Ref, <<"def">>, 0, 4567, 1234, 2)),
+    ?assertEqual(ok, keydir_put(Ref, <<"hij">>, 1, 7890, 0, 3)),
 
-    {3, 9, _, _} = keydir_info(Ref),
+    ?assertMatch({3, 9, _, _}, keydir_info(Ref)),
 
     List = keydir_fold(Ref, fun(E, Acc) -> [ E | Acc] end, [], -1, -1),
-    3 = length(List),
-    true = lists:keymember(<<"abc">>, #bitcask_entry.key, List),
-    true = lists:keymember(<<"def">>, #bitcask_entry.key, List),
-    true = lists:keymember(<<"hij">>, #bitcask_entry.key, List).
+    ?assertEqual(3, length(List)),
+    ?assert(lists:keymember(<<"abc">>, #bitcask_entry.key, List)),
+    ?assert(lists:keymember(<<"def">>, #bitcask_entry.key, List)),
+    ?assert(lists:keymember(<<"hij">>, #bitcask_entry.key, List)).
 
 keydir_copy_test() ->
     {ok, Ref1} = keydir_new(),
-    ok = keydir_put(Ref1, <<"abc">>, 0, 1234, 0, 1),
-    ok = keydir_put(Ref1, <<"def">>, 0, 4567, 1234, 2),
-    ok = keydir_put(Ref1, <<"hij">>, 1, 7890, 0, 3),
+    ?assertEqual(ok, keydir_put(Ref1, <<"abc">>, 0, 1234, 0, 1)),
+    ?assertEqual(ok, keydir_put(Ref1, <<"def">>, 0, 4567, 1234, 2)),
+    ?assertEqual(ok, keydir_put(Ref1, <<"hij">>, 1, 7890, 0, 3)),
 
     {ok, Ref2} = keydir_copy(Ref1),
-    #bitcask_entry { key = <<"abc">>} = keydir_get(Ref2, <<"abc">>).
+    ?assertMatch(#bitcask_entry { key = <<"abc">>}, keydir_get(Ref2, <<"abc">>)).
 
 keydir_named_test() ->
     {not_ready, Ref} = keydir_new("k1"),
-    ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
+    ?assertEqual(ok, keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1)),
     keydir_mark_ready(Ref),
 
     {ready, Ref2} = keydir_new("k1"),
-    #bitcask_entry { key = <<"abc">> } = keydir_get(Ref2, <<"abc">>).
+    ?assertMatch(#bitcask_entry { key = <<"abc">> }, keydir_get(Ref2, <<"abc">>)).
 
 keydir_named_not_ready_test() ->
     {not_ready, Ref} = keydir_new("k2"),
-    ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
+    ?assertEqual(ok, keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1)),
 
-    {error, not_ready} = keydir_new("k2").
+    ?assertEqual({error, not_ready}, keydir_new("k2")).
 
 keydir_itr_while_itr_error_test() ->
     {ok, Ref1} = keydir_new(),
-    ok = keydir_itr(Ref1, -1, -1),
+    ?assertEqual(ok, keydir_itr(Ref1, -1, -1)),
     try
         ?assertEqual({error, iteration_in_process},
                      keydir_itr(Ref1, -1, -1))
@@ -481,7 +481,7 @@ keydir_del_while_pending_test() ->
     Name = "k_del_while_pending_test",
     {not_ready, Ref1} = keydir_new(Name),
     Key = <<"abc">>,
-    ok = keydir_put(Ref1, Key, 0, 1234, 0, 1),
+    ?assertEqual(ok, keydir_put(Ref1, Key, 0, 1234, 0, 1)),
     keydir_mark_ready(Ref1),
     ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
                                 offset = <<0:64/unsigned-native>>, tstamp = 1},
@@ -501,7 +501,7 @@ keydir_del_while_pending_test() ->
                      keydir_fold_cont(keydir_itr_next(Ref2), Ref2, Fun, []))
     after
         %% End iteration
-        ok = keydir_itr_release(Ref2)
+        ?assertEqual(ok, keydir_itr_release(Ref2))
     end,
     %% Check key is deleted
     ?assertEqual(not_found, keydir_get(Ref1, Key)).
@@ -573,12 +573,12 @@ keydir_multi_put_during_itr_test() ->
 
 keydir_itr_out_of_date_test() ->
     Name = "keydir_itr_out_of_date_test",
-    {not_ready, Ref1} = bitcask_nifs:keydir_new(Name),
-    bitcask_nifs:keydir_mark_ready(Ref1),
-    ok = bitcask_nifs:keydir_itr_int(Ref1, <<1000000:64/unsigned-native>>, 0, 0),
-    {ready, Ref2} = bitcask_nifs:keydir_new(Name),
+    {not_ready, Ref1} = keydir_new(Name),
+    keydir_mark_ready(Ref1),
+    ?assertEqual(ok, keydir_itr_nif(Ref1, <<1000000:64/unsigned-native>>, 0, 0)),
+    {ready, Ref2} = keydir_new(Name),
     %% now() will have ensured a new usecs for keydir_itr/3 - check out of date immediately
-    ?assertEqual(out_of_date, bitcask_nifs:keydir_itr_int(Ref2, <<1000001:64/unsigned-native>>,
+    ?assertEqual(out_of_date, keydir_itr_nif(Ref2, <<1000001:64/unsigned-native>>,
                                                           0, 0)),
     keydir_itr_release(Ref1),
     ?assertEqual(ok, receive
@@ -591,15 +591,15 @@ keydir_itr_out_of_date_test() ->
 
 keydir_itr_many_out_of_date_test() ->
     Name = "keydir_itr_many_out_of_date_test",
-    {not_ready, Ref1} = bitcask_nifs:keydir_new(Name),
-    bitcask_nifs:keydir_mark_ready(Ref1),
-    ok = bitcask_nifs:keydir_itr_int(Ref1, <<1000000:64/unsigned-native>>, 0, 0),
+    {not_ready, Ref1} = keydir_new(Name),
+    keydir_mark_ready(Ref1),
+    ?assertEqual(ok, keydir_itr_nif(Ref1, <<1000000:64/unsigned-native>>, 0, 0)),
     Me = self(),
     F = fun() ->
-                {ready, Ref2} = bitcask_nifs:keydir_new(Name),
+                {ready, Ref2} = keydir_new(Name),
                 Me ! {ready, self()},
-                out_of_date = bitcask_nifs:keydir_itr_int(Ref2, <<1000001:64/unsigned-native>>,
-                                                          0, 0),
+                ?assertEqual(out_of_date, keydir_itr_nif(Ref2, <<1000001:64/unsigned-native>>,
+                                                          0, 0)),
                 receive
                     ready ->
                         Me ! {done, self()}
@@ -618,17 +618,17 @@ keydir_itr_many_out_of_date_test() ->
 
 keydir_itr_many_update_test() ->
     Name = "keydir_itr_many_update_test",
-    {not_ready, Ref1} = bitcask_nifs:keydir_new(Name),
-    bitcask_nifs:keydir_mark_ready(Ref1),
-    ok = bitcask_nifs:keydir_itr_int(Ref1, <<1000000:64/unsigned-native>>, 0, 0),
-    ok = keydir_put(Ref1, <<"key">>, 1, 2, 3, 4),
+    {not_ready, Ref1} = keydir_new(Name),
+    keydir_mark_ready(Ref1),
+    ?assertEqual(ok, keydir_itr_nif(Ref1, <<1000000:64/unsigned-native>>, 0, 0)),
+    ?assertEqual(ok, keydir_put(Ref1, <<"key">>, 1, 2, 3, 4)),
     Me = self(),
     F = fun() ->
-                {ready, Ref2} = bitcask_nifs:keydir_new(Name),
+                {ready, Ref2} = keydir_new(Name),
                 Me ! {ready, self()},
                 %% one update since created
-                out_of_date = bitcask_nifs:keydir_itr_int(Ref2, <<1000000:64/unsigned-native>>,
-                                                          0, 0),
+                ?assertEqual(out_of_date, keydir_itr_nif(Ref2, <<1000000:64/unsigned-native>>,
+                                                          0, 0)),
                 receive
                     ready ->
                         Me ! {done, self()}
@@ -651,7 +651,7 @@ keydir_wait_pending_test() ->
     keydir_mark_ready(Ref1),
 
     %% Begin iterating
-    ok = bitcask_nifs:keydir_itr(Ref1, 0, 0),
+    ?assertEqual(ok, bitcask_nifs:keydir_itr(Ref1, 0, 0)),
 
     %% Spawn a process to wait on pending
     Me = self(),
@@ -664,20 +664,28 @@ keydir_wait_pending_test() ->
     spawn(F),
 
     %% Make sure it starts
-    ok = receive waiting -> ok
-         after   1000 -> start_err
-         end,
+    ?assertEqual(ok, begin
+                         receive waiting -> ok
+                         after   1000 -> start_err
+                         end
+                     end),
     %% Give it a chance to call keydir_wait_pending then blocks
     timer:sleep(100),
-    nothing = receive Msg -> {msg, Msg}
-              after  1000 -> nothing
-        end,
+    ?assertEqual(nothing,
+       begin
+           receive Msg -> {msg, Msg}
+           after  1000 -> nothing
+           end
+       end),
 
     %% End iterating - make sure the waiter wakes up
     keydir_itr_release(Ref1),
-    ok = receive waited -> ok
-         after  1000 -> timeout_err
-         end.
+    ?assertEqual(ok,
+                 begin
+                     receive waited -> ok
+                     after  1000 -> timeout_err
+                     end
+                 end).
 
 
 -ifdef(EQC).
