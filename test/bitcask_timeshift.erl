@@ -60,11 +60,11 @@ timeshift_test() ->
 
         ?cmd("rm -rf " ++ Dirname),
         Bref = bitcask:open(Dirname, [read_write]),
-        ok = bitcask:put(Bref, <<"k1">>, <<"v1">>),
+        ?assertEqual(ok, bitcask:put(Bref, <<"k1">>, <<"v1">>)),
         %% Back when the NIF's internal puts depended on timestamps, this
         %% second put would fail because we've meck'ed time to go backward.
         %% Nowadays, this put should succeed.
-        ok = bitcask:put(Bref, <<"k1">>, <<"v2">>),
+        ?assertEqual(ok, bitcask:put(Bref, <<"k1">>, <<"v2">>)),
         bitcask:close(Bref),
 
         %% For each of the data files, validate that it has a valid hint file
@@ -81,7 +81,7 @@ timeshift_test() ->
 
         %% In our post-wall-clock timestamp world, verify that we read the newer value.
         Bref2 = bitcask:open(Dirname, [read_write]),
-        {ok, <<"v2">>} = bitcask:get(Bref2, <<"k1">>),
+        ?assertEqual({ok, <<"v2">>}, bitcask:get(Bref2, <<"k1">>)),
         bitcask:close(Bref2)
 
     after

@@ -153,7 +153,7 @@ multiple_merges_during_fold_test() ->
                  (_K, _V, 1) ->
                       1
               end,
-    SlowPid = spawn(fun() ->
+    SlowPid = spawn_link(fun() ->
                             put(B, Bstuff),
                             bitcask:fold(B, FoldFun, 0)
                     end),
@@ -165,13 +165,13 @@ multiple_merges_during_fold_test() ->
     PutSome(),
     bitcask:merge(Dir),
     Count1 = CountSetuids(),
-    true = (Count1 > 0),
+    ?assert(Count1 > 0),
     PutSome(),
     bitcask:merge(Dir),
     PutSome(),
     bitcask:merge(Dir),
     Count2 = CountSetuids(),
-    true = (Count2 > Count1),
+    ?assert(Count2 > Count1),
     
     SlowPid ! go_ahead,
     timer:sleep(500),
