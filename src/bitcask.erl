@@ -1819,7 +1819,7 @@ frag_status_test() ->
     ?assertEqual(ok, bitcask:close(B1)),
     % close and reopen so that status can reflect a closed file
     B2 = bitcask:open("/tmp/bc.test.fragtest", [read_write]),
-    ?assert({1,[{_,50,16,32}]} = bitcask:status(B2)),
+    ?assertMatch({1,[{_,50,16,32}]}, bitcask:status(B2)),
     %% 1 key, 50% frag, 16 dead bytes, 32 total bytes
     ok.
 
@@ -1838,7 +1838,7 @@ truncated_datafile_test() ->
     % close and reopen so that status can reflect a closed file
     B2 = bitcask:open(Dir, [read_write]),
 
-    ?assert({1, [{_, _, _, 513}]} = bitcask:status(B2)),
+    ?assertMatch({1, [{_, _, _, 513}]}, bitcask:status(B2)),
     ok.
 
 trailing_junk_big_datafile_test() ->
