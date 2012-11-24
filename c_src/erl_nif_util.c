@@ -21,7 +21,6 @@
 // -------------------------------------------------------------------
 
 #include "erl_nif_util.h"
-#include "erl_nif_compat.h"
 
 #include <string.h>
 
@@ -42,7 +41,7 @@ int enif_get_uint64_bin(ErlNifEnv* env, ERL_NIF_TERM term, uint64_t* outvalue)
 ERL_NIF_TERM enif_make_uint64_bin(ErlNifEnv* env, uint64_t value)
 {
     ErlNifBinary bin;
-    enif_alloc_binary_compat(env, sizeof(uint64_t), &bin);
+    enif_alloc_binary(sizeof(uint64_t), &bin);
     memcpy(bin.data, &value, sizeof(uint64_t));
     return enif_make_binary(env, &bin);
 }
