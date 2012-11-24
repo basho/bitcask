@@ -737,10 +737,14 @@ ASYNC_NIF_DECL(
     },
     { // pre
 
+      // This can be called by bitcask_nifs:keydir_remove/2 or...
       if (!(enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&args->handle) &&
-            enif_inspect_binary(env, argv[1], &args->key) &&
-            argc == 5 &&
-            enif_get_uint(env, argv[2], (unsigned int*)&args->tstamp) &&
+            enif_inspect_binary(env, argv[1], &args->key))) {
+        ASYNC_NIF_RETURN_BADARG();
+      }
+      // bitcask_nifs:keydir_remove/5
+      if (argc == 5 &&
+          !(enif_get_uint(env, argv[2], (unsigned int*)&args->tstamp) &&
             enif_get_uint(env, argv[3], (unsigned int*)&args->file_id) &&
             enif_get_uint64_bin(env, argv[4], (uint64_t*)&args->offset))) {
         ASYNC_NIF_RETURN_BADARG();
@@ -2065,9 +2069,8 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
     ATOM_O_SYNC = enif_make_atom(env, "o_sync");
 
 #ifdef PULSE
-        pulse_c_send_on_load(env);
+    pulse_c_send_on_load(env);
 #endif
-
     return 0;
 }
 
