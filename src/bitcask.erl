@@ -1307,6 +1307,11 @@ default_dataset() ->
 a0_test() ->
     code:add_pathz("../ebin").
 
+openclose_test() ->
+    os:cmd("rm -rf /tmp/bc.test.openclose"),
+    B = bitcask:open("/tmp/bc.test.openclose", [read_write]),
+    close(B).
+
 roundtrip_test() ->
     os:cmd("rm -rf /tmp/bc.test.roundtrip"),
     B = bitcask:open("/tmp/bc.test.roundtrip", [read_write]),
