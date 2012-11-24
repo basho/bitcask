@@ -44,6 +44,7 @@ void DEBUG(const char *fmt, ...)
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
     va_end(ap);
+    fflush(stderr);
 }
 #else
 #  define DEBUG(X, ...) {}
@@ -195,13 +196,13 @@ static void merge_pending_entries(ErlNifEnv* env, bitcask_keydir* keydir);
 static void lock_release(bitcask_lock_handle* handle);
 
 static void bitcask_nifs_keydir_resource_cleanup(ErlNifEnv* env, void* arg);
+static void bitcask_nifs_keydir_priv_resource_cleanup(ErlNifEnv* env, bitcask_keydir_handle *handle, bitcask_priv_data* priv);
 static void bitcask_nifs_file_resource_cleanup(ErlNifEnv* env, void* arg);
 
 
 ASYNC_NIF_DECL(
     bitcask_nifs_keydir_new0,
     { // struct
-
     },
     { // pre
     },
@@ -233,12 +234,13 @@ ASYNC_NIF_DECL(
 ASYNC_NIF_DECL(
     bitcask_nifs_keydir_new1,
     { // struct
+
       char name[4096];
       size_t name_sz;
     },
     { // pre
 
-      if (!enif_get_string(env, argv[0], args->name, sizeof(args->name), ERL_NIF_LATIN1)) {
+      if (!(enif_get_string(env, argv[0], args->name, sizeof(args->name), ERL_NIF_LATIN1) > 0)) {
         ASYNC_NIF_RETURN_BADARG();
       }
       args->name_sz = strlen(args->name);
@@ -246,7 +248,7 @@ ASYNC_NIF_DECL(
     { // work
 
       // Get our private stash and check the global hash table for this entry
-      bitcask_priv_data* priv = (bitcask_priv_data*)enif_priv_data(env);
+      bitcask_priv_data* priv = (bitcask_priv_data*)priv_data;
       enif_mutex_lock(priv->global_keydirs_lock);
 
       bitcask_keydir* keydir;
@@ -304,6 +306,7 @@ ASYNC_NIF_DECL(
 ASYNC_NIF_DECL(
     bitcask_nifs_keydir_mark_ready,
     { // struct
+
       bitcask_keydir_handle* handle;
     },
     { // pre
@@ -322,6 +325,7 @@ ASYNC_NIF_DECL(
       ASYNC_NIF_REPLY(ATOM_OK);
     },
     { // post
+
       enif_release_resource((void*)args->handle);
     });
 
@@ -500,6 +504,7 @@ static void remove_entry(ErlNifEnv* env, bitcask_keydir* keydir, khiter_t itr,
 ASYNC_NIF_DECL(
     bitcask_nifs_keydir_put,
     { // struct
+
       bitcask_keydir_handle* handle;
       bitcask_keydir_entry entry;
       ErlNifBinary key;
@@ -507,6 +512,7 @@ ASYNC_NIF_DECL(
       uint64_t old_offset;
     },
     { // pre
+
       if (!(enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&args->handle) &&
             enif_inspect_binary(env, argv[1], &args->key) &&
             enif_get_uint(env, argv[2], (unsigned int*)&(args->entry.file_id)) &&
@@ -900,6 +906,7 @@ ASYNC_NIF_DECL(
       ASYNC_NIF_REPLY(enif_make_tuple2(env, ATOM_OK, result));
     },
     { // post
+
       enif_release_resource((void*)args->handle);
     });
 
@@ -1188,29 +1195,33 @@ ASYNC_NIF_DECL(
     },
     { // work
 
-      bitcask_nifs_keydir_resource_cleanup(env, args->handle);
+      bitcask_nifs_keydir_priv_resource_cleanup(env, args->handle, priv_data);
       ASYNC_NIF_REPLY(ATOM_OK);
     },
     { // post
+
       enif_release_resource((void*)args->handle);
     });
 
 ASYNC_NIF_DECL(
     bitcask_nifs_lock_acquire,
     { // struct
+
         ERL_NIF_TERM ref;
         char filename[4096];
         int is_write_lock;
     },
     { // pre
+
         args->is_write_lock = 0;
-        if (!(enif_get_string(env, argv[0], args->filename, sizeof(args->filename), ERL_NIF_LATIN1) &&
+        if (!((enif_get_string(env, argv[0], args->filename, sizeof(args->filename), ERL_NIF_LATIN1) > 0) &&
               enif_get_int(env, argv[1], &(args->is_write_lock)))) {
-            ASYNC_NIF_RETURN_BADARG();
+          ASYNC_NIF_RETURN_BADARG();
         }
         args->ref = argv[0];
     },
     { // work
+
         // Setup the flags for the lock file
         int flags = O_RDONLY;
         if (args->is_write_lock)
@@ -1251,34 +1262,41 @@ ASYNC_NIF_DECL(
 ASYNC_NIF_DECL(
     bitcask_nifs_lock_release,
     { // struct
+
         bitcask_lock_handle* handle;
     },
     { // pre
+
       if (!enif_get_resource(env, argv[0], bitcask_lock_RESOURCE, (void**)&(args->handle))) {
             ASYNC_NIF_RETURN_BADARG();
         }
         enif_keep_resource((void*)args->handle);
     },
     { // work
+
         lock_release(args->handle);
         ASYNC_NIF_REPLY(ATOM_OK);
     },
     { // post
+
       enif_release_resource((void*)args->handle);
     });
 
 ASYNC_NIF_DECL(
     bitcask_nifs_lock_readdata,
     { // struct
+
         bitcask_lock_handle* handle;
     },
     { // pre
+
         if (!enif_get_resource(env, argv[0], bitcask_lock_RESOURCE, (void**)&(args->handle))) {
             ASYNC_NIF_RETURN_BADARG();
         }
         enif_keep_resource((void*)args->handle);
     },
     { // work
+
         // Stat the filehandle so we can read the entire contents into memory
         struct stat sinfo;
         if (fstat(args->handle->fd, &sinfo) != 0)
@@ -1305,23 +1323,27 @@ ASYNC_NIF_DECL(
         ASYNC_NIF_REPLY(enif_make_tuple2(env, ATOM_OK, enif_make_binary(env, &data)));
     },
     { // post
+
       enif_release_resource((void*)args->handle);
     });
 
 ASYNC_NIF_DECL(
     bitcask_nifs_lock_writedata,
     { // struct
+
         bitcask_lock_handle* handle;
         ErlNifBinary data;
     },
     { // pre
+
         if (!(enif_get_resource(env, argv[0], bitcask_lock_RESOURCE, (void**)&(args->handle)) &&
-              (enif_inspect_binary(env, argv[1], &(args->data))))) {
+              enif_inspect_binary(env, argv[1], &(args->data)))) {
           ASYNC_NIF_RETURN_BADARG();
         }
         enif_keep_resource((void*)args->handle);
     },
     { // work
+
         if (args->handle->is_write_lock)
         {
             // Truncate the file first, to ensure that the lock file only contains what
@@ -1349,6 +1371,7 @@ ASYNC_NIF_DECL(
         }
     },
     { // post
+
       enif_release_resource((void*)args->handle);
     });
 
@@ -1380,17 +1403,20 @@ int get_file_open_flags(ErlNifEnv* env, ERL_NIF_TERM list)
 ASYNC_NIF_DECL(
     bitcask_nifs_file_open,
     { // struct
+
         char filename[4096];
         ERL_NIF_TERM oflags;
     },
     { // pre
-        if (!(enif_get_string(env, argv[0], args->filename, sizeof(args->filename), ERL_NIF_LATIN1) &&
-            !enif_is_list(env, argv[1]))) {
-            ASYNC_NIF_RETURN_BADARG();
-        }
+
+      if (!((enif_get_string(env, argv[0], args->filename, sizeof(args->filename), ERL_NIF_LATIN1) > 0) &&
+            enif_is_list(env, argv[1]))) {
+        ASYNC_NIF_RETURN_BADARG();
+      }
         args->oflags = argv[2];
     },
     { // work
+
         int flags = get_file_open_flags(env, args->oflags);
         int fd = open(args->filename, flags, S_IREAD | S_IWRITE);
         if (fd > -1)
@@ -1417,15 +1443,18 @@ ASYNC_NIF_DECL(
 ASYNC_NIF_DECL(
     bitcask_nifs_file_close,
     { // struct
+
         bitcask_file_handle* handle;
     },
     { // pre
+
       if (!enif_get_resource(env, argv[0], bitcask_file_RESOURCE, (void**)&(args->handle))) {
           ASYNC_NIF_RETURN_BADARG();
       }
       enif_keep_resource((void*)args->handle);
     },
     { // work
+
         if (args->handle->fd > 0)
         {
             /* TODO: Check for EIO */
@@ -1435,21 +1464,25 @@ ASYNC_NIF_DECL(
         ASYNC_NIF_REPLY(ATOM_OK);
     },
     { // post
+
       enif_release_resource((void*)args->handle);
     });
 
 ASYNC_NIF_DECL(
     bitcask_nifs_file_sync,
     { // struct
+
         bitcask_file_handle* handle;
     },
     { // pre
+
         if (!enif_get_resource(env, argv[0], bitcask_file_RESOURCE, (void**)&(args->handle))){
             ASYNC_NIF_RETURN_BADARG();
         }
         enif_keep_resource((void*)args->handle);
     },
     { // work
+
         int rc = fsync(args->handle->fd);
         if (rc != -1)
         {
@@ -1461,17 +1494,20 @@ ASYNC_NIF_DECL(
         }
     },
     { // post
+
       enif_release_resource((void*)args->handle);
     });
 
 ASYNC_NIF_DECL(
     bitcask_nifs_file_pread,
     { // struct
+
         bitcask_file_handle* handle;
         unsigned long offset_ul;
         unsigned long count_ul;
     },
     { // pre
+
         if (!(enif_get_resource(env, argv[0], bitcask_file_RESOURCE, (void**)&(args->handle)) &&
               enif_get_ulong(env, argv[1], &(args->offset_ul)) && /* Offset */
               enif_get_ulong(env, argv[2], &(args->count_ul)))) {  /* Count */
@@ -1480,6 +1516,7 @@ ASYNC_NIF_DECL(
         enif_keep_resource((void*)args->handle);
     },
     { // work
+
         ErlNifBinary bin;
         off_t offset = args->offset_ul;
         size_t count = args->count_ul;
@@ -1523,17 +1560,20 @@ ASYNC_NIF_DECL(
         }
     },
     { // post
+
       enif_release_resource((void*)args->handle);
     });
 
 ASYNC_NIF_DECL(
     bitcask_nifs_file_pwrite,
     { // struct
+
         bitcask_file_handle* handle;
         unsigned long offset_ul;
         ErlNifBinary bin;
     },
     { // pre
+
         if (!(enif_get_resource(env, argv[0], bitcask_file_RESOURCE, (void**)&(args->handle)) &&
               enif_get_ulong(env, argv[1], &(args->offset_ul)) && /* Offset */
               enif_inspect_iolist_as_binary(env, argv[2], &(args->bin)))) {  /* Bytes to write */
@@ -1542,6 +1582,7 @@ ASYNC_NIF_DECL(
         enif_keep_resource((void*)args->handle);
     },
     { // work
+
         unsigned char* buf = args->bin.data;
         ssize_t bytes_written = 0;
         ssize_t count = args->bin.size;
@@ -1568,16 +1609,19 @@ ASYNC_NIF_DECL(
         ASYNC_NIF_REPLY(ATOM_OK);
     },
     { // post
+
       enif_release_resource((void*)args->handle);
     });
 
 ASYNC_NIF_DECL(
     bitcask_nifs_file_read,
     { // struct
+
         bitcask_file_handle* handle;
         size_t count;
     },
     { // pre
+
         if (!(enif_get_resource(env, argv[0], bitcask_file_RESOURCE, (void**)&(args->handle)) &&
               enif_get_ulong(env, argv[1], &(args->count)))) { /* Count */
           ASYNC_NIF_RETURN_BADARG();
@@ -1585,6 +1629,7 @@ ASYNC_NIF_DECL(
         enif_keep_resource((void*)args->handle);
     },
     { // work
+
         ErlNifBinary bin;
         if (!enif_alloc_binary(args->count, &bin))
         {
@@ -1626,16 +1671,19 @@ ASYNC_NIF_DECL(
         }
     },
     { // post
+
       enif_release_resource((void*)args->handle);
     });
 
 ASYNC_NIF_DECL(
     bitcask_nifs_file_write,
     { // struct
+
         bitcask_file_handle* handle;
         ErlNifBinary bin;
     },
     { // pre
+
         if (!(enif_get_resource(env, argv[0], bitcask_file_RESOURCE, (void**)&(args->handle)) &&
               enif_inspect_iolist_as_binary(env, argv[1], &(args->bin)))) { /* Bytes to write */
           ASYNC_NIF_RETURN_BADARG();
@@ -1643,6 +1691,7 @@ ASYNC_NIF_DECL(
         enif_keep_resource((void*)args->handle);
     },
     { // work
+
         unsigned char* buf = args->bin.data;
         ssize_t bytes_written = 0;
         ssize_t count = args->bin.size;
@@ -1666,21 +1715,25 @@ ASYNC_NIF_DECL(
         ASYNC_NIF_REPLY(ATOM_OK);
     },
     { // post
+
       enif_release_resource((void*)args->handle);
     });
 
 ASYNC_NIF_DECL(
     bitcask_nifs_file_seekbof,
     { // struct
+
       bitcask_file_handle* handle;
     },
     { // pre
+
         if (!enif_get_resource(env, argv[0], bitcask_file_RESOURCE, (void**)&(args->handle))) {
             ASYNC_NIF_RETURN_BADARG();
         }
         enif_keep_resource((void*)args->handle);
     },
     { // work
+
         if(lseek(args->handle->fd, 0, SEEK_SET) != -1) {
             ASYNC_NIF_REPLY(ATOM_OK);
         }
@@ -1690,6 +1743,7 @@ ASYNC_NIF_DECL(
         }
     },
     { // post
+
       enif_release_resource((void*)args->handle);
     });
 
@@ -1861,6 +1915,12 @@ static void free_keydir(ErlNifEnv* env, bitcask_keydir* keydir)
 static void bitcask_nifs_keydir_resource_cleanup(ErlNifEnv* env, void* arg)
 {
     bitcask_keydir_handle* handle = (bitcask_keydir_handle*)arg;
+    bitcask_priv_data* priv = (bitcask_priv_data*)enif_priv_data(env);
+    bitcask_nifs_keydir_priv_resource_cleanup(env, handle, priv);
+}
+
+static void bitcask_nifs_keydir_priv_resource_cleanup(ErlNifEnv* env, bitcask_keydir_handle *handle, bitcask_priv_data* priv)
+{
     bitcask_keydir* keydir = handle->keydir;
 
     // First, check that there is even a keydir available. If keydir_release
@@ -1880,7 +1940,6 @@ static void bitcask_nifs_keydir_resource_cleanup(ErlNifEnv* env, void* arg)
     // potentially release it
     if (keydir->mutex)
     {
-        bitcask_priv_data* priv = (bitcask_priv_data*)enif_priv_data(env);
         enif_mutex_lock(priv->global_keydirs_lock);
         keydir->refcount--;
         if (keydir->refcount == 0)
@@ -2013,11 +2072,13 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
 }
 
 static void on_unload(ErlNifEnv* env, void* priv_data){
-    ASYNC_NIF_UNLOAD()
+  // TODO: what about priv_data? seems it should be cleaned up...
+  ASYNC_NIF_UNLOAD()
 }
 
 static int on_upgrade(ErlNifEnv* env, void** priv_data, void** old_priv_data, ERL_NIF_TERM load_info)
 {
+  // TODO: what about priv_data? seems it should be cleaned up...
   ASYNC_NIF_UPGRADE()
   return 0;
 }

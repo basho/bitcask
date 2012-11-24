@@ -26,7 +26,8 @@ struct anif_req_entry {
   ErlNifEnv *env;
   ERL_NIF_TERM ref, *argv;
   void *args;
-  void (*fn_work)(ErlNifEnv*, ERL_NIF_TERM, ErlNifPid*, void *);
+  void *priv_data;
+  void (*fn_work)(ErlNifEnv*, ERL_NIF_TERM, void *, ErlNifPid*, void *);
   void (*fn_post)(void *);
   STAILQ_ENTRY(anif_req_entry) entries;
 };
@@ -47,7 +48,7 @@ static struct anif_worker_entry anif_worker_entries[ANIF_MAX_WORKERS];
 
 #define ASYNC_NIF_DECL(decl, frame, pre_block, work_block, post_block)  \
   struct decl ## _args frame;                                           \
-  static void fn_work_ ## decl (ErlNifEnv *env, ERL_NIF_TERM ref, ErlNifPid *pid, struct decl ## _args *args) \
+  static void fn_work_ ## decl (ErlNifEnv *env, ERL_NIF_TERM ref, void *priv_data, ErlNifPid *pid, struct decl ## _args *args) \
        work_block                                                       \
   static void fn_post_ ## decl (struct decl ## _args *args) {           \
     do post_block while(0);                                             \
@@ -119,7 +120,8 @@ static struct anif_worker_entry anif_worker_entries[ANIF_MAX_WORKERS];
     req->args = (void*)copy_of_args;                                    \
     req->argv = argv;                                                   \
     req->env = env;                                                     \
-    req->fn_work = (void (*)(ErlNifEnv *, ERL_NIF_TERM, ErlNifPid*, void *))fn_work_ ## decl ; \
+    req->priv_data = enif_priv_data(env_in);                            \
+    req->fn_work = (void (*)(ErlNifEnv *, ERL_NIF_TERM, void*, ErlNifPid*, void *))fn_work_ ## decl ; \
     req->fn_post = (void (*)(void *))fn_post_ ## decl;                  \
     anif_enqueue_req(req);                                              \
     return enif_make_tuple2(env, enif_make_atom(env, "ok"),             \
@@ -132,8 +134,8 @@ static struct anif_worker_entry anif_worker_entries[ANIF_MAX_WORKERS];
 
 #define ASYNC_NIF_PRE_ENV() env_in
 #define ASYNC_NIF_PRE_RETURN_CLEANUP() \
-  enif_free(req->argv);                         \
-  enif_free(args);                              \
+  enif_free(argv);                              \
+  enif_free(copy_of_args);                      \
   enif_free(req);                               \
   enif_free_env(env);
 #define ASYNC_NIF_RETURN_BADARG() ASYNC_NIF_PRE_RETURN_CLEANUP(); return enif_make_badarg(env_in);
@@ -190,7 +192,7 @@ static void *anif_worker_fn(void *arg)
       /* Finally, let's do the work! :) */
       ErlNifPid pid;
       enif_get_local_pid(req->env, req->pid, &pid);
-      req->fn_work(req->env, req->ref, &pid, req->args);
+      req->fn_work(req->env, req->ref, req->priv_data, &pid, req->args);
       req->fn_post(req->args);
       enif_free(req->args);
       enif_free(req->argv);

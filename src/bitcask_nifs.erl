@@ -187,7 +187,7 @@ keydir_new(Name) when is_list(Name) ->
             Result
     end.
 
-keydir_new_nif(_Ref, Name) when is_list(Name) ->
+keydir_new_nif(_Ref, _Name) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_mark_ready(DbRef) ->
