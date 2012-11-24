@@ -1395,7 +1395,6 @@ fold_corrupt_file_test() ->
     ?assertEqual(ok, close(B4)),
     ok.
 
--ifdef(GSB).
 %%
 %% Check that fold visits the objects at the point the keydir
 %% was frozen.  Check with and without wrapping the cask.
@@ -1471,7 +1470,6 @@ fold_visits_frozen_test(RollOver) ->
     after
         ?assertEqual(ok, bitcask:close(B))
     end.
--endif.
 
 open_test() ->
     ?assertEqual(ok, bitcask:close(init_dataset("/tmp/bc.test.open", default_dataset()))),
@@ -1567,7 +1565,6 @@ list_keys_test() ->
     ?assertEqual(ok, bitcask:close(B)),
     ok.
 
--ifdef(GSB).
 expire_test() ->
     os:cmd("rm -rf /tmp/bc.test.expire"),
     B = bitcask:open("/tmp/bc.test.expire", [read_write,{expiry_secs,1}]),
@@ -1582,7 +1579,6 @@ expire_test() ->
     ?assert([<<"k7">>] =:= bitcask:list_keys(B)),
     ?assertEqual(ok, bitcask:close(B)),
     ok.
--endif.
 
 expire_merge_test() ->
     %% Initialize dataset with max_file_size set to 1 so that each file will

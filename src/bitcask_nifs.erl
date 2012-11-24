@@ -156,21 +156,21 @@ set_pulse_pid(_Pid) ->
 
 
 keydir_new() ->
-    ?ASYNC_NIF_CALL(fun keydir_new_nif/1, []).
+    keydir_new_nif().
 
-keydir_new_nif(_Ref) ->
+keydir_new_nif() ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_new(Name) when is_list(Name) ->
-    ?ASYNC_NIF_CALL(fun keydir_new_nif/2, [Name]).
+    keydir_new_nif(Name).
 
-keydir_new_nif(_Ref, _Name) ->
+keydir_new_nif(_Name) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_mark_ready(DbRef) ->
-    ?ASYNC_NIF_CALL(fun keydir_mark_ready_nif/2, [DbRef]).
+    keydir_mark_ready_nif(DbRef).
 
-keydir_mark_ready_nif(_Ref, _DbRef) ->
+keydir_mark_ready_nif(_DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp) ->
@@ -190,15 +190,15 @@ keydir_put(DbRef, Key, FileId, TotalSz, Offset, Tstamp, NewestPutB,
                  end,
     OffsetBin = <<Offset:64/unsigned-native>>,
     OldOffsetBin = <<OldOffset:64/unsigned-native>>,
-    ?ASYNC_NIF_CALL(fun keydir_put_nif/10,
-                    [DbRef, Key, FileId, TotalSz, OffsetBin, Tstamp, NewestPutI, OldFileId, OldOffsetBin]).
+    keydir_put_nif(DbRef, Key, FileId, TotalSz, OffsetBin, Tstamp,
+                   NewestPutI, OldFileId, OldOffsetBin).
 
-keydir_put_nif(_Ref, _DbRef, _Key, _FileId, _TotalSz, _Offset, _Tstamp, _NewestPutI,
+keydir_put_nif(_DbRef, _Key, _FileId, _TotalSz, _Offset, _Tstamp, _NewestPutI,
                _OldFileId, _OldOffset) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_get(DbRef, Key) ->
-    case ?ASYNC_NIF_CALL(fun keydir_get_nif/3, [DbRef, Key]) of
+    case keydir_get_nif(DbRef, Key) of
         E when is_record(E, bitcask_entry) ->
             <<Offset:64/unsigned-native>> = E#bitcask_entry.offset,
             E#bitcask_entry{offset = Offset};
@@ -206,37 +206,37 @@ keydir_get(DbRef, Key) ->
             not_found
     end.
 
-keydir_get_nif(_Ref, _DbRef, _Key) ->
+keydir_get_nif(_DbRef, _Key) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_remove(DbRef, Key) ->
-    ?ASYNC_NIF_CALL(fun keydir_remove_nif/3, [DbRef, Key]).
+    keydir_remove_nif(DbRef, Key).
 
-keydir_remove_nif(_Ref, _DbRef, _Key) ->
+keydir_remove_nif(_DbRef, _Key) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_remove(DbRef, Key, Tstamp, FileId, Offset) ->
-    ?ASYNC_NIF_CALL(fun keydir_remove_nif/6, [DbRef, Key, Tstamp, FileId, <<Offset:64/unsigned-native>>]).
+    keydir_remove_nif(DbRef, Key, Tstamp, FileId, <<Offset:64/unsigned-native>>).
 
-keydir_remove_nif(_Ref, _DbRef, _Key, _Tstamp, _FileId, _Offset) ->
+keydir_remove_nif(_DbRef, _Key, _Tstamp, _FileId, _Offset) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_copy(DbRef) ->
-    ?ASYNC_NIF_CALL(fun keydir_copy_nif/2, [DbRef]).
+    keydir_copy_nif(DbRef).
 
-keydir_copy_nif(_Ref, _DbRef) ->
+keydir_copy_nif(_DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_itr(DbRef, MaxAge, MaxPuts) ->
     {Mega,Secs,Micro} = os:timestamp(),
     TS = <<((Mega * 1000000 + Secs) * 1000000 + Micro):64/unsigned-native>>,
-    ?ASYNC_NIF_CALL(fun keydir_itr_nif/5, [DbRef, TS, MaxAge, MaxPuts]).
+    keydir_itr_nif(DbRef, TS, MaxAge, MaxPuts).
 
-keydir_itr_nif(_Ref, _DbRef, _Ts, _MaxAge, _MaxPuts) ->
+keydir_itr_nif(_DbRef, _Ts, _MaxAge, _MaxPuts) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_itr_next(DbRef) ->
-    case ?ASYNC_NIF_CALL(fun keydir_itr_next_nif/2, [DbRef]) of
+    case keydir_itr_next_nif(DbRef) of
         E when is_record(E, bitcask_entry) ->
             <<Offset:64/unsigned-native>> = E#bitcask_entry.offset,
             E#bitcask_entry { offset = Offset };
@@ -244,13 +244,13 @@ keydir_itr_next(DbRef) ->
             Else
     end.
 
-keydir_itr_next_nif(_Ref, _DbRef) ->
+keydir_itr_next_nif(_DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_itr_release(DbRef) ->
-    ?ASYNC_NIF_CALL(fun keydir_itr_release_nif/2, [DbRef]).
+    keydir_itr_release_nif(DbRef).
 
-keydir_itr_release_nif(_Ref, _DbRef) ->
+keydir_itr_release_nif(_DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_fold(Ref, Fun, Acc0, MaxAge, MaxPuts) ->
@@ -281,7 +281,7 @@ keydir_frozen(Ref, FrozenFun, MaxAge, MaxPuts) ->
 keydir_wait_pending(DbRef) ->
     %% Create an iterator, passing a zero timestamp to force waiting for
     %% any current iteration to complete
-    case ?ASYNC_NIF_CALL(fun keydir_itr_nif/5, [DbRef, <<0:64/unsigned-native>>, 0, 0]) of
+    case keydir_itr_nif(DbRef, <<0:64/unsigned-native>>, 0, 0) of
         out_of_date -> % no iter created, wait for message from last fold_keys
             receive
                 ready ->
@@ -295,15 +295,15 @@ keydir_wait_pending(DbRef) ->
     end.
 
 keydir_info(DbRef) ->
-    ?ASYNC_NIF_CALL(fun keydir_info_nif/2, [DbRef]).
+    keydir_info_nif(DbRef).
 
-keydir_info_nif(_Ref, _DbRef) ->
+keydir_info_nif(_DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_release(DbRef) ->
-    ?ASYNC_NIF_CALL(fun keydir_release_nif/2, [DbRef]).
+    keydir_release_nif(DbRef).
 
-keydir_release_nif(_Ref, _DbRef) ->
+keydir_release_nif(_DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
 lock_acquire(Filename, IsWriteLock) ->
@@ -485,7 +485,7 @@ keydir_del_while_pending_test() ->
     keydir_mark_ready(Ref1),
     ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
                                 offset = <<0:64/unsigned-native>>, tstamp = 1},
-                 ?ASYNC_NIF_CALL(fun keydir_get_nif/3, [Ref1, Key])),
+                 keydir_get_nif(Ref1, Key)),
     {ready, Ref2} = keydir_new(Name),
     try
         %% Start keyfold iterator on Ref2
@@ -519,7 +519,7 @@ keydir_create_del_while_pending_test() ->
         ok = keydir_put(Ref1, Key, 0, 1234, 0, 1),
         ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
                                      offset = <<0:64/unsigned-native>>, tstamp = 1},
-                     ?ASYNC_NIF_CALL(fun keydir_get_nif/3, [Ref1, Key])),
+                     keydir_get_nif(Ref1, Key)),
         ?assertEqual(ok, keydir_remove(Ref1, Key)),
         ?assertEqual(not_found, keydir_get(Ref1, Key)),
 
@@ -547,7 +547,7 @@ keydir_del_put_while_pending_test() ->
         ok = keydir_put(Ref1, Key, 0, 1234, 0, 1),
         ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
                                      offset = <<0:64/unsigned-native>>, tstamp = 1},
-                     ?ASYNC_NIF_CALL(fun keydir_get_nif/3, [Ref1, Key])),
+                     keydir_get_nif(Ref1, Key)),
 
         %% Keep iterating on Ref2 and check result is [] it was started after iter
         Fun = fun(IterKey, Acc) -> [IterKey | Acc] end,
@@ -559,7 +559,7 @@ keydir_del_put_while_pending_test() ->
     %% Check key is still present
     ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
                                 offset = <<0:64/unsigned-native>>, tstamp = 1},
-                 ?ASYNC_NIF_CALL(fun keydir_get_nif/3, [Ref1, Key])).
+                 keydir_get_nif(Ref1, Key)).
 
 keydir_multi_put_during_itr_test() ->
     {not_ready, Ref} = bitcask_nifs:keydir_new("t"),
