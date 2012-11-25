@@ -670,7 +670,7 @@ keydir_wait_pending_test() ->
                          end
                      end),
     %% Give it a chance to call keydir_wait_pending then blocks
-    timer:sleep(100),
+    timer:sleep(1000),
     ?assertEqual(nothing,
        begin
            receive Msg -> {msg, Msg}
