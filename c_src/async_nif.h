@@ -1,3 +1,26 @@
+/*
+ *
+ * async_nif: An async thread-pool layer for Erlang's NIF API
+ *
+ * Copyright (c) 2012 Basho Technologies, Inc. All Rights Reserved.
+ * Author: Gregory Burd <greg@basho.com> <greg@burd.me>
+ *
+ * This file is provided to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file
+ * except in compliance with the License.  You may obtain
+ * a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ */
+
 #ifndef __ASYNC_NIF_H__
 #define __ASYNC_NIF_H__
 
@@ -46,6 +69,7 @@ static ErlNifMutex *anif_worker_mutex = NULL;
 static ErlNifCond *anif_cnd = NULL;
 static struct anif_worker_entry anif_worker_entries[ANIF_MAX_WORKERS];
 
+
 #define ASYNC_NIF_DECL(decl, frame, pre_block, work_block, post_block)  \
   struct decl ## _args frame;                                           \
   static void fn_work_ ## decl (ErlNifEnv *env, ERL_NIF_TERM ref, void *priv_data, ErlNifPid *pid, struct decl ## _args *args) \
@@ -64,13 +88,9 @@ static struct anif_worker_entry anif_worker_entries[ANIF_MAX_WORKERS];
     ERL_NIF_TERM *argv = NULL;                                          \
     int __i = 0, argc = argc_in - 1;                                    \
     enif_self(env_in, &pid_in);                                         \
-    if (anif_shutdown) {                                                \
-      enif_send(NULL, &pid_in, env_in,                                  \
-                enif_make_tuple2(env_in, enif_make_atom(env_in, "error"), \
-                                 enif_make_atom(env_in, "shutdown")));  \
+    if (anif_shutdown)                                                  \
       return enif_make_tuple2(env_in, enif_make_atom(env_in, "error"),  \
                               enif_make_atom(env_in, "shutdown"));      \
-    }                                                                   \
     env = enif_alloc_env();                                             \
     if (!env)                                                           \
       return enif_make_tuple2(env_in, enif_make_atom(env_in, "error"),  \
@@ -140,7 +160,11 @@ static struct anif_worker_entry anif_worker_entries[ANIF_MAX_WORKERS];
   enif_free_env(env);
 #define ASYNC_NIF_RETURN_BADARG() ASYNC_NIF_PRE_RETURN_CLEANUP(); return enif_make_badarg(env_in);
 
+#ifndef PULSE
 #define ASYNC_NIF_REPLY(msg) enif_send(NULL, pid, env, enif_make_tuple2(env, ref, msg))
+#else
+#define ASYNC_NIF_REPLY(msg) PULSE_SEND(NULL, pid, env, enif_make_tuple2(env, ref, msg))
+#endif
 
 static void anif_enqueue_req(struct anif_req_entry *r)
 {
@@ -231,9 +255,15 @@ static void anif_unload(void)
                   anif_req_entry, entries);
     ErlNifPid pid;
     enif_get_local_pid(req->env, req->pid, &pid);
+#ifdef PULSE
+    PULSE_SEND(NULL, &pid, req->env,
+              enif_make_tuple2(req->env, enif_make_atom(req->env, "error"),
+                               enif_make_atom(req->env, "shutdown")));
+#else
     enif_send(NULL, &pid, req->env,
               enif_make_tuple2(req->env, enif_make_atom(req->env, "error"),
                                enif_make_atom(req->env, "shutdown")));
+#endif
     req->fn_post(req->args);
     enif_free(req->args);
     enif_free(req->argv);
