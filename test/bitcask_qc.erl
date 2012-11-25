@@ -164,18 +164,19 @@ prop_merge() ->
                          %% process so it gets cleaned up on crash
                          %% so quickcheck can shrink correctly.
                          Me = self(),
+                         MRef = make_ref(),
                          proc_lib:spawn(
                            fun() ->
                                    try
-                                       Me ! bitcask:merge("/tmp/bc.prop.merge",
-                                                          [{max_file_size, M2}])
+                                       Me ! {MRef, bitcask:merge("/tmp/bc.prop.merge",
+                                                          [{max_file_size, M2}])}
                                    catch
                                        _:Err ->
-                                           Me ! Err
+                                           Me ! {MRef, Err}
                                    end
                            end),
                          receive
-                             X ->
+                             {MRef, X} ->
                                  ?assertEqual(ok, X)
                          end,
 
