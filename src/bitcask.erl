@@ -20,6 +20,7 @@
 %%
 %% -------------------------------------------------------------------
 -module(bitcask).
+-compile(export_all).
 
 -export([open/1, open/2,
          close/1,

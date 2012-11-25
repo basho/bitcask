@@ -20,8 +20,11 @@
 %%
 %% -------------------------------------------------------------------
 -module(bitcask_nifs).
+-compile(export_all).
 
 -export([init/0,
+         spawn_native/0,
+         send_native/2,
          keydir_new/0, keydir_new/1,
          keydir_mark_ready/1,
          keydir_put/6,
@@ -149,6 +152,24 @@ set_pulse_pid(_Pid) ->
     erlang:nif_error({error, not_loaded}).
 -endif.
 
+call_nif(Cmd, Args) ->
+    %% Need fast way to enable/disable. Checking app vars isn't fast.
+    Async = true,
+    case Async of
+        true ->
+            NP = bitcask_thread_pool:worker(),
+            Ref = make_ref(),
+            %% NP ! {dispatch, Ref, self(), Cmd, Args},
+            NP ! {dbg_dispatch, Ref, self(), Cmd, Args},
+            receive
+                {Ref, Result} ->
+                    %% io:format("Received: ~p~n", [Result]),
+                    Result
+            end;
+        false ->
+            erlang:apply(?MODULE, Cmd, Args)
+    end.
+
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
@@ -158,6 +179,11 @@ set_pulse_pid(_Pid) ->
 %% The definitions here are only to satisfy trivial static analysis.
 %% 
 
+spawn_native() ->
+    erlang:nif_error({error, not_loaded}).
+
+send_native(_Ref, _Mail) ->
+    erlang:nif_error({error, not_loaded}).
 
 keydir_new() ->
     erlang:nif_error({error, not_loaded}).
@@ -315,56 +341,56 @@ lock_writedata_int(_Ref, _Data) ->
 
 file_open(Filename, Opts) ->
     bitcask_bump:big(),
-    file_open_int(Filename, Opts).
+    call_nif(file_open_int, [Filename, Opts]).
 
 file_open_int(_Filename, _Opts) ->
     erlang:nif_error({error, not_loaded}).
 
 file_close(Ref) ->
     bitcask_bump:big(),
-    file_close_int(Ref).
+    call_nif(file_close_int, [Ref]).
 
 file_close_int(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 file_sync(Ref) ->
     bitcask_bump:big(),
-    file_sync_int(Ref).
+    call_nif(file_sync_int, [Ref]).
 
 file_sync_int(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 file_pread(Ref, Offset, Size) ->
     bitcask_bump:big(),
-    file_pread_int(Ref, Offset, Size).
+    call_nif(file_pread_int, [Ref, Offset, Size]).
 
 file_pread_int(_Ref, _Offset, _Size) ->
     erlang:nif_error({error, not_loaded}).
 
 file_pwrite(Ref, Offset, Bytes) ->
     bitcask_bump:big(),
-    file_pwrite_int(Ref, Offset, Bytes).
+    call_nif(file_pwrite_int, [Ref, Offset, Bytes]).
 
 file_pwrite_int(_Ref, _Offset, _Bytes) ->
     erlang:nif_error({error, not_loaded}).
 
 file_read(Ref, Size) ->
     bitcask_bump:big(),
-    file_read_int(Ref, Size).
+    call_nif(file_read_int, [Ref, Size]).
 
 file_read_int(_Ref, _Size) ->
     erlang:nif_error({error, not_loaded}).
 
 file_write(Ref, Bytes) ->
     bitcask_bump:big(),
-    file_write_int(Ref, Bytes).
+    call_nif(file_write_int, [Ref, Bytes]).
 
 file_write_int(_Ref, _Bytes) ->
     erlang:nif_error({error, not_loaded}).
 
 file_seekbof(Ref) ->
     bitcask_bump:big(),
-    file_seekbof_int(Ref).
+    call_nif(file_seekbof_int, [Ref]).
 
 file_seekbof_int(_Ref) ->
     erlang:nif_error({error, not_loaded}).

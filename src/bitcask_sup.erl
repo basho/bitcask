@@ -47,5 +47,6 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-    {ok, {{one_for_one, 5, 10}, [?CHILD(bitcask_merge_worker, worker),
+    {ok, {{one_for_one, 5, 10}, [?CHILD(bitcask_thread_pool, worker),
+                                 ?CHILD(bitcask_merge_worker, worker),
                                  ?CHILD(bitcask_merge_delete, worker)]}}.

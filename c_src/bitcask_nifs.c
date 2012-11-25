@@ -29,6 +29,7 @@
 #include "erl_driver.h"
 #include "erl_nif_compat.h"
 #include "erl_nif_util.h"
+#include "native_dispatch.h"
 
 #include "khash.h"
 #include "murmurhash.h"
@@ -257,7 +258,8 @@ static ErlNifFunc nif_funcs[] =
     {"file_pwrite_int", 3, bitcask_nifs_file_pwrite},
     {"file_read_int",   2, bitcask_nifs_file_read},
     {"file_write_int",  2, bitcask_nifs_file_write},
-    {"file_seekbof_int", 1, bitcask_nifs_file_seekbof}
+    {"file_seekbof_int", 1, bitcask_nifs_file_seekbof},
+    NATIVE_PROCESS_NIFS
 };
 
 ERL_NIF_TERM bitcask_nifs_keydir_new0(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -1939,9 +1941,11 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
 	pulse_c_send_on_load(env);
 #endif
 
+    setup_native_dispatch(env, priv_data, load_info);
     return 0;
 }
 
 ERL_NIF_INIT(bitcask_nifs, nif_funcs, &on_load, NULL, NULL, NULL);
 
-
+/* Native dispatch */
+NATIVE_DISPATCH_TABLE(nif_funcs);

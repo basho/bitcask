@@ -6,7 +6,8 @@
   {registered, []},
   {applications, [
                   kernel,
-                  stdlib
+                  stdlib,
+                  native_process
                  ]},
   {mod, {bitcask_app, []}},
   {env, [
