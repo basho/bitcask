@@ -100,7 +100,7 @@
         ok | out_of_date | {error, iteration_in_process}.
 -spec keydir_itr_next(reference()) ->
         #bitcask_entry{} |
-        {error, iteration_not_started} | allocation_error | not_found.
+        {error, iteration_not_started} | enomem | not_found.
 -spec keydir_itr_release(reference()) ->
         ok.
 -spec keydir_fold(reference(), fun((any(), any()) -> any()), any(),
@@ -119,7 +119,7 @@
         ok.
 -spec lock_readdata(reference()) ->
         {ok, binary()} |
-        {fstat_error, integer()} | {error, allocation_error} |
+        {fstat_error, integer()} | {error, enomem} |
         {pread_error, integer()}.
 -spec lock_writedata(reference(), binary()) ->
         ok |

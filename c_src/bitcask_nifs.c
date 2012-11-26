@@ -162,7 +162,7 @@ typedef struct
                                   (e)->offset = 0; }
 
 // Atoms (using enif_make_atom everywhere for thread-safety)
-#define ATOM_ALLOCATION_ERROR enif_make_atom(env, "allocation_error")
+#define ATOM_ENOMEM enif_make_atom(env, "enomem")
 #define ATOM_ALREADY_EXISTS enif_make_atom(env, "already_exists")
 #define ATOM_BITCASK_ENTRY enif_make_atom(env, "bitcask_entry")
 #define ATOM_ERROR enif_make_atom(env, "error")
@@ -990,7 +990,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
                 // Alloc the binary and make sure it succeeded
                 if (!enif_alloc_binary(entry->key_sz, &key))
                 {
-                    return ATOM_ALLOCATION_ERROR;
+                    return ATOM_ENOMEM;
                 }
 
                 // Copy the data from our key to the new allocated binary
@@ -1234,7 +1234,7 @@ ASYNC_NIF_DECL(
         ErlNifBinary data;
         if (!enif_alloc_binary(sinfo.st_size, &data))
         {
-            ASYNC_NIF_REPLY(enif_make_tuple2(env, ATOM_ERROR, ATOM_ALLOCATION_ERROR));
+            ASYNC_NIF_REPLY(enif_make_tuple2(env, ATOM_ERROR, ATOM_ENOMEM));
             return;
         }
 
@@ -1447,7 +1447,7 @@ ASYNC_NIF_DECL(
         size_t count = args->count_ul;
         if (!enif_alloc_binary(count, &bin))
         {
-            ASYNC_NIF_REPLY(enif_make_tuple2(env, ATOM_ERROR, ATOM_ALLOCATION_ERROR));
+            ASYNC_NIF_REPLY(enif_make_tuple2(env, ATOM_ERROR, ATOM_ENOMEM));
             return;
         }
 
@@ -1468,7 +1468,7 @@ ASYNC_NIF_DECL(
             {
                 /* Realloc failed; cleanup and bail */
                 enif_release_binary(&bin);
-                ASYNC_NIF_REPLY(enif_make_tuple2(env, ATOM_ERROR, ATOM_ALLOCATION_ERROR));
+                ASYNC_NIF_REPLY(enif_make_tuple2(env, ATOM_ERROR, ATOM_ENOMEM));
             }
         }
         else if (bytes_read == 0)
@@ -1558,7 +1558,7 @@ ASYNC_NIF_DECL(
         ErlNifBinary bin;
         if (!enif_alloc_binary(args->count, &bin))
         {
-            ASYNC_NIF_REPLY(enif_make_tuple2(env, ATOM_ERROR, ATOM_ALLOCATION_ERROR));
+            ASYNC_NIF_REPLY(enif_make_tuple2(env, ATOM_ERROR, ATOM_ENOMEM));
             return;
         }
 
@@ -1579,7 +1579,7 @@ ASYNC_NIF_DECL(
             {
                 /* Realloc failed; cleanup and bail */
                 enif_release_binary(&bin);
-                ASYNC_NIF_REPLY(enif_make_tuple2(env, ATOM_ERROR, ATOM_ALLOCATION_ERROR));
+                ASYNC_NIF_REPLY(enif_make_tuple2(env, ATOM_ERROR, ATOM_ENOMEM));
             }
         }
         else if (bytes_read == 0)

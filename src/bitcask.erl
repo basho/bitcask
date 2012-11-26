@@ -433,7 +433,7 @@ iterator(Ref, MaxAge, MaxPuts) ->
 %% @doc Get next entry from the iterator
 -spec iterator_next(reference()) ->
       #bitcask_entry{} |
-     {error, iteration_not_started} | allocation_error | not_found.
+     {error, iteration_not_started} | enomem | not_found.
 iterator_next(Ref) ->
     KeyDir = (get_state(Ref))#bc_state.keydir,
     bitcask_nifs:keydir_itr_next(KeyDir).

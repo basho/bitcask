@@ -225,8 +225,8 @@ fold(#filestate { fd=Fd, filename=Filename, tstamp=FTStamp }, Fun, Acc) ->
             Acc;
         {error, Reason} ->
             %% A truncated file would yield {ok, OtherBytes} or eof.
-            %% Something really bad has happened, either an allocation
-            %% error or something Truly Bad, e.g. EBADF, EIO.
+            %% Something really bad has happened, either an enomem
+            %% or something Truly Bad, e.g. EBADF, EIO.
             throw({fold_error, {read_read, Filename, 0, ?HEADER_SIZE, Reason}, Acc})
     end.
 
@@ -372,7 +372,7 @@ fold_loop(Fd, Filename, FTStamp, Header, Offset, Fun, Acc0, CrcSkipCount) ->
                 [TotalSz]),
             Acc0;
         {error, Reason} ->
-            %% Again, either we had an allocation error in NIF land,
+            %% Again, either we had an enomem in NIF land,
             %% or something Truly Bad happened, e.g. EBADF, EIO
             throw({fold_error, {file_read, Filename, Offset, TotalSz, Reason}, Acc0})
     end.
