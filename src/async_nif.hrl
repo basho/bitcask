@@ -26,7 +26,7 @@
             NIFRef = erlang:make_ref(),
             case erlang:apply(Fun, [NIFRef|Args]) of
                 {ok, {enqueued, QDepth}} ->
-                    erlang:bump_reductions(10 * QDepth),
+                    [erlang:bump_reductions(10 * QDepth) || is_integer(QDepth), QDepth > 100],
                     receive
                         {NIFRef, {error, shutdown}=Error} ->
                             %% Work unit was queued, but not executed.
@@ -37,9 +37,6 @@
                         {NIFRef, Reply} ->
                             Reply
                     end;
-                {error, shutdown} = Error ->
-                    %% Work unit was not queued because the module was unloading.
-                    Error;
                 Other ->
                     Other
             end
