@@ -1288,8 +1288,6 @@ init_dataset(Dirname, KVs) ->
 
 init_dataset(Dirname, Opts, KVs) ->
     os:cmd(?FMT("rm -rf ~s", [Dirname])),
-
-    application:set_env(bitcask, open_timeout, 20000),
     B = bitcask:open(Dirname, [read_write] ++ Opts),
     lists:foldl(fun({K, V}, _) ->
                         ?assertEqual(ok, bitcask:put(B, K, V))
@@ -1533,6 +1531,7 @@ bitfold_test() ->
     ?assertEqual(ok, bitcask:delete(B,<<"k">>)),
     ?assertEqual(ok, bitcask:put(B, <<"k7">>,<<"v7">>)),
     ?assertEqual(ok, bitcask:close(B)),
+    application:set_env(bitcask, open_timeout, 2000),
     B2 = bitcask:open("/tmp/bc.test.bitfold"),
     ?assert([{<<"k7">>,<<"v7">>},{<<"k2">>,<<"v2">>}] =:=
                 bitcask:fold(B2,fun(K,V,Acc) -> [{K,V}|Acc] end,[])),
@@ -1588,18 +1587,19 @@ expire_merge_test() ->
                        init_dataset("/tmp/bc.test.mergeexpire", [{max_file_size, 1}],
                                     default_dataset()))),
 
-    %% Wait for it all to expire
+    %% Wait 1 sec for it all to expire
     timer:sleep(2000),
 
     %% Merge everything
     timer:sleep(1100),
-    ?assertEqual(ok, merge("/tmp/bc.test.mergeexpire",[{expiry_secs,1}])),
+    ?assertEqual(ok, merge("/tmp/bc.test.mergeexpire", [{expiry_secs,1}])),
 
     %% Verify we've now only got one file
     ?assertEqual(ok, bitcask_merge_delete:testonly__delete_trigger()),
     ?assertEqual(1, length(readable_files("/tmp/bc.test.mergeexpire"))),
 
     %% Make sure all the data is present
+    application:set_env(bitcask, open_timeout, 2000),
     B = bitcask:open("/tmp/bc.test.mergeexpire"),
 
     %% It's gone!
@@ -1662,7 +1662,7 @@ delete_merge_test() ->
     ?assertEqual(ok, bitcask:close(B1)),
 
     timer:sleep(1100),
-    ?assertEqual(ok, merge("/tmp/bc.test.delmerge",[])),
+    ?assertEqual(ok, bitcask:merge("/tmp/bc.test.delmerge",[])),
 
     %% Verify we've now only got one item left
     B2 = bitcask:open("/tmp/bc.test.delmerge"),
@@ -1829,7 +1829,6 @@ truncated_datafile_test() ->
     Dir = "/tmp/bc.test.truncdata",
     os:cmd("rm -rf " ++ Dir),
     os:cmd("mkdir " ++ Dir),
-    application:set_env(bitcask, open_timeout, 2000),
     B1 = bitcask:open(Dir, [read_write]),
     [?assertEqual(ok, bitcask:put(B1, <<"k">>, <<X:32>>)) || X <- lists:seq(1, 100)],
     ?assertEqual(ok, bitcask:close(B1)),
@@ -1843,12 +1842,11 @@ truncated_datafile_test() ->
     ?assertMatch({1, [{_, _, _, 513}]}, bitcask:status(B2)),
     ok.
 
-trailing_junk_big_datafile_NOTtest() ->
+trailing_junk_big_datafile_test() ->
     Dir = "/tmp/bc.test.trailingdata",
     NumKeys = 400,
     os:cmd("rm -rf " ++ Dir),
     os:cmd("mkdir " ++ Dir),
-    application:set_env(bitcask, open_timeout, 2000),
     B1 = bitcask:open(Dir, [read_write, {max_file_size, 1024*1024*1024}]),
     [?assertEqual(ok, bitcask:put(B1, <<"k", X:32>>, <<X:1024>>)) || X <- lists:seq(1, NumKeys)],
     ?assertEqual(ok, bitcask:close(B1)),
