@@ -11,6 +11,8 @@ endif
 
 all: deps compile
 
+c_src/bitcask_nifs.c: c_src/queue.h
+
 c_src/bitcask_nifs.o: c_src/async_nif.h
 	touch c_src/bitcask_nifs.c
 
