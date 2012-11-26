@@ -159,8 +159,8 @@ call_nif(Cmd, Args) ->
         true ->
             NP = bitcask_thread_pool:worker(),
             Ref = make_ref(),
-            %% NP ! {dispatch, Ref, self(), Cmd, Args},
-            NP ! {dbg_dispatch, Ref, self(), Cmd, Args},
+            NP ! {dispatch, Ref, self(), Cmd, Args},
+            %% NP ! {dbg_dispatch, Ref, self(), Cmd, Args},
             receive
                 {Ref, Result} ->
                     %% io:format("Received: ~p~n", [Result]),
