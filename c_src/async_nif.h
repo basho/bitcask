@@ -221,6 +221,7 @@ static void *async_nif_worker_fn(void *arg)
       req->fn_post(req->args);
       enif_free(req->args);
       enif_free(req->argv);
+      enif_free_env(req->env);
       enif_free(req);
     }
   }

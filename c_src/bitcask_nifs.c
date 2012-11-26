@@ -1257,14 +1257,23 @@ ASYNC_NIF_DECL(
     { // struct
 
         bitcask_lock_handle* handle;
-        ErlNifBinary data;
+        unsigned size;
+        unsigned char* data;
     },
     { // pre
 
+        ErlNifBinary data;
         if (!(enif_get_resource(env, argv[0], bitcask_lock_RESOURCE, (void**)&(args->handle)) &&
-              enif_inspect_binary(env, argv[1], &(args->data)))) {
+              enif_inspect_binary(env, argv[1], &data))) {
           ASYNC_NIF_RETURN_BADARG();
         }
+        args->size = data.size;
+        args->data = enif_alloc(data.size);
+        if (!args->data) {
+          ASYNC_NIF_PRE_RETURN_CLEANUP();
+          return enif_make_tuple2(env, ATOM_ERROR, ATOM_ENOMEM);
+        }
+        memcpy(args->data, data.data, data.size);
         enif_keep_resource((void*)args->handle);
     },
     { // work
@@ -1281,7 +1290,7 @@ ASYNC_NIF_DECL(
 
             // Write the new blob of data to the lock file. Note that we use O_SYNC to
             // ensure that the data is available ASAP to reading processes.
-            if (pwrite(args->handle->fd, args->data.data, args->data.size, 0) == -1)
+            if (pwrite(args->handle->fd, args->data, args->size, 0) == -1)
             {
                 ASYNC_NIF_REPLY(errno_error_tuple(env, ATOM_PWRITE_ERROR, errno));
                 return;
@@ -1297,6 +1306,8 @@ ASYNC_NIF_DECL(
     },
     { // post
 
+      if (args->data)
+        enif_free(args->data);
       enif_release_resource((void*)args->handle);
     });
 
@@ -1330,7 +1341,7 @@ ASYNC_NIF_DECL(
     { // struct
 
         char filename[4096];
-        ERL_NIF_TERM oflags;
+        int flags;
     },
     { // pre
 
@@ -1338,12 +1349,11 @@ ASYNC_NIF_DECL(
             enif_is_list(env, argv[1]))) {
         ASYNC_NIF_RETURN_BADARG();
       }
-      args->oflags = argv[1];
+      args->flags = get_file_open_flags(env, argv[1]);
     },
     { // work
 
-        int flags = get_file_open_flags(env, args->oflags);
-        int fd = open(args->filename, flags, S_IREAD | S_IWRITE);
+        int fd = open(args->filename, args->flags, S_IREAD | S_IWRITE);
         if (fd > -1)
         {
             // Setup a resource for our handle
@@ -1495,22 +1505,31 @@ ASYNC_NIF_DECL(
 
         bitcask_file_handle* handle;
         unsigned long offset_ul;
-        ErlNifBinary bin;
+        unsigned size;
+        unsigned char* data;
     },
     { // pre
 
+        ErlNifBinary data;
         if (!(enif_get_resource(env, argv[0], bitcask_file_RESOURCE, (void**)&(args->handle)) &&
               enif_get_ulong(env, argv[1], &(args->offset_ul)) && /* Offset */
-              enif_inspect_iolist_as_binary(env, argv[2], &(args->bin)))) {  /* Bytes to write */
+              enif_inspect_iolist_as_binary(env, argv[2], &data))) {  /* Bytes to write */
           ASYNC_NIF_RETURN_BADARG();
         }
+        args->size = data.size;
+        args->data = enif_alloc(data.size);
+        if (!args->data) {
+          ASYNC_NIF_PRE_RETURN_CLEANUP();
+          return enif_make_tuple2(env, ATOM_ERROR, ATOM_ENOMEM);
+        }
+        memcpy(args->data, data.data, data.size);
         enif_keep_resource((void*)args->handle);
     },
     { // work
 
-        unsigned char* buf = args->bin.data;
+        unsigned char* buf = args->data;
         ssize_t bytes_written = 0;
-        ssize_t count = args->bin.size;
+        ssize_t count = args->size;
         off_t offset = args->offset_ul;
 
         while (count > 0)
@@ -1535,6 +1554,8 @@ ASYNC_NIF_DECL(
     },
     { // post
 
+      if (args->data)
+        enif_free(args->data);
       enif_release_resource((void*)args->handle);
     });
 
@@ -1605,21 +1626,30 @@ ASYNC_NIF_DECL(
     { // struct
 
         bitcask_file_handle* handle;
-        ErlNifBinary bin;
+        unsigned size;
+        unsigned char* data;
     },
     { // pre
 
+        ErlNifBinary data;
         if (!(enif_get_resource(env, argv[0], bitcask_file_RESOURCE, (void**)&(args->handle)) &&
-              enif_inspect_iolist_as_binary(env, argv[1], &(args->bin)))) { /* Bytes to write */
+              enif_inspect_iolist_as_binary(env, argv[1], &data))) {
           ASYNC_NIF_RETURN_BADARG();
         }
+        args->size = data.size;
+        args->data = enif_alloc(data.size);
+        if (!args->data) {
+          ASYNC_NIF_PRE_RETURN_CLEANUP();
+          return enif_make_tuple2(env, ATOM_ERROR, ATOM_ENOMEM);
+        }
+        memcpy(args->data, data.data, data.size);
         enif_keep_resource((void*)args->handle);
     },
     { // work
 
-        unsigned char* buf = args->bin.data;
+        unsigned char* buf = args->data;
         ssize_t bytes_written = 0;
-        ssize_t count = args->bin.size;
+        ssize_t count = args->size;
         while (count > 0)
         {
             bytes_written = write(args->handle->fd, buf, count);
@@ -1641,6 +1671,8 @@ ASYNC_NIF_DECL(
     },
     { // post
 
+      if (args->data)
+        enif_free(args->data);
       enif_release_resource((void*)args->handle);
     });
 

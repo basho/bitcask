@@ -360,7 +360,8 @@ file_pwrite(DbRef, Offset, Bytes) ->
 file_pwrite_nif(_Ref, _DbRef, _Offset, _Bytes) ->
     erlang:nif_error({error, not_loaded}).
 
-file_read(DbRef, Size) ->
+%%-spec file_read(reference(), positive_int()) -> badarg | eof | {error, errno} | {error, enomem}, {ok, binary()}.
+file_read(DbRef, Size) when Size > 0 ->
     ?ASYNC_NIF_CALL(fun file_read_nif/3, [DbRef, Size]).
 
 file_read_nif(_Ref, _DbRef, _Size) ->
