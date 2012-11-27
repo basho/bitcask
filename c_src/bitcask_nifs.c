@@ -1132,54 +1132,48 @@ ASYNC_NIF_DECL(
     bitcask_nifs_lock_acquire,
     { // struct
 
-        ERL_NIF_TERM ref;
-        char filename[4096];
-        int is_write_lock;
+      char filename[4096];
+      int is_write_lock;
     },
     { // pre
 
-        args->is_write_lock = 0;
-        if (!((enif_get_string(env, argv[0], args->filename, sizeof(args->filename), ERL_NIF_LATIN1) > 0) &&
-              enif_get_int(env, argv[1], &(args->is_write_lock)))) {
-          ASYNC_NIF_RETURN_BADARG();
-        }
-        args->ref = argv[0];
+      args->is_write_lock = 0;
+      if (!((enif_get_string(env, argv[0], args->filename, sizeof(args->filename), ERL_NIF_LATIN1) > 0) &&
+            enif_get_int(env, argv[1], &(args->is_write_lock)))) {
+        ASYNC_NIF_RETURN_BADARG();
+      }
     },
     { // work
+      int fd = 0;
+      int flags = O_RDONLY;
 
-        // Setup the flags for the lock file
-        int flags = O_RDONLY;
-        if (args->is_write_lock)
-        {
-            // Use O_SYNC (in addition to other flags) to ensure that when we write
-            // data to the lock file it is immediately (or nearly) available to any
-            // other reading processes
-            flags = O_CREAT | O_EXCL | O_RDWR | O_SYNC;
-        }
+      if (args->is_write_lock) {
+        // Use O_SYNC (in addition to other flags) to ensure that when we write
+        // data to the lock file it is immediately (or nearly) available to any
+        // other reading processes
+        flags = O_CREAT | O_EXCL | O_RDWR | O_SYNC;
+      }
 
-        // Try to open the lock file -- allocate a resource if all goes well.
-        int fd = open(args->filename, flags, 0600);
-        if (fd > -1)
-        {
-            // Successfully opened the file -- setup a resource to track the FD.
-            unsigned int filename_sz = strlen(args->filename) + 1;
-            bitcask_lock_handle* handle;
-            handle = enif_alloc_resource(bitcask_lock_RESOURCE,
-                                         sizeof(bitcask_lock_handle) +
-                                         filename_sz);
-            memset(handle, 0, sizeof(bitcask_lock_handle));
-            handle->fd = fd;
-            handle->is_write_lock = args->is_write_lock;
-            strncpy(handle->filename, args->filename, filename_sz);
-            ERL_NIF_TERM result = enif_make_resource(env, handle);
-            enif_release_resource(handle);
+      // Try to open the lock file -- allocate a resource if all goes well.
+      if ((fd = open(args->filename, flags, 0600)) != -1) {
 
-            ASYNC_NIF_REPLY(enif_make_tuple2(env, ATOM_OK, result));
-        }
-        else
-        {
-            ASYNC_NIF_REPLY(enif_make_tuple2(env, ATOM_ERROR, errno_atom(env, errno)));
-        }
+        // Successfully opened the file, caller now owns this lock.
+        unsigned int filename_sz = strlen(args->filename) + 1;
+        bitcask_lock_handle* handle;
+        handle = enif_alloc_resource(bitcask_lock_RESOURCE,
+                                     sizeof(bitcask_lock_handle) + filename_sz);
+        memset(handle, 0, sizeof(bitcask_lock_handle));
+        handle->fd = fd;
+        handle->is_write_lock = args->is_write_lock;
+        strncpy(handle->filename, args->filename, filename_sz);
+        ERL_NIF_TERM result = enif_make_resource(env, handle);
+        ASYNC_NIF_REPLY(enif_make_tuple2(env, ATOM_OK, result));
+        enif_release_resource(handle);
+      } else {
+        ASYNC_NIF_REPLY(enif_make_tuple2(env, ATOM_ERROR, errno_atom(env, errno)));
+        return;
+      }
+
     },
     { // post
     });
@@ -1226,7 +1220,7 @@ ASYNC_NIF_DECL(
         struct stat sinfo;
         if (fstat(args->handle->fd, &sinfo) != 0)
         {
-            ASYNC_NIF_REPLY(errno_error_tuple(env, ATOM_FSTAT_ERROR, errno));
+            ASYNC_NIF_REPLY(errno_error_tuple(env, ATOM_FSTAT_ERROR, errno_atom(env, errno)));
             return;
         }
 
@@ -1241,7 +1235,7 @@ ASYNC_NIF_DECL(
         // Read the whole file into our binary
         if (pread(args->handle->fd, data.data, data.size, 0) == -1)
         {
-            ASYNC_NIF_REPLY(errno_error_tuple(env, ATOM_PREAD_ERROR, errno));
+            ASYNC_NIF_REPLY(errno_error_tuple(env, ATOM_PREAD_ERROR, errno_atom(env, errno)));
             return;
         }
 
@@ -1280,10 +1274,10 @@ ASYNC_NIF_DECL(
         if (args->handle->is_write_lock)
         {
             // Truncate the file first, to ensure that the lock file only contains what
-            // we're about to write
+            // we're about to write.
             if (ftruncate(args->handle->fd, 0) == -1)
             {
-                ASYNC_NIF_REPLY(errno_error_tuple(env, ATOM_FTRUNCATE_ERROR, errno));
+                ASYNC_NIF_REPLY(errno_error_tuple(env, ATOM_FTRUNCATE_ERROR, errno_atom(env, errno)));
                 return;
             }
 
@@ -1291,7 +1285,7 @@ ASYNC_NIF_DECL(
             // ensure that the data is available ASAP to reading processes.
             if (pwrite(args->handle->fd, args->data, args->size, 0) == -1)
             {
-                ASYNC_NIF_REPLY(errno_error_tuple(env, ATOM_PWRITE_ERROR, errno));
+                ASYNC_NIF_REPLY(errno_error_tuple(env, ATOM_PWRITE_ERROR, errno_atom(env, errno)));
                 return;
             }
 
@@ -1352,24 +1346,24 @@ ASYNC_NIF_DECL(
     },
     { // work
 
-        int fd = open(args->filename, args->flags, S_IREAD | S_IWRITE);
-        if (fd > -1)
-        {
-            // Setup a resource for our handle
-          bitcask_file_handle* handle;
-          handle = enif_alloc_resource(bitcask_file_RESOURCE,
-                                       sizeof(bitcask_file_handle));
-          memset(handle, 0, sizeof(bitcask_file_handle));
-          handle->fd = fd;
+      int fd = open(args->filename, args->flags, S_IREAD | S_IWRITE);
+      if (fd > -1)
+      {
+        // Setup a resource for our handle
+        bitcask_file_handle* handle;
+        handle = enif_alloc_resource(bitcask_file_RESOURCE,
+                                     sizeof(bitcask_file_handle));
+        memset(handle, 0, sizeof(bitcask_file_handle));
+        handle->fd = fd;
 
-          ERL_NIF_TERM result = enif_make_resource(env, handle);
-          enif_release_resource(handle);
-          ASYNC_NIF_REPLY(enif_make_tuple2(env, ATOM_OK, result));
-        }
-        else
-        {
-            ASYNC_NIF_REPLY(enif_make_tuple2(env, ATOM_ERROR, errno_atom(env, errno)));
-        }
+        ERL_NIF_TERM result = enif_make_resource(env, handle);
+        ASYNC_NIF_REPLY(enif_make_tuple2(env, ATOM_OK, result));
+        enif_release_resource(handle);
+      }
+      else
+      {
+        ASYNC_NIF_REPLY(enif_make_tuple2(env, ATOM_ERROR, errno_atom(env, errno)));
+      }
     },
     { // post
     })
@@ -1703,7 +1697,12 @@ ASYNC_NIF_DECL(
 
 ERL_NIF_TERM errno_atom(ErlNifEnv* env, int error)
 {
-    return enif_make_atom(env, erl_errno_id(error));
+    ERL_NIF_TERM e;
+    if ((e = erl_errno_id(error)) == ATOM_UNKNOWN) {
+      return enif_make_int(env, error);
+    } else {
+      return enif_make_atom(env, e);
+    }
 }
 
 ERL_NIF_TERM errno_error_tuple(ErlNifEnv* env, ERL_NIF_TERM key, int error)
