@@ -95,14 +95,14 @@ static struct async_nif_worker_entry async_nif_worker_entries[ASYNC_NIF_MAX_WORK
     req = (struct async_nif_req_entry*)enif_alloc(sizeof(struct async_nif_req_entry)); \
     if (!req) {                                                         \
       fn_post_ ## decl (args);                                          \
-      return enif_make_tuple2(env, enif_make_atom(env, "error"),  \
-                              enif_make_atom(env, "enomem"));        \
+      return enif_make_tuple2(env, enif_make_atom(env, "error"),        \
+                              enif_make_atom(env, "enomem"));           \
     }                                                                   \
     copy_of_args = (struct decl ## _args *)enif_alloc(sizeof(struct decl ## _args)); \
     if (!copy_of_args) {                                                \
       fn_post_ ## decl (args);                                          \
-      return enif_make_tuple2(env, enif_make_atom(env, "error"),  \
-                              enif_make_atom(env, "enomem"));        \
+      return enif_make_tuple2(env, enif_make_atom(env, "error"),        \
+                              enif_make_atom(env, "enomem"));           \
     }                                                                   \
     memcpy(copy_of_args, args, sizeof(struct decl ## _args));           \
     req->ref = ref;                                                     \
