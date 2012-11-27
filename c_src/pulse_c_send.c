@@ -12,7 +12,6 @@
 #ifdef PULSE
 
 #include "erl_nif.h"
-#include "erl_nif_compat.h"
 #include "pulse_c_send.h"
 
 // The global place to store the pid of PULSE

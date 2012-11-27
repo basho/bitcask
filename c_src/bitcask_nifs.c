@@ -48,11 +48,11 @@ void DEBUG(const char *fmt, ...)
 #  define DEBUG(X, ...) {}
 #endif
 
-#include "async_nif.h"
-
 #ifdef PULSE
 #include "pulse_c_send.h"
 #endif
+
+#include "async_nif.h"
 
 static ErlNifResourceType* bitcask_keydir_RESOURCE;
 

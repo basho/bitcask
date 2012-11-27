@@ -219,7 +219,7 @@ static void async_nif_unload(void)
                   async_nif_req_entry, entries);
 #ifdef PULSE
     PULSE_SEND(NULL, &req->pid, req->env,
-              enif_make_tuple2(env, enif_make_atom(req->env, "error"),
+              enif_make_tuple2(req->env, enif_make_atom(req->env, "error"),
                                enif_make_atom(req->env, "shutdown")));
 #else
     enif_send(NULL, &req->pid, req->env,
