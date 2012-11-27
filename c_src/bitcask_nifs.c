@@ -1697,12 +1697,7 @@ ASYNC_NIF_DECL(
 
 ERL_NIF_TERM errno_atom(ErlNifEnv* env, int error)
 {
-    ERL_NIF_TERM e;
-    if ((e = erl_errno_id(error)) == ATOM_UNKNOWN) {
-      return enif_make_int(env, error);
-    } else {
-      return enif_make_atom(env, e);
-    }
+    return enif_make_atom(env, erl_errno_id(error));
 }
 
 ERL_NIF_TERM errno_error_tuple(ErlNifEnv* env, ERL_NIF_TERM key, int error)
