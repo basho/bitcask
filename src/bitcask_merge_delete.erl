@@ -41,7 +41,13 @@
 -endif.
 
 -define(SERVER, ?MODULE). 
+-ifdef(TEST).
+-define(TIMEOUT_SETUP, put({?MODULE, counter}, 10*1000)).
+-define(TIMEOUT, begin case put({?MODULE, counter}, get({?MODULE, counter}) - 1) of N when N > 0 -> 1000; _ -> erlang:display({?MODULE,?LINE,infinity,'and',beyond}), infinity end end).
+-else.
+-define(TIMEOUT_SETUP, ok).
 -define(TIMEOUT, 1000).
+-endif. % TEST
 
 -record(state, {q :: queue()}).
 
@@ -67,6 +73,7 @@ testonly__delete_trigger() ->
 %%%===================================================================
 
 init([]) ->
+    ?TIMEOUT_SETUP,
     {ok, #state{q = queue:new()}, ?TIMEOUT}.
 
 handle_call({defer_delete, Dirname, IterGeneration, Files}, _From, State) ->
