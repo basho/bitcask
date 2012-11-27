@@ -1926,6 +1926,7 @@ static void bitcask_nifs_keydir_priv_resource_cleanup(ErlNifEnv* env, bitcask_ke
         }
 
         free_keydir(env, keydir);
+        enif_free(keydir);
     }
 }
 
