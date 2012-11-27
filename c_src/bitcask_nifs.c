@@ -1270,7 +1270,6 @@ ASYNC_NIF_DECL(
         args->size = data.size;
         args->data = enif_alloc(data.size);
         if (!args->data) {
-          ASYNC_NIF_PRE_RETURN_CLEANUP();
           return enif_make_tuple2(env, ATOM_ERROR, ATOM_ENOMEM);
         }
         memcpy(args->data, data.data, data.size);
@@ -1519,7 +1518,6 @@ ASYNC_NIF_DECL(
         args->size = data.size;
         args->data = enif_alloc(data.size);
         if (!args->data) {
-          ASYNC_NIF_PRE_RETURN_CLEANUP();
           return enif_make_tuple2(env, ATOM_ERROR, ATOM_ENOMEM);
         }
         memcpy(args->data, data.data, data.size);
@@ -1639,7 +1637,6 @@ ASYNC_NIF_DECL(
         args->size = data.size;
         args->data = enif_alloc(data.size);
         if (!args->data) {
-          ASYNC_NIF_PRE_RETURN_CLEANUP();
           return enif_make_tuple2(env, ATOM_ERROR, ATOM_ENOMEM);
         }
         memcpy(args->data, data.data, data.size);
