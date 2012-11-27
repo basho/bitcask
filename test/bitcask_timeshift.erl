@@ -51,6 +51,9 @@ set_tstamp_step(Step) ->
     erlang:put(meck_tstamp_step, Step).
 
 timeshift_test() ->
+    {timeout, 60, fun() -> timeshift_test2() end}.
+
+timeshift_test2() ->
     try
         Dirname = "/tmp/bc.timeshift",
         meck:new(bitcask_time, [passthrough]),
