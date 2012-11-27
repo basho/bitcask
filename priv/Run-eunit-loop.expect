@@ -49,16 +49,16 @@ while {1} {
         expect {
             {Segmentation} {
                 echo_and_say "Segmentation violation"
-                puts "cp /tmp/slf-stuff-just-in-case ./zzz.sigsegv.[exec date +%s]"
-                exec cp /tmp/slf-stuff-just-in-case ./zzz.sigsegv.[exec date +%s]
+                #puts "cp /tmp/slf-stuff-just-in-case ./zzz.sigsegv.[exec date +%s]"
+                #exec cp /tmp/slf-stuff-just-in-case ./zzz.sigsegv.[exec date +%s]
                 sleep 2
                 wait_for_shell_prompt ; echo_and_say "Got prompt"
                 break
             }
             {size_object} {
                 echo_and_say "Bad tag"
-                puts "cp /tmp/slf-stuff-just-in-case ./zzz.bad-tag.[exec date +%s]"
-                exec cp /tmp/slf-stuff-just-in-case ./zzz.bad-tag.[exec date +%s]
+                #puts "cp /tmp/slf-stuff-just-in-case ./zzz.bad-tag.[exec date +%s]"
+                #exec cp /tmp/slf-stuff-just-in-case ./zzz.bad-tag.[exec date +%s]
                 sleep 2
                 wait_for_shell_prompt ; echo_and_say "Got prompt"
                 break
@@ -84,8 +84,8 @@ while {1} {
             {Unknown command for pulse} {
                 set timeout $default_timeout
                 echo_and_say "Drat, unknown command for pulse"
-                puts "cp /tmp/slf-stuff-just-in-case ./zzz.unknown-command.[exec date +%s]"
-                exec cp /tmp/slf-stuff-just-in-case ./zzz.unknown-command.[exec date +%s]
+                #puts "cp /tmp/slf-stuff-just-in-case ./zzz.unknown-command.[exec date +%s]"
+                #exec cp /tmp/slf-stuff-just-in-case ./zzz.unknown-command.[exec date +%s]
                 send "\003" ; sleep 1; send "\003" ; sleep 1;
                 wait_for_shell_prompt ; echo_and_say "Got prompt"
                 break;
@@ -101,8 +101,8 @@ while {1} {
             }
             timeout {
                 echo_and_say "Bummer, there was a timeout"
-                puts "cp /tmp/slf-stuff-just-in-case ./zzz.timeout.[exec date +%s]"
-                exec cp /tmp/slf-stuff-just-in-case ./zzz.timeout.[exec date +%s]
+                #puts "cp /tmp/slf-stuff-just-in-case ./zzz.timeout.[exec date +%s]"
+                #exec cp /tmp/slf-stuff-just-in-case ./zzz.timeout.[exec date +%s]
                 # set foo 15 ; sleep 2 ; echo_and_say "I am going to sleep for $foo seconds to allow a control-z to suspend and debug" ; sleep $foo
                 send "\003\r" ; sleep 1; send "\003\r" ; sleep 1;
                 wait_for_shell_prompt ; echo_and_say "Got prompt"
