@@ -29,8 +29,6 @@
 #include "erl_driver.h"
 #include "erl_nif_util.h"
 
-#include "async_nif.h"
-
 #include "khash.h"
 #include "murmurhash.h"
 
@@ -49,6 +47,8 @@ void DEBUG(const char *fmt, ...)
 #else
 #  define DEBUG(X, ...) {}
 #endif
+
+#include "async_nif.h"
 
 #ifdef PULSE
 #include "pulse_c_send.h"
