@@ -162,33 +162,33 @@ typedef struct
                                   (e)->offset = 0; }
 
 // Atoms (using enif_make_atom everywhere for thread-safety)
-#define ATOM_ENOMEM enif_make_atom(env, "enomem")
-#define ATOM_ALREADY_EXISTS enif_make_atom(env, "already_exists")
-#define ATOM_BITCASK_ENTRY enif_make_atom(env, "bitcask_entry")
-#define ATOM_ERROR enif_make_atom(env, "error")
-#define ATOM_FALSE enif_make_atom(env, "false")
-#define ATOM_FSTAT_ERROR enif_make_atom(env, "fstat_error")
-#define ATOM_FTRUNCATE_ERROR enif_make_atom(env, "ftruncate_error")
-#define ATOM_GETFL_ERROR enif_make_atom(env, "getfl_error")
-/* Iteration lock thread creation error */
-#define ATOM_ILT_CREATE_ERROR enif_make_atom(env, "ilt_create_error")
-#define ATOM_ITERATION_IN_PROCESS enif_make_atom(env, "iteration_in_process")
-#define ATOM_ITERATION_NOT_PERMITTED enif_make_atom(env, "iteration_not_permitted")
-#define ATOM_ITERATION_NOT_STARTED enif_make_atom(env, "iteration_not_started")
-#define ATOM_LOCK_NOT_WRITABLE enif_make_atom(env, "lock_not_writable")
-#define ATOM_NOT_FOUND enif_make_atom(env, "not_found")
-#define ATOM_NOT_READY enif_make_atom(env, "not_ready")
-#define ATOM_OK enif_make_atom(env, "ok")
-#define ATOM_OUT_OF_DATE enif_make_atom(env, "out_of_date")
-#define ATOM_PREAD_ERROR enif_make_atom(env, "pread_error")
-#define ATOM_PWRITE_ERROR enif_make_atom(env, "pwrite_error")
-#define ATOM_READY enif_make_atom(env, "ready")
-#define ATOM_SETFL_ERROR enif_make_atom(env, "setfl_error")
-#define ATOM_TRUE enif_make_atom(env, "true")
-#define ATOM_EOF enif_make_atom(env, "eof")
-#define ATOM_CREATE enif_make_atom(env, "create")
-#define ATOM_READONLY enif_make_atom(env, "readonly")
-#define ATOM_O_SYNC enif_make_atom(env, "o_sync")
+static ERL_NIF_TERM ATOM_ENOMEM;
+static ERL_NIF_TERM ATOM_ALREADY_EXISTS;
+static ERL_NIF_TERM ATOM_BITCASK_ENTRY;
+static ERL_NIF_TERM ATOM_ERROR;
+static ERL_NIF_TERM ATOM_FALSE;
+static ERL_NIF_TERM ATOM_FSTAT_ERROR;
+static ERL_NIF_TERM ATOM_FTRUNCATE_ERROR;
+static ERL_NIF_TERM ATOM_GETFL_ERROR;
+static ERL_NIF_TERM ATOM_ILT_CREATE_ERROR;
+static ERL_NIF_TERM ATOM_ITERATION_IN_PROCESS;
+static ERL_NIF_TERM ATOM_ITERATION_NOT_PERMITTED;
+static ERL_NIF_TERM ATOM_ITERATION_NOT_STARTED;
+static ERL_NIF_TERM ATOM_LOCK_NOT_WRITABLE;
+static ERL_NIF_TERM ATOM_NOT_FOUND;
+static ERL_NIF_TERM ATOM_NOT_READY;
+static ERL_NIF_TERM ATOM_OK;
+static ERL_NIF_TERM ATOM_OUT_OF_DATE;
+static ERL_NIF_TERM ATOM_PREAD_ERROR;
+static ERL_NIF_TERM ATOM_PWRITE_ERROR;
+static ERL_NIF_TERM ATOM_READY;
+static ERL_NIF_TERM ATOM_SETFL_ERROR;
+static ERL_NIF_TERM ATOM_TRUE;
+static ERL_NIF_TERM ATOM_EOF;
+static ERL_NIF_TERM ATOM_CREATE;
+static ERL_NIF_TERM ATOM_READONLY;
+static ERL_NIF_TERM ATOM_O_SYNC;
+static ERL_NIF_TERM ATOM_UNKNOWN;
 
 ERL_NIF_TERM errno_atom(ErlNifEnv* env, int error);
 ERL_NIF_TERM errno_error_tuple(ErlNifEnv* env, ERL_NIF_TERM key, int error);
@@ -1990,6 +1990,35 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
     priv->global_keydirs = kh_init(global_keydirs);
     priv->global_keydirs_lock = enif_mutex_create("bitcask_global_handles_lock");
     *priv_data = priv;
+
+    // Initialize atoms that we use throughout the NIF.
+    ATOM_ENOMEM = enif_make_atom(env, "enomem");
+    ATOM_ALREADY_EXISTS = enif_make_atom(env, "already_exists");
+    ATOM_BITCASK_ENTRY = enif_make_atom(env, "bitcask_entry");
+    ATOM_ERROR = enif_make_atom(env, "error");
+    ATOM_FALSE = enif_make_atom(env, "false");
+    ATOM_FSTAT_ERROR = enif_make_atom(env, "fstat_error");
+    ATOM_FTRUNCATE_ERROR = enif_make_atom(env, "ftruncate_error");
+    ATOM_GETFL_ERROR = enif_make_atom(env, "getfl_error");
+    ATOM_ILT_CREATE_ERROR = enif_make_atom(env, "ilt_create_error");
+    ATOM_ITERATION_IN_PROCESS = enif_make_atom(env, "iteration_in_process");
+    ATOM_ITERATION_NOT_PERMITTED = enif_make_atom(env, "iteration_not_permitted");
+    ATOM_ITERATION_NOT_STARTED = enif_make_atom(env, "iteration_not_started");
+    ATOM_LOCK_NOT_WRITABLE = enif_make_atom(env, "lock_not_writable");
+    ATOM_NOT_FOUND = enif_make_atom(env, "not_found");
+    ATOM_NOT_READY = enif_make_atom(env, "not_ready");
+    ATOM_OK = enif_make_atom(env, "ok");
+    ATOM_OUT_OF_DATE = enif_make_atom(env, "out_of_date");
+    ATOM_PREAD_ERROR = enif_make_atom(env, "pread_error");
+    ATOM_PWRITE_ERROR = enif_make_atom(env, "pwrite_error");
+    ATOM_READY = enif_make_atom(env, "ready");
+    ATOM_SETFL_ERROR = enif_make_atom(env, "setfl_error");
+    ATOM_TRUE = enif_make_atom(env, "true");
+    ATOM_EOF = enif_make_atom(env, "eof");
+    ATOM_CREATE = enif_make_atom(env, "create");
+    ATOM_READONLY = enif_make_atom(env, "readonly");
+    ATOM_O_SYNC = enif_make_atom(env, "o_sync");
+    ATOM_UNKNOWN = enif_make_atom(env, "unknown");
 
 #ifdef PULSE
     pulse_c_send_on_load(env);
