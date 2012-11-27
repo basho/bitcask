@@ -65,4 +65,7 @@ package: dist
 pkgclean:
 	$(MAKE) -C package pkgclean
 
+eunit-repl:
+	erl -pa .eunit -pz deps/*/ebin -pz ebin -exec 'cd(".eunit").'
+
 export BITCASK_TAG PKG_VERSION REPO REVISION
