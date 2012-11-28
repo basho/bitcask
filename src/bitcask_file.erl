@@ -78,11 +78,15 @@ init([]) ->
     {ok, #state{}}.
 
 handle_call({file_open, Filename, Opts}, _From, State) ->
-    Mode = case proplists:get_bool(readonly, Opts) of
-               true ->
+    IsCreate = proplists:get_bool(create, Opts),
+    IsReadOnly = proplists:get_bool(readonly, Opts),
+    Mode = case {IsReadOnly, IsCreate} of
+               {true, _} ->
                    [read, raw, binary, read_ahead];
-               false ->
-                   [read, write, raw, binary, read_ahead]
+               {_, false} ->
+                   [read, write, raw, binary, read_ahead];
+               {_, true} ->
+                   [read, write, exclusive, raw, binary, read_ahead]
            end,
     %% [lager:warning("Option ~p ignored", [Opt]) || Opt <- [create, o_sync],
     %%                                               proplists:get_bool(Opt, Opts)],
