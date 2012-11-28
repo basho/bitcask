@@ -1949,7 +1949,7 @@ static void dump_fstats(bitcask_keydir* keydir)
 
 static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
 {
-    ASYNC_NIF_LOAD();
+    ASYNC_NIF_LOAD(64);
     bitcask_keydir_RESOURCE = enif_open_resource_type(env, NULL, "bitcask_keydir_resource",
                                                       &bitcask_nifs_keydir_resource_cleanup,
                                                       ERL_NIF_RT_CREATE | ERL_NIF_RT_TAKEOVER,
