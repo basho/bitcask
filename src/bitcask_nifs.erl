@@ -260,11 +260,11 @@ keydir_fold(Ref, Fun, Acc0, MaxAge, MaxPuts) ->
 keydir_frozen(Ref, FrozenFun, MaxAge, MaxPuts) ->
     case keydir_itr(Ref, MaxAge, MaxPuts) of
         out_of_date ->
-            receive
-                ready -> % fold no matter what on second attempt
+            case wait_for_ready() of
+                ok ->
                     keydir_frozen(Ref, FrozenFun, -1, -1);
-                error ->
-                    {error, shutdown}
+                Else ->
+                    Else
             end;
         ok ->
             try
@@ -274,6 +274,16 @@ keydir_frozen(Ref, FrozenFun, MaxAge, MaxPuts) ->
             end;
         {error, Reason} ->
             {error, Reason}
+    end.
+
+wait_for_ready() ->
+    receive
+        ready -> % fold no matter what on second attempt
+            ok;
+        error ->
+            {error, shutdown}
+    after 1000 ->
+            wait_for_ready()
     end.
 
 %% Wait for any pending interation to complete
