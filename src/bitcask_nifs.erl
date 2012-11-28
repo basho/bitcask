@@ -62,7 +62,6 @@
 -endif.
 
 -include("bitcask.hrl").
--include("async_nif.hrl").
 
 -ifdef(PULSE).
 -compile({parse_transform, pulse_instrument}).
@@ -307,74 +306,74 @@ keydir_release_nif(_DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
 lock_acquire(Filename, IsWriteLock) ->
-    ?ASYNC_NIF_CALL(fun lock_acquire_nif/3, [Filename, IsWriteLock]).
+    bitcask_async_nif:call(fun lock_acquire_nif/3, [Filename, IsWriteLock]).
 
 lock_acquire_nif(_Ref, _Filename, _IsWriteLock) ->
     erlang:nif_error({error, not_loaded}).
 
 lock_release(DbRef) ->
-    ?ASYNC_NIF_CALL(fun lock_release_nif/2, [DbRef]).
+    bitcask_async_nif:call(fun lock_release_nif/2, [DbRef]).
 
 lock_release_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
 lock_readdata(DbRef) ->
-    ?ASYNC_NIF_CALL(fun lock_readdata_nif/2, [DbRef]).
+    bitcask_async_nif:call(fun lock_readdata_nif/2, [DbRef]).
 
 lock_readdata_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
 lock_writedata(DbRef, Data) ->
-    ?ASYNC_NIF_CALL(fun lock_writedata_nif/3, [DbRef, Data]).
+    bitcask_async_nif:call(fun lock_writedata_nif/3, [DbRef, Data]).
 
 lock_writedata_nif(_Ref, _DbRef, _Data) ->
     erlang:nif_error({error, not_loaded}).
 
 file_open(Filename, Opts) ->
-    ?ASYNC_NIF_CALL(fun file_open_nif/3, [Filename, Opts]).
+    bitcask_async_nif:call(fun file_open_nif/3, [Filename, Opts]).
 
 file_open_nif(_Ref, _Filename, _Opts) ->
     erlang:nif_error({error, not_loaded}).
 
 file_close(DbRef) ->
-    ?ASYNC_NIF_CALL(fun file_close_nif/2, [DbRef]).
+    bitcask_async_nif:call(fun file_close_nif/2, [DbRef]).
 
 file_close_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
 file_sync(DbRef) ->
-    ?ASYNC_NIF_CALL(fun file_sync_nif/2, [DbRef]).
+    bitcask_async_nif:call(fun file_sync_nif/2, [DbRef]).
 
 file_sync_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).
 
 file_pread(DbRef, Offset, Size) ->
-    ?ASYNC_NIF_CALL(fun file_pread_nif/4, [DbRef, Offset, Size]).
+    bitcask_async_nif:call(fun file_pread_nif/4, [DbRef, Offset, Size]).
 
 file_pread_nif(_Ref, _DbRef, _Offset, _Size) ->
     erlang:nif_error({error, not_loaded}).
 
 file_pwrite(DbRef, Offset, Bytes) ->
-    ?ASYNC_NIF_CALL(fun file_pwrite_nif/4, [DbRef, Offset, Bytes]).
+    bitcask_async_nif:call(fun file_pwrite_nif/4, [DbRef, Offset, Bytes]).
 
 file_pwrite_nif(_Ref, _DbRef, _Offset, _Bytes) ->
     erlang:nif_error({error, not_loaded}).
 
 %%-spec file_read(reference(), positive_int()) -> badarg | eof | {error, errno} | {error, enomem}, {ok, binary()}.
 file_read(DbRef, Size) when Size > 0 ->
-    ?ASYNC_NIF_CALL(fun file_read_nif/3, [DbRef, Size]).
+    bitcask_async_nif:call(fun file_read_nif/3, [DbRef, Size]).
 
 file_read_nif(_Ref, _DbRef, _Size) ->
     erlang:nif_error({error, not_loaded}).
 
 file_write(DbRef, Bytes) ->
-    ?ASYNC_NIF_CALL(fun file_write_nif/3, [DbRef, Bytes]).
+    bitcask_async_nif:call(fun file_write_nif/3, [DbRef, Bytes]).
 
 file_write_nif(_Ref, _DbRef, _Bytes) ->
     erlang:nif_error({error, not_loaded}).
 
 file_seekbof(DbRef) ->
-    ?ASYNC_NIF_CALL(fun file_seekbof_nif/2, [DbRef]).
+    bitcask_async_nif:call(fun file_seekbof_nif/2, [DbRef]).
 
 file_seekbof_nif(_Ref, _DbRef) ->
     erlang:nif_error({error, not_loaded}).

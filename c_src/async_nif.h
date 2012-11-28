@@ -128,7 +128,7 @@ static struct async_nif_worker_entry async_nif_worker_entries[ASYNC_NIF_MAX_WORK
 #define ASYNC_NIF_RETURN_BADARG() return enif_make_badarg(env);
 #define ASYNC_NIF_WORK_ENV new_env
 
-#ifndef PULSE
+#ifndef PULSE_FORCE_USING_PULSE_SEND_HERE
 #define ASYNC_NIF_REPLY(msg) enif_send(NULL, pid, env, enif_make_tuple2(env, ref, msg))
 #else
 #define ASYNC_NIF_REPLY(msg) PULSE_SEND(NULL, pid, env, enif_make_tuple2(env, ref, msg))
