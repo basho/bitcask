@@ -763,7 +763,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
                     set_pending_tombstone(entry);
                 }
             }
-            // Otherwise add a tombstone to the pending hash (iteration must have 
+            // Otherwise add a tombstone to the pending hash (iteration must have
             // started between put/remove call in bitcask:delete.
             else
             {
@@ -771,7 +771,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
                     add_entry(env, keydir, keydir->pending, &key, entry);
                 set_pending_tombstone(pending_entry);
             }
-  
+
             UNLOCK(keydir);
             return ATOM_OK;
         }
@@ -943,7 +943,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr(ErlNifEnv* env, int argc, const ERL_NIF_TER
             // Grow the pending_awaken array if necessary
             if (keydir->pending_awaken_count == keydir->pending_awaken_size)
             {   // Grow 16-at-a-time, expect a single alloc
-                keydir->pending_awaken_size += 16;  
+                keydir->pending_awaken_size += 16;
                 size_t size = keydir->pending_awaken_size * sizeof(keydir->pending_awaken[0]);
                 if (keydir->pending_awaken == NULL)
                 {

@@ -82,7 +82,7 @@ static struct async_nif_worker_entry async_nif_worker_entries[ASYNC_NIF_MAX_WORK
     struct decl ## _args *copy_of_args;                                 \
     struct async_nif_req_entry *req = NULL;                             \
     ErlNifEnv *new_env = NULL;                                          \
-    /* argv[0] is used internally for selective recv. */                \
+    /* argv[0] is a ref used for selective recv */                      \
     const ERL_NIF_TERM *argv = argv_in + 1;                             \
     argc--;                                                             \
     if (async_nif_shutdown)                                             \
