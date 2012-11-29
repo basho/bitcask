@@ -57,7 +57,7 @@ static volatile unsigned int async_nif_shutdown = 0;
 static ErlNifMutex *async_nif_req_mutex = NULL;
 static ErlNifMutex *async_nif_worker_mutex = NULL;
 static ErlNifCond *async_nif_cnd = NULL;
-static struct async_nif_worker_entry *async_nif_worker_entries;
+static struct async_nif_worker_entry *async_nif_worker_entries = NULL;
 static unsigned int async_nif_worker_count = 0;
 
 
@@ -240,9 +240,10 @@ static int async_nif_size_thread_pool(int amt)
 
 static void async_nif_unload(void)
 {
-  /* Shutdown the worker threads. */
+  /* Shutdown the worker threads, free up that memory. */
   async_nif_size_thread_pool(-async_nif_worker_count);
-
+  enif_free(async_nif_worker_entries);
+  async_nif_worker_entries = 0;
 
   /* Worker threads are stopped, now toss out anything left in the queue. */
   enif_mutex_lock(async_nif_req_mutex);
@@ -266,7 +267,6 @@ static void async_nif_unload(void)
   }
   enif_mutex_unlock(async_nif_req_mutex);
 
-  memset(async_nif_worker_entries, sizeof(struct async_nif_worker_entry) * async_nif_worker_count, 0);
   enif_cond_destroy(async_nif_cnd); async_nif_cnd = NULL;
   enif_mutex_destroy(async_nif_req_mutex); async_nif_req_mutex = NULL;
   enif_mutex_destroy(async_nif_worker_mutex); async_nif_worker_mutex = NULL;
