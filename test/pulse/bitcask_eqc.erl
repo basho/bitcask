@@ -272,7 +272,7 @@ mute(false, Fun) -> mute:run(Fun).
 run_commands_on_node(LocalOrSlave, Cmds, Seed, Verbose) ->
   mute(Verbose, fun() ->
     AfterTime = if LocalOrSlave == local -> 50000;
-                   LocalOrSlave == remote -> 1000000
+                   LocalOrSlave == slave -> 1000000
                 end,
     event_logger:start_link(),
     pulse:start(),
