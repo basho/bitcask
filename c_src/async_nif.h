@@ -63,8 +63,7 @@ static volatile unsigned int async_nif_shutdown = 0;
 static ErlNifMutex *async_nif_req_mutex = NULL;
 static ErlNifMutex *async_nif_worker_mutex = NULL;
 static ErlNifCond *async_nif_cnd = NULL;
-static struct async_nif_worker_entry *async_nif_worker_entries = NULL;
-static unsigned int async_nif_worker_count = 0;
+static struct async_nif_worker_entry async_nif_worker_entries[ASYNC_NIF_MAX_WORKERS];
 
 
 #define ASYNC_NIF_DECL(decl, frame, pre_block, work_block, post_block)  \
@@ -118,7 +117,7 @@ static unsigned int async_nif_worker_count = 0;
                                              enif_make_int(env, async_nif_req_count))); \
   }
 
-#define ASYNC_NIF_LOAD(count) if (async_nif_init(count) != 0) return -1;
+#define ASYNC_NIF_LOAD() if (async_nif_init() != 0) return -1;
 #define ASYNC_NIF_UNLOAD() async_nif_unload();
 #define ASYNC_NIF_UPGRADE() async_nif_unload();
 
@@ -190,69 +189,27 @@ static void *async_nif_worker_fn(void *arg)
   return 0;
 }
 
-static int async_nif_size_thread_pool(int amt)
-{
-  int i;
-
-  /* Setup the thread pool management. */
-  enif_mutex_lock(async_nif_worker_mutex);
-  if (amt == 0) {
-    enif_mutex_unlock(async_nif_worker_mutex);
-    return 0;
-  } else if (amt < 0) {
-    if (abs(amt) != async_nif_worker_count) {
-      /* TODO: Someday add code to shrink the number of worker threads, ...
-         but not today. */
-      enif_mutex_unlock(async_nif_worker_mutex);
-      return -1;
-    } else {
-      /* Signal the worker threads, stop what you're doing and exit. */
-      async_nif_shutdown = 1;
-      enif_cond_broadcast(async_nif_cnd);
-      enif_mutex_unlock(async_nif_req_mutex);
-
-      /* Join for the now exiting worker threads. */
-      i = async_nif_worker_count;
-      while(i) {
-        void *exit_value = 0; /* Ignore this. */
-        enif_thread_join(async_nif_worker_entries[--i].tid, &exit_value);
-      }
-      async_nif_worker_count = 0;
-    }
-  } else {
-    if (async_nif_worker_count == 0) {
-      /* Create a new pool. */
-      async_nif_worker_entries = enif_alloc(sizeof(struct async_nif_worker_entry) * amt);
-    } else {
-      /* Growing the thread pool from `async_nif_worker_count` by `amt` new workers. */
-      struct async_nif_worker_entry *new = enif_realloc(async_nif_worker_entries, sizeof(struct async_nif_worker_entry) * amt);
-      async_nif_worker_entries = new; /* It could have moved, but that should be ok. */
-    }
-    memset(async_nif_worker_entries + (async_nif_worker_count * sizeof(struct async_nif_worker_entry)), sizeof(struct async_nif_worker_entry) * abs(amt), 0);
-    for (i = 0; i < amt; i++) {
-      if (enif_thread_create(NULL, &async_nif_worker_entries[async_nif_worker_count + 1].tid,
-                             &async_nif_worker_fn, (void*)&async_nif_worker_entries[async_nif_worker_count + 1], NULL) != 0) {
-        /* If things went wrong growing, we shutdown all worker threads not just the new ones. */
-        enif_mutex_unlock(async_nif_worker_mutex);
-        async_nif_size_thread_pool(-async_nif_worker_count);
-        return -1;
-      }
-      async_nif_worker_count += 1;
-    }
-  }
-  enif_mutex_unlock(async_nif_worker_mutex);
-  return 0;
-}
-
 static void async_nif_unload(void)
 {
-  /* Shutdown the worker threads, free up that memory. */
-  async_nif_size_thread_pool(-async_nif_worker_count);
-  enif_free(async_nif_worker_entries);
-  async_nif_worker_entries = 0;
+  unsigned int i;
 
-  /* Worker threads are stopped, now toss out anything left in the queue. */
+  /* Signal the worker threads, stop what you're doing and exit. */
   enif_mutex_lock(async_nif_req_mutex);
+  async_nif_shutdown = 1;
+  enif_cond_broadcast(async_nif_cnd);
+  enif_mutex_unlock(async_nif_req_mutex);
+
+  /* Join for the now exiting worker threads. */
+  for (i = 0; i < ASYNC_NIF_MAX_WORKERS; ++i) {
+    void *exit_value = 0; /* Ignore this. */
+    enif_thread_join(async_nif_worker_entries[i].tid, &exit_value);
+  }
+
+  /* We won't get here until all threads have exited.
+     Patch things up, and carry on. */
+  enif_mutex_lock(async_nif_req_mutex);
+
+  /* Worker threads are stopped, now toss anything left in the queue. */
   struct async_nif_req_entry *req = NULL;
   STAILQ_FOREACH(req, &async_nif_reqs, entries) {
     STAILQ_REMOVE(&async_nif_reqs, STAILQ_LAST(&async_nif_reqs, async_nif_req_entry, entries),
@@ -273,13 +230,15 @@ static void async_nif_unload(void)
   }
   enif_mutex_unlock(async_nif_req_mutex);
 
+  memset(async_nif_worker_entries, sizeof(struct async_nif_worker_entry) * ASYNC_NIF_MAX_WORKERS, 0);
   enif_cond_destroy(async_nif_cnd); async_nif_cnd = NULL;
   enif_mutex_destroy(async_nif_req_mutex); async_nif_req_mutex = NULL;
   enif_mutex_destroy(async_nif_worker_mutex); async_nif_worker_mutex = NULL;
 }
 
-static int async_nif_init(unsigned int count)
+static int async_nif_init(void)
 {
+  int i;
 
   /* Don't init more than once. */
   if (async_nif_req_mutex) return 0;
@@ -287,8 +246,33 @@ static int async_nif_init(unsigned int count)
   async_nif_req_mutex = enif_mutex_create(NULL);
   async_nif_worker_mutex = enif_mutex_create(NULL);
   async_nif_cnd = enif_cond_create(NULL);
+
+  /* Setup the requests management. */
   async_nif_req_count = 0;
-  return async_nif_size_thread_pool(count);
+
+  /* Setup the thread pool management. */
+  enif_mutex_lock(async_nif_worker_mutex);
+  memset(async_nif_worker_entries, sizeof(struct async_nif_worker_entry) * ASYNC_NIF_MAX_WORKERS, 0);
+
+  for (i = 0; i < ASYNC_NIF_MAX_WORKERS; i++) {
+    if (enif_thread_create(NULL, &async_nif_worker_entries[i].tid,
+                            &async_nif_worker_fn, (void*)&async_nif_worker_entries[i], NULL) != 0) {
+      async_nif_shutdown = 1;
+      enif_cond_broadcast(async_nif_cnd);
+      enif_mutex_unlock(async_nif_worker_mutex);
+      while(i-- > 0) {
+        void *exit_value = 0; /* Ignore this. */
+        enif_thread_join(async_nif_worker_entries[i].tid, &exit_value);
+      }
+      memset(async_nif_worker_entries, sizeof(struct async_nif_worker_entry) * ASYNC_NIF_MAX_WORKERS, 0);
+      enif_cond_destroy(async_nif_cnd); async_nif_cnd = NULL;
+      enif_mutex_destroy(async_nif_req_mutex); async_nif_req_mutex = NULL;
+      enif_mutex_destroy(async_nif_worker_mutex); async_nif_worker_mutex = NULL;
+      return -1;
+    }
+  }
+  enif_mutex_unlock(async_nif_worker_mutex);
+  return 0;
 }
 
 #if defined(__cplusplus)
