@@ -137,7 +137,10 @@ delete_files(Files) ->
 
 -ifdef(TEST).
 
-multiple_merges_during_fold_test() ->
+multiple_merges_during_fold_test_() ->
+    {timeout, 10, fun multiple_merges_during_fold_test_body/0}.
+
+multiple_merges_during_fold_test_body() ->
     Dir = "/tmp/bc.multiple-merges-fold",
     B = bitcask:open(Dir, [read_write, {max_file_size, 50}]),
     PutSome = fun() ->
