@@ -28,10 +28,16 @@
 extern "C" {
 #endif
 
-#ifndef __offsetof
-#define __offsetof(st, m) \
-     ((size_t) ( (char *)&((st *)0)->m - (char *)0 ))
+/* Redefine this in your NIF implementation before including this file to
+   change the thread pool size.  The maximum number of threads might be
+   bounded on your OS.  For instance, to allow 1,000,000 threads on a Linux
+   system you must do the following before launching the process.
+     echo 1000000 > /proc/sys/kernel/threads-max
+   and for all UNIX systems there will be ulimit maximums. */
+#ifndef ASYNC_NIF_MAX_WORKERS
+#define ASYNC_NIF_MAX_WORKERS 64
 #endif
+
 #include "queue.h"
 
 struct async_nif_req_entry {
