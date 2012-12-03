@@ -141,6 +141,7 @@ multiple_merges_during_fold_test_() ->
     {timeout, 60, fun multiple_merges_during_fold_test_body/0}.
 
 multiple_merges_during_fold_test_body() ->
+    try
     Dir = "/tmp/bc.multiple-merges-fold",
     B = bitcask:open(Dir, [read_write, {max_file_size, 50}]),
     PutSome = fun() ->
@@ -180,7 +181,11 @@ multiple_merges_during_fold_test_body() ->
     timer:sleep(500),
     ok = ?MODULE:testonly__delete_trigger(),
     0 = CountSetuids(),
-    
-    ok.
+    ok
+    catch
+        XXX:YYY ->
+            ?debugFmt("FAILED: ~p/~p/~n~p~n", [XXX, YYY, erlang:get_stacktrace()]),
+            throw(fail)
+    end.
 
 -endif. %% TEST
