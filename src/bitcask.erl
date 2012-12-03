@@ -50,8 +50,9 @@
 -compile(export_all).
 -endif.
 
--ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
+-ifdef(TEST).
+%% -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
 -endif.
 
@@ -592,7 +593,8 @@ merge1(Dirname, Opts, FilesToMerge) ->
     [bitcask_fileops:close(F) || F <- State#mstate.input_files],
     {_, _, _, {IterGeneration, _, _}} = bitcask_nifs:keydir_info(LiveKeyDir),
     FileNames = [F#filestate.filename || F <- State#mstate.input_files],
-    [catch set_setuid_bit(F) || F <- FileNames],
+    SU=[catch set_setuid_bit(F) || F <- FileNames],
+    ?debugFmt("SU: ~p~n", [SU]),
     bitcask_merge_delete:defer_delete(Dirname, IterGeneration, FileNames),
 
     %% Explicitly release our keydirs instead of waiting for GC

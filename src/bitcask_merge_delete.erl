@@ -167,7 +167,8 @@ multiple_merges_during_fold_test_body() ->
                                         bitcask:has_setuid_bit(F)])
                    end,
     PutSome(),
-    bitcask:merge(Dir),
+    MR=bitcask:merge(Dir),
+    ?debugFmt("MR: ~p~n", [MR]),
     Count1 = CountSetuids(),
     true = (Count1 > 0),
     PutSome(),
