@@ -1646,8 +1646,14 @@ static void msg_pending_awaken(ErlNifEnv* env, bitcask_keydir* keydir,
     for (idx = 0; idx < keydir->pending_awaken_count; idx++)
     {
         enif_clear_env(msg_env);
-#ifdef PULSE_NOWAY_JOSE
-        PULSE_SEND(env, &keydir->pending_awaken[idx], msg_env, msg);
+#ifdef PULSE
+        /* Using PULSE_SEND here sometimes deadlocks the Bitcask PULSE test.
+           Reverting to using enif_send for now.
+           TODO: Check if PULSE_SEND is really necessary and investigate/fix
+                 deadlock in the future
+        */
+        /* PULSE_SEND(env, &keydir->pending_awaken[idx], msg_env, msg); */
+        enif_send(env, &keydir->pending_awaken[idx], msg_env, msg);
 #else
         enif_send(env, &keydir->pending_awaken[idx], msg_env, msg);
 #endif
