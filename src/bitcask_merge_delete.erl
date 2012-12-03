@@ -138,7 +138,7 @@ delete_files(Files) ->
 -ifdef(TEST).
 
 multiple_merges_during_fold_test_() ->
-    {timeout, 10, fun multiple_merges_during_fold_test_body/0}.
+    {timeout, 60, fun multiple_merges_during_fold_test_body/0}.
 
 multiple_merges_during_fold_test_body() ->
     Dir = "/tmp/bc.multiple-merges-fold",
