@@ -8,8 +8,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--record(state, {fd,
-                owner}).
+-record(state, {fd    :: file:fd(),
+                owner :: pid()}).
 
 %%%===================================================================
 %%% API
@@ -91,8 +91,9 @@ handle_call({file_open, Owner, Filename, Opts}, _From, State) ->
                {_, true} ->
                    [read, write, exclusive, raw, binary, read_ahead]
            end,
-    %% [lager:warning("Option ~p ignored", [Opt]) || Opt <- [create, o_sync],
-    %%                                               proplists:get_bool(Opt, Opts)],
+    [warn("Bitcask file option '~p' not supported~n", [Opt])
+     || Opt <- [o_sync],
+        proplists:get_bool(Opt, Opts)],
     case file:open(Filename, Mode) of
         {ok, Fd} ->
             State2 = State#state{fd=Fd, owner=Owner},
@@ -138,7 +139,6 @@ handle_cast(_Msg, State) ->
 
 handle_info({'DOWN', _Ref, _, _Pid, _Status}, State=#state{fd=Fd}) ->
     %% Owner has stopped, close file and shutdown
-    %% ?debugFmt("Cleaning up: ~p/~p~n", [self(), Fd]),
     ok = file:close(Fd),
     {stop, normal, State};
 handle_info(_Info, State) ->
@@ -159,7 +159,14 @@ check_owner({Pid, _Mref}, #state{owner=Owner}) ->
         true ->
             ok;
         false ->
-            %% ?debugFmt("NON-OWNER ACCESSING FILE!!! Owner=~p, Other=~p~n", [Owner, Pid]),
             throw(owner_invariant_failed),
             ok
+    end.
+
+warn(Fmt, Args) ->
+    case code:which(lager) of
+        non_existing ->
+            io:format(Fmt, Args);
+        _ ->
+            lager:warning(Fmt, Args)
     end.
