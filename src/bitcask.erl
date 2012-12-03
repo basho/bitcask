@@ -594,6 +594,7 @@ merge1(Dirname, Opts, FilesToMerge) ->
     {_, _, _, {IterGeneration, _, _}} = bitcask_nifs:keydir_info(LiveKeyDir),
     FileNames = [F#filestate.filename || F <- State#mstate.input_files],
     SU=[catch set_setuid_bit(F) || F <- FileNames],
+    ?debugFmt("Files to delete: ~p~n", [FileNames]),
     ?debugFmt("SU: ~p~n", [SU]),
     bitcask_merge_delete:defer_delete(Dirname, IterGeneration, FileNames),
 
