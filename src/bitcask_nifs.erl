@@ -245,11 +245,11 @@ keydir_fold(Ref, Fun, Acc0, MaxAge, MaxPuts) ->
 keydir_frozen(Ref, FrozenFun, MaxAge, MaxPuts) ->
     case keydir_itr(Ref, MaxAge, MaxPuts) of
         out_of_date ->
-            receive
-                ready -> % fold no matter what on second attempt
+            case keydir_wait_ready() of
+                ok ->
                     keydir_frozen(Ref, FrozenFun, -1, -1);
-                error ->
-                    {error, shutdown}
+                Else ->
+                    Else
             end;
         ok ->
             try
@@ -277,6 +277,26 @@ keydir_wait_pending(Ref) ->
             keydir_itr_release(Ref),
             ok
     end.
+
+-ifdef(PULSE).
+keydir_wait_ready() ->
+    receive
+        ready -> % fold no matter what on second attempt
+            ok;
+        error ->
+            {error, shutdown}
+    after 1000 ->
+            keydir_wait_ready()
+    end.
+-else.
+keydir_wait_ready() ->
+    receive
+        ready -> % fold no matter what on second attempt
+            ok;
+        error ->
+            {error, shutdown}
+    end.
+-endif.
 
 keydir_info(_Ref) ->
     erlang:nif_error({error, not_loaded}).
