@@ -137,14 +137,14 @@ handle_call(_Request, _From, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info({'DOWN', _Ref, _, _Pid, _Status}, State=#state{fd=Fd}) ->
-    %% Owner has stopped, close file and shutdown
-    ok = file:close(Fd),
+handle_info({'DOWN', _Ref, _, _Pid, _Status}, State) ->
+    %% Owner has stopped
     {stop, normal, State};
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(_Reason, _State) ->
+terminate(_Reason, _State=#state{fd=Fd}) ->
+    file:close(Fd),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
