@@ -69,7 +69,7 @@ create_file(DirName, Opts) ->
 %% Called with fully-qualified filename.
 -spec open_file(Filename :: string()) -> {ok, #filestate{}} | {error, any()}.
 open_file(Filename) ->
-    case bitcask_file:file_open(Filename, [readonly]) of
+    case bitcask_io:file_open(Filename, [readonly]) of
         {ok, FD} ->
             {ok, #filestate{mode = read_only,
                             filename = Filename, tstamp = file_tstamp(Filename),
@@ -84,7 +84,7 @@ close(fresh) -> ok;
 close(undefined) -> ok;
 close(State = #filestate{ fd = FD }) ->
     close_hintfile(State),
-    bitcask_file:file_close(FD),
+    bitcask_io:file_close(FD),
     ok.
 
 %% @doc Close a file for writing, but leave it open for reads.
@@ -93,7 +93,7 @@ close_for_writing(fresh) -> ok;
 close_for_writing(undefined) -> ok;
 close_for_writing(State = #filestate{ mode = read_write, fd = Fd }) ->
     S2 = close_hintfile(State),
-    bitcask_file:file_sync(Fd),
+    bitcask_io:file_sync(Fd),
     S2#filestate { mode = read_only }.
 
 close_hintfile(State = #filestate { hintfd = undefined }) ->
@@ -104,9 +104,9 @@ close_hintfile(State = #filestate { hintfd = HintFd, hintcrc = HintCRC }) ->
     %% an older version of bitcask will just reject the record at the end of the
     %% hintfile and otherwise work normally.
     Iolist = hintfile_entry(<<>>, 0, {?MAXOFFSET, HintCRC}),
-    ok = bitcask_file:file_write(HintFd, Iolist),
-    bitcask_file:file_sync(HintFd),
-    bitcask_file:file_close(HintFd),
+    ok = bitcask_io:file_write(HintFd, Iolist),
+    bitcask_io:file_sync(HintFd),
+    bitcask_io:file_close(HintFd),
     State#filestate { hintfd = undefined, hintcrc = 0 }.
 
 
@@ -151,11 +151,11 @@ write(Filestate=#filestate{fd = FD, hintfd = HintFD,
               <<ValueSz:?VALSIZEFIELD>>, Key, Value],
     Bytes  = [<<(erlang:crc32(Bytes0)):?CRCSIZEFIELD>> | Bytes0],
     %% Store the full entry in the data file
-    ok = bitcask_file:file_pwrite(FD, Offset, Bytes),
+    ok = bitcask_io:file_pwrite(FD, Offset, Bytes),
     %% Create and store the corresponding hint entry
     TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
     Iolist = hintfile_entry(Key, Tstamp, {Offset, TotalSz}),
-    ok = bitcask_file:file_write(HintFD, Iolist),
+    ok = bitcask_io:file_write(HintFD, Iolist),
     %% Record our final offset
     TotalSz = iolist_size(Bytes),
     HintCRC = erlang:crc32(HintCRC0, Iolist), % compute crc of hint
@@ -176,7 +176,7 @@ read(Filename, Offset, Size) when is_list(Filename) ->
             {error, Reason}
     end;
 read(#filestate { fd = FD }, Offset, Size) ->
-    case bitcask_file:file_pread(FD, Offset, Size) of
+    case bitcask_io:file_pread(FD, Offset, Size) of
         {ok, <<Crc32:?CRCSIZEFIELD/unsigned, Bytes/binary>>} ->
             %% Verify the CRC of the data
             case erlang:crc32(Bytes) of
@@ -198,8 +198,8 @@ read(#filestate { fd = FD }, Offset, Size) ->
 %% @doc Call the OS's fsync(2) system call on the cask and hint files.
 -spec sync(#filestate{}) -> ok.
 sync(#filestate { mode = read_write, fd = Fd, hintfd = HintFd }) ->
-    ok = bitcask_file:file_sync(Fd),
-    ok = bitcask_file:file_sync(HintFd).
+    ok = bitcask_io:file_sync(Fd),
+    ok = bitcask_io:file_sync(HintFd).
 
 -spec fold(fresh | #filestate{},
            fun((binary(), binary(), integer(),
@@ -210,8 +210,8 @@ fold(fresh, _Fun, Acc) -> Acc;
 fold(#filestate { fd=Fd, filename=Filename, tstamp=FTStamp }, Fun, Acc) ->
     %% TODO: Add some sort of check that this is a read-only file
     %% TODO: Need to position+read?!
-    ok = bitcask_file:file_seekbof(Fd),
-    case bitcask_file:file_read(Fd, ?HEADER_SIZE) of
+    ok = bitcask_io:file_seekbof(Fd),
+    case bitcask_io:file_read(Fd, ?HEADER_SIZE) of
         {ok, <<_Crc:?CRCSIZEFIELD, _Tstamp:?TSTAMPFIELD, _KeySz:?KEYSIZEFIELD,
               _ValueSz:?VALSIZEFIELD>> = H} ->
             fold_loop(Fd, Filename, FTStamp, H, 0, Fun, Acc, 0);
@@ -335,7 +335,7 @@ fold_loop(Fd, Filename, FTStamp, Header, Offset, Fun, Acc0, CrcSkipCount) ->
      ValueSz:?VALSIZEFIELD>> = Header,
     <<_:4/binary, HeaderMinusCRC/binary>> = Header,
     TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
-    case bitcask_file:file_read(Fd, TotalSz) of
+    case bitcask_io:file_read(Fd, TotalSz) of
         {ok, <<Key:KeySz/bytes, Value:ValueSz/bytes, Rest/binary>>} ->
             CrcMatch = erlang:crc32([HeaderMinusCRC, Key, Value]) =:= Crc32,
             Acc = case CrcMatch of
@@ -378,7 +378,7 @@ fold_loop(Fd, Filename, FTStamp, Header, Offset, Fun, Acc0, CrcSkipCount) ->
     end.
 
 fold_keys_loop(Fd, Offset, Fun, Acc0) ->
-    case bitcask_file:file_pread(Fd, Offset, ?HEADER_SIZE) of
+    case bitcask_io:file_pread(Fd, Offset, ?HEADER_SIZE) of
         {ok, Header} when erlang:size(Header) =:= ?HEADER_SIZE ->
             <<_Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
               ValueSz:?VALSIZEFIELD>> = Header,
@@ -386,7 +386,7 @@ fold_keys_loop(Fd, Offset, Fun, Acc0) ->
             PosInfo = {Offset, TotalSz},
             %% NOTE: We are intentionally *not* reading the value blob,
             %%       so we cannot check the checksum.
-            case bitcask_file:file_pread(Fd, Offset + ?HEADER_SIZE, KeySz) of
+            case bitcask_io:file_pread(Fd, Offset + ?HEADER_SIZE, KeySz) of
                 {ok, Key} when erlang:size(Key) =:= KeySz ->
                     Acc = Fun(Key, Tstamp, PosInfo, Acc0),
                     fold_keys_loop(Fd, Offset + TotalSz, Fun, Acc);
@@ -410,12 +410,12 @@ fold_keys_loop(Fd, Offset, Fun, Acc0) ->
 
 fold_hintfile(State, Fun, Acc) ->
     HintFile = hintfile_name(State),
-    case bitcask_file:file_open(HintFile, [readonly]) of
+    case bitcask_io:file_open(HintFile, [readonly]) of
         {ok, HintFd} ->
             try
                 {ok, DataI} = file:read_file_info(State#filestate.filename),
                 DataSize = DataI#file_info.size,
-                case bitcask_file:file_read(HintFd, ?HINT_RECORD_SZ) of
+                case bitcask_io:file_read(HintFd, ?HINT_RECORD_SZ) of
                     {ok, <<H:?HINT_RECORD_SZ/bytes>>} ->
                         fold_hintfile_loop(DataSize, HintFile,
                                            HintFd, 0, H, Fun, Acc);
@@ -432,7 +432,7 @@ fold_hintfile(State, Fun, Acc) ->
                         {error, {fold_hintfile, Reason}}
                 end
             after
-                bitcask_file:file_close(HintFd)
+                bitcask_io:file_close(HintFd)
             end;
         {error, Reason} ->
             {error, {fold_hintfile, Reason}}
@@ -455,7 +455,7 @@ fold_hintfile_loop(DataSize, HintFile, Fd, HintCRC0,
     <<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
       TotalSz:?TOTALSIZEFIELD, Offset:?OFFSETFIELD>> = HintRecord,
     ReadSz = KeySz + ?HINT_RECORD_SZ,
-    case bitcask_file:file_read(Fd, ReadSz) of
+    case bitcask_io:file_read(Fd, ReadSz) of
         {ok, <<Key:KeySz/bytes, Rest/binary>>} when
                                                Offset + TotalSz =< DataSize ->
             PosInfo = {Offset, TotalSz},
@@ -503,9 +503,9 @@ create_file_loop(DirName, Opts, Tstamp) ->
                         Opts
                 end,
 
-    case bitcask_file:file_open(Filename, FinalOpts) of
+    case bitcask_io:file_open(Filename, FinalOpts) of
         {ok, FD} ->
-            {ok, HintFD} = bitcask_file:file_open(hintfile_name(Filename), FinalOpts),
+            {ok, HintFD} = bitcask_io:file_open(hintfile_name(Filename), FinalOpts),
             {ok, #filestate{mode = read_write,
                             filename = Filename,
                             tstamp = file_tstamp(Filename),
