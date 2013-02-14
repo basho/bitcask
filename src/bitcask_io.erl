@@ -71,5 +71,5 @@ determine_file_module() ->
         {ok, nif} ->
             bitcask_nifs;
         _ ->
-            bitcask_nifs
+            bitcask_file
     end.
