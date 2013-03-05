@@ -413,7 +413,20 @@ static void update_fstats(ErlNifEnv* env, bitcask_keydir* keydir,
 
 static khint_t keydir_entry_hash(bitcask_keydir_entry* entry)
 {
-    return MURMUR_HASH(entry->key, entry->key_sz, 42);
+   /* Some choose to use number theory for seed values.  0x9e3779b9 is the
+      binary expansion of an irrational number; in this case, that number is
+      the reciprocal of the golden ratio.
+
+	    phi = (1 + sqrt(5)) / 2
+	    2^32 / phi = 0x9e3779b9
+
+      In other hashing implementations (e.g.  boost) you'll see an
+      hash function without a seed complemented like so:
+      seed ^= hash_value(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+
+      In the end, it's 6*7 on the one hand and 42 on the other, so I
+      don't think this will hurt any and it just might help somewhat. */
+    return MURMUR_HASH(entry->key, entry->key_sz, 0x9e3779b9);
 }
 
 static khint_t keydir_entry_equal(bitcask_keydir_entry* lhs,
@@ -1949,5 +1962,3 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
 }
 
 ERL_NIF_INIT(bitcask_nifs, nif_funcs, &on_load, NULL, NULL, NULL);
-
-
