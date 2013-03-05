@@ -12,7 +12,7 @@ endif
 all: deps compile
 
 compile:
-	$(REBAR_BIN) compile eunit
+	$(REBAR_BIN) compile eunit apps=bitcask
 
 deps:
 	$(REBAR_BIN) get-deps
@@ -38,7 +38,7 @@ buildtar = mkdir distdir && \
 		 mkdir ../$(BITCASK_TAG)/deps && \
 		 make deps; \
 		 for dep in deps/*; do cd $${dep} && $(call archive,$${dep},../../../$(BITCASK_TAG)); cd ../..; done
-					 
+
 distdir:
 	$(if $(BITCASK_TAG), $(call buildtar), $(error "You can't generate a release tarball from a non-tagged revision. Run 'git checkout <tag>', then 'make dist'"))
 
