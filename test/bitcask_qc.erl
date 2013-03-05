@@ -31,14 +31,15 @@
 
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
+-define(TEST_TIME, 30).                      % seconds
 
 -record(m_fstats, {key_bytes=0, live_keys=0, live_bytes=0, total_keys=0, total_bytes=0}).
 
 qc(P) ->
-    qc(P, 100).
+    qc(P, ?TEST_TIME).
 
-qc(P, NumTests) ->
-    ?assert(eqc:quickcheck(?QC_OUT(eqc:numtests(NumTests, P)))).
+qc(P, TestTime) ->
+    ?assert(eqc:quickcheck(?QC_OUT(eqc:testing_time(TestTime, P)))).
 
 keys() ->
     eqc_gen:non_empty(list(eqc_gen:non_empty(binary()))).
@@ -263,7 +264,7 @@ prop_fold() ->
 
 
 prop_merge_test_() ->
-    {timeout, 300*60, fun() -> qc(prop_merge()) end}.
+    {timeout, ?TEST_TIME*2, fun() -> qc(prop_merge()) end}.
 
 merge1_test() ->
     ?assert(eqc:check(prop_merge(),
@@ -281,7 +282,7 @@ merge3_test() ->
                         1,1}])).
 
 prop_fold_test_() ->
-    {timeout, 300*60, fun() -> qc(prop_fold()) end}.
+    {timeout, ?TEST_TIME*2, fun() -> qc(prop_fold()) end}.
 
 
 get_keydir(Ref) ->

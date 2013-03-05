@@ -31,12 +31,13 @@
 
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
+-define(TEST_TIME, 30).                      % seconds
 
 qc(P) ->
-    qc(P, 100).
+    qc(P, ?TEST_TIME).
 
-qc(P, NumTests) ->
-    ?assert(eqc:quickcheck(?QC_OUT(eqc:numtests(NumTests, P)))).
+qc(P, TestTime) ->
+    ?assert(eqc:quickcheck(?QC_OUT(eqc:testing_time(TestTime, P)))).
 
 keys() ->
     eqc_gen:non_empty(list(eqc_gen:non_empty(binary()))).
@@ -89,6 +90,7 @@ prop_expiry() ->
          ?FORALL({Ops, Expiry, ExpiryGrace, Timestep, M1},
                  {eqc_gen:non_empty(list(ops(Keys, Values))),
                   choose(1,10), choose(1, 10), choose(5, 50), choose(5,128)},
+         ?IMPLIES(length(Ops) > 1,
                  begin
                      Dirname = "/tmp/bc.prop.expiry",
                      ?cmd("rm -rf " ++ Dirname),
@@ -139,15 +141,15 @@ prop_expiry() ->
                          bitcask:close(Bref)
                      end,
                      true
-                 end)).
+                 end))).
 
 
 prop_expiry_test_() ->
-    {timeout, 300*60, fun() ->
+    {timeout, ?TEST_TIME*2, fun() ->
                               try
                                   meck:new(bitcask_time, [passthrough]),
                                   meck:expect(bitcask_time, tstamp, fun next_tstamp/0),
-                                  qc(prop_expiry(), 500)
+                                  qc(prop_expiry())
                               after
                                   meck:unload()
                               end
