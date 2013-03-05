@@ -138,7 +138,7 @@ delete_files(Files) ->
 -ifdef(TEST).
 
 multiple_merges_during_fold_test_() ->
-    {timeout, 10, fun multiple_merges_during_fold_test_body/0}.
+    {timeout, 60, fun multiple_merges_during_fold_test_body/0}.
 
 multiple_merges_during_fold_test_body() ->
     Dir = "/tmp/bc.multiple-merges-fold",
@@ -166,15 +166,11 @@ multiple_merges_during_fold_test_body() ->
                                         bitcask:has_setuid_bit(F)])
                    end,
     PutSome(),
-    bitcask:merge(Dir),
-    Count1 = CountSetuids(),
-    true = (Count1 > 0),
+    Count1 = merge_until(Dir, 0, CountSetuids),
     PutSome(),
     bitcask:merge(Dir),
     PutSome(),
-    bitcask:merge(Dir),
-    Count2 = CountSetuids(),
-    true = (Count2 > Count1),
+    merge_until(Dir, Count1, CountSetuids),
     
     SlowPid ! go_ahead,
     timer:sleep(500),
@@ -183,4 +179,14 @@ multiple_merges_during_fold_test_body() ->
     
     ok.
 
+merge_until(Dir, MinCount, CountSetuids) ->
+    bitcask:merge(Dir),
+    Count = CountSetuids(),
+    if (Count > MinCount) ->
+            Count;
+       true ->
+            timer:sleep(100),
+            merge_until(Dir, MinCount, CountSetuids)
+    end.
+    
 -endif. %% TEST
