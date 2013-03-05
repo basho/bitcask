@@ -50,9 +50,8 @@
 -compile(export_all).
 -endif.
 
--include_lib("eunit/include/eunit.hrl").
 -ifdef(TEST).
-%% -include_lib("eunit/include/eunit.hrl").
+-include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
 -endif.
 
