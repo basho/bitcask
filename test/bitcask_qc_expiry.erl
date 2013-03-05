@@ -132,15 +132,19 @@ prop_expiry() ->
                          %% Check that needs_merge has expected result
                          case Expired of
                              [] ->
-                                 ?assertEqual(false, bitcask:needs_merge(Bref));
+                                 ?assertEqual(false, bitcask:needs_merge(Bref)),
+                                 true;
                              _ ->
-                                 ?assertMatch({true, _}, bitcask:needs_merge(Bref))
+                                 ?assertMatch({true, _}, bitcask:needs_merge(Bref)),
+                                 true
                          end
- catch X:Y -> io:format(user, "exception: ~p ~p @ ~p\n", [X,Y, erlang:get_stacktrace()])
+                     catch
+                         X:Y ->
+                             io:format(user, "exception: ~p ~p @ ~p\n",
+                                       [X,Y, erlang:get_stacktrace()])
                      after
                          bitcask:close(Bref)
-                     end,
-                     true
+                     end
                  end))).
 
 
