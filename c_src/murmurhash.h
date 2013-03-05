@@ -1,25 +1,35 @@
-/*
-  Murmurhash from http://sites.google.com/site/murmurhash/
+//-----------------------------------------------------------------------------
+// MurmurHash3 was written by Austin Appleby, and is placed in the
+// public domain. The author hereby disclaims copyright to this source
+// code.
 
-  All code is released to the public domain. For business purposes, Murmurhash is
-  under the MIT license.
-*/
-#ifndef MURMURHASH_H
-#define MURMURHASH_H
+#ifndef _MURMURHASH3_H_
+#define _MURMURHASH3_H_
 
 #include <stdint.h>
 
+//-----------------------------------------------------------------------------
+
+      
+void MurmurHash3_x86_32(const void *key, int len, uint32_t seed, void *out);
+
+void MurmurHash3_x86_128(const void *key, int len, uint32_t seed, void *out);
+
+void MurmurHash3_x64_128(const void *key, int len, uint32_t seed, void *out);
+
+
 #if defined(__x86_64__)
-#define MURMUR_HASH MurmurHash64A
-uint64_t MurmurHash64A ( const void * key, int len, unsigned int seed );
+uint64_t MurmurHash3_x86_64_64bit(const void * key, int len, unsigned int seed);
+#define MURMUR_HASH MurmurHash3_x86_64_64bit
 
 #elif defined(__i386__)
-#define MURMUR_HASH MurmurHash2
-unsigned int MurmurHash2 ( const void * key, int len, unsigned int seed );
+unsigned int MurmurHash3_x86_32bit(const void * key, int len, unsigned int seed);
+#define MURMUR_HASH MurmurHash3_x86_32bit
 
 #else
-#define MURMUR_HASH MurmurHashNeutral2
-unsigned int MurmurHashNeutral2 ( const void * key, int len, unsigned int seed );
+#error unsupported platform
 #endif
 
-#endif /* MURMURHASH_H */
+//-----------------------------------------------------------------------------
+
+#endif // _MURMURHASH3_H_
