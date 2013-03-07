@@ -215,6 +215,7 @@ ERL_NIF_TERM bitcask_nifs_file_pread(ErlNifEnv* env, int argc, const ERL_NIF_TER
 ERL_NIF_TERM bitcask_nifs_file_pwrite(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_file_read(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_file_write(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_file_position(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_file_seekbof(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
 ERL_NIF_TERM errno_atom(ErlNifEnv* env, int error);
@@ -257,6 +258,7 @@ static ErlNifFunc nif_funcs[] =
     {"file_pwrite_int", 3, bitcask_nifs_file_pwrite},
     {"file_read_int",   2, bitcask_nifs_file_read},
     {"file_write_int",  2, bitcask_nifs_file_write},
+    {"file_position_int",  2, bitcask_nifs_file_position},
     {"file_seekbof_int", 1, bitcask_nifs_file_seekbof}
 };
 
@@ -1594,6 +1596,33 @@ ERL_NIF_TERM bitcask_nifs_file_write(ErlNifEnv* env, int argc, const ERL_NIF_TER
 
         /* Write done */
         return ATOM_OK;
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
+ERL_NIF_TERM bitcask_nifs_file_position(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_file_handle* handle;
+    unsigned long offset_ul;
+
+    if (enif_get_resource(env, argv[0], bitcask_file_RESOURCE, (void**)&handle) &&
+        enif_get_ulong(env, argv[1], &offset_ul))
+    {
+
+        off_t offset = offset_ul;
+        off_t new_offset = lseek(handle->fd, offset, SEEK_SET);
+        if (new_offset != -1)
+        {
+            return enif_make_tuple2(env, ATOM_OK, enif_make_ulong(env, new_offset));
+        }
+        else
+        {
+            /* Write failed altogether */
+            return enif_make_tuple2(env, ATOM_ERROR, errno_atom(env, errno));
+        }
     }
     else
     {
