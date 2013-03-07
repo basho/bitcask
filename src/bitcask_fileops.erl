@@ -257,14 +257,17 @@ fold_keys(#filestate { fd = Fd } = State, Fun, Acc, Mode) ->
             case has_valid_hintfile(State) of
                 true ->
                     case fold_hintfile(State, Fun, Acc) of
-                        {error, _} ->
+                        {error, Reason} ->
+                            HintFile = hintfile_name(State),
+                            error_logger:error_msg("Hintfile '~s' failed fold: ~p\n",
+                                                   [HintFile, Reason]),
                             fold_keys_loop(Fd, 0, Fun, Acc);
                         Acc1 ->
                             Acc1
                     end;
                 false ->
                     HintFile = hintfile_name(State),
-                    error_logger:error_msg("Hintfile '~s' has bad CRC\n",
+                    error_logger:error_msg("Hintfile '~s' invalid\n",
                                            [HintFile]),
 
                     fold_keys_loop(Fd, 0, Fun, Acc)
@@ -330,7 +333,12 @@ hintfile_validate_loop(Fd, CRC0, Rem) ->
     {ReadLen, HasCRC} = 
         case Rem =< ?CHUNK_SIZE of
             true ->
-                {Rem - ?HINT_RECORD_SZ, true};
+                case Rem < ?HINT_RECORD_SZ of
+                    true -> 
+                        {0, error};
+                    false -> 
+                        {Rem - ?HINT_RECORD_SZ, true}
+                end;
             false ->
                 {?CHUNK_SIZE, false}
         end,
@@ -345,7 +353,9 @@ hintfile_validate_loop(Fd, CRC0, Rem) ->
                 false ->
                     hintfile_validate_loop(Fd, 
                                            erlang:crc32(CRC0, Bytes),
-                                           Rem - ReadLen)
+                                           Rem - ReadLen);
+                error -> 
+                    false                        
             end;
         _ -> false
     end.
