@@ -257,6 +257,8 @@ fold_keys(#filestate { fd = Fd } = State, Fun, Acc, Mode) ->
             case has_valid_hintfile(State) of
                 true ->
                     case fold_hintfile(State, Fun, Acc) of
+                        {error, {trunc_datafile, Acc0}} ->
+                            Acc0;
                         {error, Reason} ->
                             HintFile = hintfile_name(State),
                             error_logger:error_msg("Hintfile '~s' failed fold: ~p\n",
@@ -518,7 +520,7 @@ fold_hintfile_loop(DataSize, Rem, HintFile, Fd,
     ReadSz = KeySz + ?HINT_RECORD_SZ,
     case bitcask_io:file_read(Fd, ReadSz) of
         {ok, <<Key:KeySz/bytes, Rest/binary>>} when
-                                               Offset + TotalSz =< DataSize ->
+                                               Offset + TotalSz =< DataSize + 1 ->
             PosInfo = {Offset, TotalSz},
             Acc = Fun(Key, Tstamp, PosInfo, Acc0),
             fold_hintfile_loop(DataSize, Rem - ReadSz, 
@@ -528,7 +530,7 @@ fold_hintfile_loop(DataSize, Rem, HintFile, Fd,
             error_logger:error_msg("Hintfile '~s' contains pointer ~p ~p "
                                    "that is greater than total data size ~p\n",
                                    [HintFile, Offset, TotalSz, DataSize]),
-            {error, {incomplete_hint, 3}};
+            {error, {trunc_datafile, Acc0}};
         eof ->
             {error, incomplete_key};
         {error, Reason} ->
