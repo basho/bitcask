@@ -257,12 +257,21 @@ fold_keys(#filestate { fd = Fd } = State, Fun, Acc, Mode) ->
             case has_valid_hintfile(State) of
                 true ->
                     case fold_hintfile(State, Fun, Acc) of
-                        {error, _} ->
+                        {error, {trunc_datafile, Acc0}} ->
+                            Acc0;
+                        {error, Reason} ->
+                            HintFile = hintfile_name(State),
+                            error_logger:error_msg("Hintfile '~s' failed fold: ~p\n",
+                                                   [HintFile, Reason]),
                             fold_keys_loop(Fd, 0, Fun, Acc);
                         Acc1 ->
                             Acc1
                     end;
                 false ->
+                    HintFile = hintfile_name(State),
+                    error_logger:error_msg("Hintfile '~s' invalid\n",
+                                           [HintFile]),
+
                     fold_keys_loop(Fd, 0, Fun, Acc)
             end
     end.
@@ -310,17 +319,59 @@ has_hintfile(#filestate { filename = Fname }) ->
 has_valid_hintfile(State) ->
     case has_hintfile(State) of
         true ->
-            case fold_hintfile(State, fun has_valid_hintfile_visitor/4, 0) of
-                N when is_number(N) ->
-                    true;
+            HintFile = hintfile_name(State),
+            case bitcask_io:file_open(HintFile, [readonly, read_ahead]) of
+                {ok, HintFd} -> 
+                    {ok, HintI} = file:read_file_info(HintFile),
+                    HintSize = HintI#file_info.size,
+                    hintfile_validate_loop(HintFd, 0, HintSize);
                 _ ->
                     false
             end;
-        X ->
-            X
+        Else -> Else
     end.
 
-
+hintfile_validate_loop(Fd, CRC0, Rem) ->
+    {ReadLen, HasCRC} = 
+        case Rem =< ?CHUNK_SIZE of
+            true ->
+                case Rem < ?HINT_RECORD_SZ of
+                    true -> 
+                        {0, error};
+                    false -> 
+                        {Rem - ?HINT_RECORD_SZ, true}
+                end;
+            false ->
+                {?CHUNK_SIZE, false}
+        end,
+            
+    case bitcask_io:file_read(Fd, ReadLen) of
+        {ok, Bytes} ->
+            case HasCRC of
+                true ->
+                    ExpectCRC = read_crc(Fd),
+                    CRC = erlang:crc32(CRC0, Bytes),
+                    ExpectCRC =:= CRC;
+                false ->
+                    hintfile_validate_loop(Fd, 
+                                           erlang:crc32(CRC0, Bytes),
+                                           Rem - ReadLen);
+                error -> 
+                    false                        
+            end;
+        _ -> false
+    end.
+        
+read_crc(Fd) ->
+    case bitcask_io:file_read(Fd, ?HINT_RECORD_SZ) of
+        {ok, <<0:?TSTAMPFIELD, 
+               0:?KEYSIZEFIELD,
+               ExpectCRC:?TOTALSIZEFIELD, 
+               (?MAXOFFSET):?OFFSETFIELD>>} ->
+            ExpectCRC;
+        _ -> 0
+    end.
+        
 
 %% ===================================================================
 %% Internal functions
@@ -410,15 +461,17 @@ fold_keys_loop(Fd, Offset, Fun, Acc0) ->
 
 fold_hintfile(State, Fun, Acc) ->
     HintFile = hintfile_name(State),
-    case bitcask_io:file_open(HintFile, [readonly]) of
+    case bitcask_io:file_open(HintFile, [readonly, read_ahead]) of
         {ok, HintFd} ->
             try
                 {ok, DataI} = file:read_file_info(State#filestate.filename),
                 DataSize = DataI#file_info.size,
+                {ok, HintI} = file:read_file_info(HintFile),
+                HintSize = HintI#file_info.size,
                 case bitcask_io:file_read(HintFd, ?HINT_RECORD_SZ) of
                     {ok, <<H:?HINT_RECORD_SZ/bytes>>} ->
-                        fold_hintfile_loop(DataSize, HintFile,
-                                           HintFd, 0, H, Fun, Acc);
+                        fold_hintfile_loop(DataSize, HintSize, HintFile,
+                                           HintFd, H, Fun, Acc);
                     {ok, Bytes} ->
                         error_logger:error_msg("~s:fold_hintfile: ~s: expected "
                                                "~p bytes but got only ~p "
@@ -427,7 +480,7 @@ fold_hintfile(State, Fun, Acc) ->
                                     ?HINT_RECORD_SZ, size(Bytes)]),
                         {error, {incomplete_hint, 1}};
                     eof ->
-                        {error, empty_hintfile}; % shoudld never be empty hintfiles
+                        {error, empty_hintfile}; % should never be empty hintfiles
                     {error, Reason} ->
                         {error, {fold_hintfile, Reason}}
                 end
@@ -439,52 +492,45 @@ fold_hintfile(State, Fun, Acc) ->
     end.
 
 
-fold_hintfile_loop(_DataSize, HintFile, _Fd, HintCRC,
-                   <<0:?TSTAMPFIELD, 0:?KEYSIZEFIELD,
-                     ExpectCRC:?TOTALSIZEFIELD, (?MAXOFFSET):?OFFSETFIELD>>, _Fun, Acc0) ->
-    case HintCRC of
-        ExpectCRC ->
-            Acc0;
-        _ ->
-            error_logger:error_msg("Hintfile '~s' has bad CRC ~p expected ~p\n",
-                                   [HintFile, HintCRC, ExpectCRC]),
-            {error, {bad_crc, HintCRC, ExpectCRC}}
+fold_hintfile_loop(_, Rem, _, _,
+                   _, _, Acc) when Rem =:= 18 ->
+    Acc;
+fold_hintfile_loop(_, Rem, _, _,
+                   HintRecord, _, Acc) when Rem < 18 ->
+    case HintRecord of 
+        <<>> ->
+            %% Hint files without CRCs will end on a record boundary.
+            %% No way to know whether to expect a crc or not.
+            %% Over time, merges will add CRCs to all hint files and
+            %% we can set this as the default.
+            case application:get_env(bitcask, require_hint_crc) of
+                {ok, true} ->
+                    {error, {incomplete_hint, 4}};
+                _ ->
+                    Acc
+            end;
+        X ->
+            error_logger:error_msg("Bad hintfile data 1: ~p\n", [X]),
+            {error, {incomplete_hint, 2}}
     end;
-fold_hintfile_loop(DataSize, HintFile, Fd, HintCRC0,
+fold_hintfile_loop(DataSize, Rem, HintFile, Fd,
                    HintRecord, Fun, Acc0) ->
     <<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
       TotalSz:?TOTALSIZEFIELD, Offset:?OFFSETFIELD>> = HintRecord,
     ReadSz = KeySz + ?HINT_RECORD_SZ,
     case bitcask_io:file_read(Fd, ReadSz) of
         {ok, <<Key:KeySz/bytes, Rest/binary>>} when
-                                               Offset + TotalSz =< DataSize ->
+                                               Offset + TotalSz =< DataSize + 1 ->
             PosInfo = {Offset, TotalSz},
             Acc = Fun(Key, Tstamp, PosInfo, Acc0),
-            case Rest of
-                <<NextRecord:?HINT_RECORD_SZ/bytes>> ->
-                    HintCRC=erlang:crc32(HintCRC0, [HintRecord, Key]),
-                    fold_hintfile_loop(DataSize, HintFile,  Fd, 
-                                       HintCRC, NextRecord, Fun, Acc);
-                <<>> ->
-                    %% Hint files without CRCs will end on a record boundary.
-                    %% No way to know whether to expect a crc or not.
-                    %% Over time, merges will add CRCs to all hint files and
-                    %% we can set this as the default.
-                    case application:get_env(bitcask, require_hint_crc) of
-                        {ok, true} ->
-                            {error, {incomplete_hint, 4}};
-                        _ ->
-                            <<>>
-                    end;
-                X ->
-                    error_logger:error_msg("Bad hintfile data 1: ~p\n", [X]),
-                    {error, {incomplete_hint, 2}}
-            end;
+            fold_hintfile_loop(DataSize, Rem - ReadSz, 
+                               HintFile,  Fd, 
+                               Rest, Fun, Acc);
         {ok, _} ->
             error_logger:error_msg("Hintfile '~s' contains pointer ~p ~p "
                                    "that is greater than total data size ~p\n",
                                    [HintFile, Offset, TotalSz, DataSize]),
-            {error, {incomplete_hint, 3}};
+            {error, {trunc_datafile, Acc0}};
         eof ->
             {error, incomplete_key};
         {error, Reason} ->
@@ -530,14 +576,6 @@ hintfile_entry(Key, Tstamp, {Offset, TotalSz}) ->
     KeySz = size(Key),
     [<<Tstamp:?TSTAMPFIELD>>, <<KeySz:?KEYSIZEFIELD>>,
      <<TotalSz:?TOTALSIZEFIELD>>, <<Offset:?OFFSETFIELD>>, Key].
-
-%% Visitor function for hintfile validation - broken out as a
-%% separate function to make tracing with dbg easier if there is
-%% ever an issue with hintfiles.
-has_valid_hintfile_visitor(_Key, _Tstamp, _PosInfo, Acc0) when is_number(Acc0) ->
-    Acc0+1;
-has_valid_hintfile_visitor(_Key, _Tstamp, _PosInfo, Acc0) ->
-    Acc0.
 
 %% Find the most recent timestamp for a .data file
 most_recent_tstamp(DirName) ->

@@ -37,3 +37,6 @@
 -define(MAXKEYSIZE, 2#1111111111111111).
 -define(MAXVALSIZE, 2#11111111111111111111111111111111).
 -define(MAXOFFSET, 16#ffffffffffffffff). % max 64-bit unsigned
+
+%% for hintfile validation
+-define(CHUNK_SIZE, 1048576).
