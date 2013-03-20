@@ -20,7 +20,7 @@ deps:
 clean: 
 	$(REBAR_BIN) clean
 
-eunit: deps compile eunit_erlang eunit_nif
+test: deps compile eunit_erlang eunit_nif
 
 eunit_erlang:
 	IOMODE="erlang" $(REBAR_BIN) skip_deps=true eunit
