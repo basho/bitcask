@@ -1,4 +1,5 @@
 language: erlang
+script: "make test"
 notifications:
   webhooks: http://basho-engbot.herokuapp.com/travis?key=8b53d962594d0253d20002380cfb837fb81b928b
   email: eng@basho.com
