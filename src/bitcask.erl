@@ -315,21 +315,27 @@ fold_keys(Ref, Fun, Acc0, MaxAge, MaxPut) ->
 
 %% @doc fold over all K/V pairs in a bitcask datastore.
 %% Fun is expected to take F(K,V,Acc0) -> Acc
--spec fold(reference(), fun((binary(), binary(), any()) -> any()), any()) -> any() | {error, any()}.
-fold(Ref, Fun, Acc0) ->
+-spec fold(reference() | record(), 
+           fun((binary(), binary(), any()) -> any()), 
+           any()) -> any() | {error, any()}.
+fold(Ref, Fun, Acc0) when is_reference(Ref)->
     State = get_state(Ref),
+    fold(State, Fun, Acc0);
+fold(State, Fun, Acc0) ->
     MaxAge = get_opt(max_fold_age, State#bc_state.opts) * 1000, % convert from ms to us
     MaxPuts = get_opt(max_fold_puts, State#bc_state.opts),
-    fold(Ref, Fun, Acc0, MaxAge, MaxPuts).
+    fold(State, Fun, Acc0, MaxAge, MaxPuts).
 
 %% @doc fold over all K/V pairs in a bitcask datastore specifying max age/updates of
 %% the frozen keystore.
 %% Fun is expected to take F(K,V,Acc0) -> Acc
--spec fold(reference(), fun((binary(), binary(), any()) -> any()), any(),
-          non_neg_integer() | undefined, non_neg_integer() | undefined) -> 
+-spec fold(reference() | record(), fun((binary(), binary(), any()) -> any()), any(),
+           non_neg_integer() | undefined, non_neg_integer() | undefined) -> 
                   any() | {error, any()}.
-fold(Ref, Fun, Acc0, MaxAge, MaxPut) ->
+fold(Ref, Fun, Acc0, MaxAge, MaxPut) when is_reference(Ref)->
     State = get_state(Ref),
+    fold(State, Fun, Acc0, MaxAge, MaxPut);
+fold(State, Fun, Acc0, MaxAge, MaxPut) ->
     FrozenFun = 
         fun() ->
                 case open_fold_files(State#bc_state.dirname, 3) of
@@ -853,13 +859,15 @@ scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile, EnoentOK) ->
     %% Restrictive pattern matching below is intentional
     case bitcask_fileops:open_file(Filename) of
         {ok, File} ->
+            FileTstamp = bitcask_fileops:file_tstamp(File),
             F = fun(K, Tstamp, {Offset, TotalSz}, _) ->
                         bitcask_nifs:keydir_put(KeyDir,
                                                 K,
-                                                bitcask_fileops:file_tstamp(File),
+                                                FileTstamp,
                                                 TotalSz,
                                                 Offset,
-                                                Tstamp)
+                                                Tstamp,
+                                                false)
                 end,
             bitcask_fileops:fold_keys(File, F, undefined, recovery),
             if CloseFile == true ->

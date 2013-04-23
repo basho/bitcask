@@ -49,6 +49,7 @@
          file_pwrite/3,
          file_read/2,
          file_write/2,
+         file_position/2,
          file_seekbof/1]).
 
 -on_load(init/0).
@@ -380,6 +381,13 @@ file_write(Ref, Bytes) ->
     file_write_int(Ref, Bytes).
 
 file_write_int(_Ref, _Bytes) ->
+    erlang:nif_error({error, not_loaded}).
+
+file_position(Ref, Position) ->
+    bitcask_bump:big(),
+    file_position_int(Ref, Position).
+
+file_position_int(_Ref, _Position) ->
     erlang:nif_error({error, not_loaded}).
 
 file_seekbof(Ref) ->
