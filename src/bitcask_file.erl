@@ -64,6 +64,9 @@ file_read(Pid, Size) ->
 file_write(Pid, Bytes) ->
     file_request(Pid, {file_write, Bytes}).
 
+file_position(Pid, Position) ->
+    file_request(Pid, {file_position, Position}).
+
 file_seekbof(Pid) ->
     file_request(Pid, file_seekbof).
 
@@ -106,11 +109,11 @@ handle_call({file_open, Owner, Filename, Opts}, _From, State) ->
     IsReadOnly = proplists:get_bool(readonly, Opts),
     Mode = case {IsReadOnly, IsCreate} of
                {true, _} ->
-                   [read, raw, binary, read_ahead];
+                   [read, raw, binary];
                {_, false} ->
-                   [read, write, raw, binary, read_ahead];
+                   [read, write, raw, binary];
                {_, true} ->
-                   [read, write, exclusive, raw, binary, read_ahead]
+                   [read, write, exclusive, raw, binary]
            end,
     [warn("Bitcask file option '~p' not supported~n", [Opt])
      || Opt <- [o_sync],
@@ -145,6 +148,10 @@ handle_call({file_read, Size}, From, State=#state{fd=Fd}) ->
 handle_call({file_write, Bytes}, From, State=#state{fd=Fd}) ->
     check_owner(From, State),
     Reply = file:write(Fd, Bytes),
+    {reply, Reply, State};
+handle_call({file_position, Position}, From, State=#state{fd=Fd}) ->
+    check_owner(From, State),
+    Reply = file:position(Fd, Position),
     {reply, Reply, State};
 handle_call(file_seekbof, From, State=#state{fd=Fd}) ->
     check_owner(From, State),

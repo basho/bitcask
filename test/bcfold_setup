@@ -1,0 +1,52 @@
+#! /usr/bin/env escript 
+
+main([BitcaskDir, DataDir]) ->
+    load_bitcask(BitcaskDir),
+    make_small(DataDir),
+    make_medium(DataDir),
+    make_large(DataDir),
+    make_cs(DataDir).
+       
+
+load_bitcask(Dir) ->
+    Path = Dir ++ "/ebin/",
+    Modlist = filelib:fold_files(Path, 
+                                 ".*.beam", false, 
+                                 fun(X, Acc) ->
+                                         Mod0 = filename:rootname(filename:basename(X)),
+                                         Mod = list_to_atom(Mod0),
+                                         [Mod | Acc]
+                                 end, []),
+    code:add_path(Path),
+    lists:map(fun code:load_abs/1, Modlist).
+
+
+make_small(Dir) ->
+    make_dir(Dir++"/small/", 32, 100).
+
+make_medium(Dir) ->
+    make_dir(Dir++"/medium/", 32, 2048).
+
+make_large(Dir) ->
+    make_dir(Dir++"/large/", 32, 50*1024).
+
+make_cs(Dir) ->
+    make_dir(Dir++"/cs/", 32, 1024*1024).
+
+make_dir(Dir, KeySz, BinSz) ->
+    Ref = bitcask:open(Dir, [read_write]),
+
+    %% header size + key size + binary size + ext term format overhead
+    BinarySize = 14 + KeySz + BinSz + 12,
+    %%        1GB
+    NumObjs = (1073741824 div BinarySize) + 1,
+    Key = crypto:rand_bytes(KeySz),
+    Bin = crypto:rand_bytes(BinSz),
+    [bitcask:put(Ref, <<Key/binary,X:32>>, Bin) ||
+        X <- lists:seq(1, NumObjs)],
+    bitcask:close(Ref).
+
+
+
+    
+    

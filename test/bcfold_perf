@@ -1,0 +1,104 @@
+#!/usr/bin/env escript
+
+-mode(compile).
+
+main(Args) when length(Args) >= 2 ->
+    [DataDir | List] = Args,
+    [begin
+         test_small(DataDir, D),
+         test_medium(DataDir,D),
+         test_large(DataDir,D),
+         test_cs(DataDir,D) 
+     end || 
+        D <- List];
+main(_) ->
+    usage().
+
+usage() ->
+    io:format("bcfold_perf <data_dir> <branch dir>+~n"),
+    io:format("run bcfold_setup <data_dir> before running this~n").
+        
+test(DataDir, BranchDir, Subdir) ->
+    Modlist = ensure_and_load_bitcask(BranchDir),
+    time_folds(DataDir, Subdir),
+    cleanup(Modlist).
+
+test_small(DataDir, BranchDir) ->
+    test(DataDir, BranchDir, "small").
+
+test_medium(DataDir, BranchDir) ->
+    test(DataDir, BranchDir, "medium").
+
+test_large(DataDir, BranchDir) ->
+    test(DataDir, BranchDir, "large").
+
+test_cs(DataDir, BranchDir) ->
+    test(DataDir, BranchDir, "cs").
+
+sum(_, _, A0) -> 
+    A0 + 1.
+
+sum(_, _, _, A0) -> 
+    A0 + 1.
+
+
+time_folds(DataDir, SubDir) ->
+    clean_env(),
+    %% this is basically a proxy for hintfile folds and 
+    %% the CRC check
+    {OpenTime, Ref} = timer:tc(bitcask, open, 
+                               [DataDir++SubDir++"/"]),
+    %%bitcask:close(Ref),
+    
+    clean_env(),
+    {ok, Fd1} = 
+        bitcask_fileops:open_file(DataDir++SubDir++"/1.bitcask.data"),
+    {FoldDatafileKeyTime, Count} =
+        timer:tc(bitcask_fileops, fold_keys,
+                 [Fd1, fun sum/4, 0, datafile]),
+    bitcask_io:file_close(Fd1),
+    
+    clean_env(),
+    {FoldDatafileTime, Count2} =
+        timer:tc(bitcask, fold, [Ref, fun sum/3, 0]),
+    
+    
+    io:format("Report for run: ~s~n", [SubDir]),
+    io:format("Open:              ~15w~n", [OpenTime]),
+    io:format("Datafile Key Fold: ~15w~10w~n", [FoldDatafileKeyTime, Count]),
+    io:format("Datafile Fold:     ~15w~10w~n~n", [FoldDatafileTime, Count2]).
+
+clean_env() ->
+    case os:type() of
+        {unix, darwin} ->
+            os:cmd("purge");
+        {unix, linux} ->
+            io:format("if not root or called with sudo, this may fail~n"),
+            os:cmd("echo 3 >/proc/sys/vm/drop_caches");
+        _ ->
+            halt("unknown os")
+    end.
+
+
+ensure_and_load_bitcask(BranchDir) ->
+    Path = BranchDir ++ "/ebin/",
+    Modlist = filelib:fold_files(Path, 
+                                 ".*.beam", false, 
+                                 fun(X, Acc) ->
+                                         Mod0 = filename:rootname(filename:basename(X)),
+                                         Mod = list_to_atom(Mod0),
+                                         [Mod | Acc]
+                                 end, []),
+    code:add_path(Path),
+    lists:map(fun code:load_abs/1, Modlist),
+    code:del_path(Path),
+    application:start(bitcask),
+    application:set_env(bitcask, io_mode, erlang),
+    Modlist.
+        
+cleanup(Modlist) ->
+    [begin 
+         code:delete(M),
+         code:purge(M)
+     end ||
+        M <- Modlist].
