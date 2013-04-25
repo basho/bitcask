@@ -140,9 +140,6 @@ open(Dirname, Opts) ->
             {error, Reason}
     end.
 
-
-
-
 %% @doc Close a bitcask data store and flush any pending writes to disk.
 -spec close(reference()) -> ok.
 close(Ref) ->
