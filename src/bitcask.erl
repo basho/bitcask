@@ -1011,7 +1011,7 @@ merge_files(#mstate {  dirname = Dirname,
                        [File#filestate.filename, Dirname, Error]),
                      State
              after
-                    catch bitcask_fileops:close(File)
+                     catch bitcask_fileops:close(File)
              end,
     merge_files(State2#mstate { input_files = Rest }).
 
