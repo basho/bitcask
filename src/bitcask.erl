@@ -111,8 +111,6 @@ open(Dirname, Opts) ->
           %% and loading anyway: if later someone tries to write
           %% something, that someone will get a write_locked exception.
           _ = bitcask_lockops:delete_stale_lock(write, Dirname),
-          %% This purge will acquire the write lock prior to doing anything.
-          purge_setuid_files(Dirname),
           fresh;
         false -> undefined
     end,
@@ -124,7 +122,7 @@ open(Dirname, Opts) ->
     WaitTime = timer:seconds(get_opt(open_timeout, Opts)),
 
     %% Loop and wait for the keydir to come available.
-    case init_keydir(Dirname, WaitTime) of
+    case init_keydir(Dirname, WaitTime, WritingFile /= undefined) of
         {ok, KeyDir, ReadFiles} ->
             %% Ensure that expiry_secs is in Opts and not just application env
             ExpOpts = [{expiry_secs,get_opt(expiry_secs,Opts)}|Opts],
@@ -877,7 +875,7 @@ scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile, EnoentOK) ->
 %%
 %% Initialize a keydir for a given directory.
 %%
-init_keydir(Dirname, WaitTime) ->
+init_keydir(Dirname, WaitTime, ReadWriteModeP) ->
     %% Get the named keydir for this directory. If we get it and it's already
     %% marked as ready, that indicates another caller has already loaded
     %% all the data from disk and we can short-circuit scanning all the files.
@@ -903,6 +901,13 @@ init_keydir(Dirname, WaitTime) ->
             Lock = poll_for_merge_lock(Dirname),
             try
                 poll_deferred_delete_queue_empty(),
+                if ReadWriteModeP ->
+                        %% This purge will acquire the write lock
+                        %% prior to doing anything.
+                        purge_setuid_files(Dirname);
+                   true ->
+                        ok
+                end,
                 init_keydir_scan_key_files(Dirname, KeyDir)
             after
                 ok = bitcask_lockops:release(Lock)
@@ -919,7 +924,7 @@ init_keydir(Dirname, WaitTime) ->
                 Value when is_integer(Value), Value =< 0 -> %% avoids 'infinity'!
                     {error, timeout};
                 _ ->
-                    init_keydir(Dirname, WaitTime - 100)
+                    init_keydir(Dirname, WaitTime - 100, ReadWriteModeP)
             end
     end.
 

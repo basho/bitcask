@@ -108,10 +108,11 @@ postcondition(_From,_To,_S,{call,_,_,_},_Res) ->
     true.
 
 qc_test_() ->
-    {timeout, 120, 
+    TestTime = 45,
+    {timeout, TestTime*2,
      {setup, fun prepare/0, fun cleanup/1,
-      [{timeout, 120, ?_assertEqual(true,
-                eqc:quickcheck(?QC_OUT(prop_bitcask())))}]}}.
+      [{timeout, TestTime*2, ?_assertEqual(true,
+                eqc:quickcheck(eqc:testing_time(TestTime, ?QC_OUT(prop_bitcask()))))}]}}.
 
 prepare() ->
     application:load(bitcask),
