@@ -473,7 +473,7 @@ merge(Dirname, Opts, {FilesToMerge0, ExpiredFiles0}) ->
     merge1(Dirname, Opts, FilesToMerge, ExpiredFiles).
 
 %% Inner merge function, assumes that bitcask is running and all files exist.
-merge1(_Dirname, _Opts, [], _ExpiredFiles) ->
+merge1(_Dirname, _Opts, [], []) ->
     ok;
 merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
     %% Test to see if this is a complete or partial merge
