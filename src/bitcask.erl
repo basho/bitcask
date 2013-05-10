@@ -691,7 +691,15 @@ needs_merge(Ref) ->
                     ok
             end,
             FileNames = [Filename || {Filename, _Reasons} <- MergableFiles],
-            ExpiredFiles = [Filename || {Filename, [{data_expired,_,_}]} <- MergableFiles],
+            F = fun(X) ->
+                    case X of
+                        {data_expired,_,_} ->
+                            true;
+                        _ ->
+                            false
+                    end
+            end,
+            ExpiredFiles = [Filename || {Filename, Reasons} <- MergableFiles,  lists:any(F,Reasons)],
             {true, {FileNames, ExpiredFiles}};
         false ->
             false
