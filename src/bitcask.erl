@@ -312,7 +312,7 @@ fold_keys(Ref, Fun, Acc0, MaxAge, MaxPut) ->
 
 %% @doc fold over all K/V pairs in a bitcask datastore.
 %% Fun is expected to take F(K,V,Acc0) -> Acc
--spec fold(reference() | record(), 
+-spec fold(reference() | tuple(),
            fun((binary(), binary(), any()) -> any()), 
            any()) -> any() | {error, any()}.
 fold(Ref, Fun, Acc0) when is_reference(Ref)->
@@ -326,7 +326,7 @@ fold(State, Fun, Acc0) ->
 %% @doc fold over all K/V pairs in a bitcask datastore specifying max age/updates of
 %% the frozen keystore.
 %% Fun is expected to take F(K,V,Acc0) -> Acc
--spec fold(reference() | record(), fun((binary(), binary(), any()) -> any()), any(),
+-spec fold(reference() | tuple(), fun((binary(), binary(), any()) -> any()), any(),
            non_neg_integer() | undefined, non_neg_integer() | undefined) -> 
                   any() | {error, any()}.
 fold(Ref, Fun, Acc0, MaxAge, MaxPut) when is_reference(Ref)->
