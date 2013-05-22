@@ -65,3 +65,16 @@ pkgclean:
 	$(MAKE) -C package pkgclean
 
 export BITCASK_TAG PKG_VERSION REPO REVISION
+
+APPS = kernel stdlib sasl erts ssl tools os_mon runtime_tools crypto inets \
+	xmerl webtool snmp public_key mnesia eunit syntax_tools compiler
+PLT = $(HOME)/.bitcask_dialyzer_plt
+
+build_plt: deps compile
+	dialyzer --build_plt --output_plt $(PLT) --apps $(APPS) deps/*/ebin
+
+dialyzer: deps compile
+	dialyzer -Wno_return --plt $(PLT) ebin
+
+clean_plt:
+	rm $(PLT)
