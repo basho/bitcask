@@ -459,7 +459,8 @@ merge(Dirname, Opts) ->
 
 %% @doc Merge several data files within a bitcask datastore
 %%      into a more compact form.
--spec merge(Dirname::string(), Opts::[_], FilesToMerge::[string()]) -> ok.
+-spec merge(Dirname::string(), Opts::[_], 
+            {FilesToMerge::[string()],FilesToDelete::[string()]}) -> ok.
 merge(_Dirname, _Opts, []) ->
     ok;
 merge(Dirname,Opts,FilesToMerge) when is_list(FilesToMerge) -> 
@@ -627,7 +628,7 @@ consider_for_merge(FragTrigger, DeadBytesTrigger, ExpirationGraceTime) ->
                        )
     end.
 
--spec needs_merge(reference()) -> {true, [string()]} | false.
+-spec needs_merge(reference()) -> {true, {[string()], [string()]}} | false.
 needs_merge(Ref) ->
     State = get_state(Ref),
     {_KeyCount, Summary} = summary_info(Ref),
@@ -1174,6 +1175,7 @@ out_of_date(Key, Tstamp, FileId, {_,_,Offset,_} = Pos, ExpiryTime, EverFound,
             end
     end.
 
+-spec readable_files(string()) -> [string()].  
 readable_files(Dirname) ->
     %% Check the write and/or merge locks to see what files are currently
     %% being written to. Generate our list excepting those.
