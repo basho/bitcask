@@ -192,9 +192,4 @@ check_owner({Pid, _Mref}, #state{owner=Owner}) ->
     end.
 
 warn(Fmt, Args) ->
-    case code:which(lager) of
-        non_existing ->
-            io:format(Fmt, Args);
-        _ ->
-            lager:warning(Fmt, Args)
-    end.
+    error_logger:warning_msg(Fmt, Args).
