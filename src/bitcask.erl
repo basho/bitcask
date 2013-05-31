@@ -47,10 +47,10 @@
 
 -ifdef(PULSE).
 -compile({parse_transform, pulse_instrument}).
--compile(export_all).
 -endif.
 
 -ifdef(TEST).
+-compile(export_all).
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
 -endif.
@@ -1010,6 +1010,7 @@ merge_files(#mstate { input_files = [] } = State) ->
     State;
 merge_files(#mstate {  dirname = Dirname,
                        input_files = [File | Rest]} = State) ->
+io:format(user, "Merging ~p\n", [File]),
     FileId = bitcask_fileops:file_tstamp(File),
     F = fun(K, V, Tstamp, Pos, State0) ->
                 if Tstamp < State0#mstate.merge_start ->
@@ -1987,6 +1988,64 @@ corrupt_file(Path, Offset, Data) ->
     {ok, Offset} = file:position(FH, Offset),
     ok = file:write(FH, Data),
     file:close(FH).
+
+resurrection_test_() ->
+    {timeout, 60, fun() -> ok = resurrection() end}.
+
+resurrection() ->
+    Dir = "/tmp/bc.resurrection",
+    io:format(user, "Deleting...\n", []),
+    os:cmd("rm -rf " ++ Dir),
+    io:format(user, "Writing...\n", []),
+    Reference = bitcask:open(Dir, [read_write | opts()]),
+    bitcask:put(Reference, <<"key_to_delete">>, <<"tr0ll">>),
+    [ bitcask:put(Reference, term_to_binary(X), <<1:(8 * 1024 * 1)>>) || X <- lists:seq(1, 3000)],
+    bitcask:put(Reference, <<"testtest">>, <<"testval">>),
+    REF = element(8, get(Reference)),
+    io:format(user, "testtest: ~p\n", [bitcask_nifs:keydir_get(REF, <<"testtest">>)]),
+    io:format(user, "key_to_delete: ~p\n", [bitcask_nifs:keydir_get(REF, <<"key_to_delete">>)]),
+    bitcask:delete(Reference, <<"key_to_delete">>),
+    io:format(user, "key_to_delete: ~p\n", [bitcask_nifs:keydir_get(REF, <<"key_to_delete">>)]),
+    [ bitcask:put(Reference, term_to_binary(X), <<1:(8 * 1024 * 1)>>) || X <- lists:seq(1, 3000)],
+    timer:sleep(1000 + 1000),
+    bitcask_merge_worker:merge(Dir, opts(), [Dir ++ "/2.bitcask.data"]),
+    io:format(user, "Sleeping...\n", []),
+io:format(user, "LINE ~p\n", [?LINE]),
+    timer:sleep(5*1000),
+io:format(user, "LINE ~p\n", [?LINE]),
+    bitcask:close(Reference),
+io:format(user, "LINE ~p\n", [?LINE]),
+    timer:sleep(500),
+io:format(user, "LINE ~p\n", [?LINE]),
+
+io:format(user, "LINE ~p\n", [?LINE]),
+    Reference2 = bitcask:open(Dir, [read_write | opts()]),
+io:format(user, "LINE ~p\n", [?LINE]),
+    REF = element(8, get(Reference2)),
+%% io:format(user, "LINE ~p REF = ~p\n", [?LINE, REF]),
+%%     io:format(user, "testtest: ~p\n", [bitcask_nifs:keydir_get(REF, <<"testtest">>)]),
+%% io:format(user, "LINE ~p\n", [?LINE]),
+%%     io:format(user, "key_to_delete: ~p\n", [bitcask_nifs:keydir_get(REF, <<"key_to_delete">>)]),
+%% io:format(user, "LINE ~p\n", [?LINE]),
+%%     io:format(user, "Read zombie: ~p\n", [bitcask:get(Reference2, <<"key_to_delete">>)]),
+io:format(user, "LINE ~p\n", [?LINE]),
+    case bitcask:get(Reference2, <<"key_to_delete">>) of
+        {ok, _} ->
+io:format(user, "LINE ~p\n", [?LINE]),
+            exit(deleted_key_was_resurrected);
+        not_found ->
+io:format(user, "LINE ~p\n", [?LINE]),
+            ok
+    end.
+
+opts() ->
+    %% These constants are magic: the test key will be written inside
+    %% 1.bitcask, and then the tombstone will be written into
+    %% 2.bitcask.  And then the manual merge will merge only 2.bitcask
+    %% into 4.bitcask.
+    [{max_file_size, 2684354},
+     {dead_bytes_threshold, 894784},
+     {dead_bytes_merge_trigger, 1789569}].
 
 %% About leak_t0():
 %%
