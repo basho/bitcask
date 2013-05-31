@@ -90,7 +90,7 @@ prop_expiry() ->
          ?FORALL({Ops, Expiry, ExpiryGrace, Timestep, M1},
                  {eqc_gen:non_empty(list(ops(Keys, Values))),
                   choose(1,10), choose(1, 10), choose(5, 50), choose(5,128)},
-         ?IMPLIES(length(Ops) > 1,
+         ?IMPLIES(length(Ops) > 2,
                  begin
                      Dirname = "/tmp/bc.prop.expiry",
                      ?cmd("rm -rf " ++ Dirname),
