@@ -121,7 +121,7 @@ prop_expiry() ->
                          bitcask:close_write_file(Bref),
 
                          %% Identify items in the Model that should be expired
-                         ExpireCutoff = erlang:max(current_tstamp() + Timestep - erlang:max(Expiry - ExpiryGrace, 0), -1),
+                         ExpireCutoff = erlang:max(current_tstamp() + Timestep - erlang:max(ExpiryGrace - Expiry, 0), -1),
 
                          {Expired, _Live} = lists:partition(fun({_K, {_Value, Tstamp}}) ->
                                                                     Tstamp < ExpireCutoff
