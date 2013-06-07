@@ -67,6 +67,7 @@
                    read_files,     % Files opened for reading
                    max_file_size,  % Max. size of a written file
                    opts,           % Original options used to open the bitcask
+                   key_transform :: function(),
                    keydir}).       % Key directory
 
 -record(mstate, { dirname,
@@ -95,7 +96,8 @@ open(Dirname) ->
     open(Dirname, []).
 
 %% @doc Open a new or existing bitcask datastore with additional options.
--spec open(Dirname::string(), Opts::[_]) -> reference() | {error, timeout}.
+-spec open(Dirname::string(), Opts::[_]) -> 
+    reference() | {error, timeout}.
 open(Dirname, Opts) ->
     %% Make sure bitcask app is started so we can pull defaults from env
     ok = start_app(),
@@ -121,6 +123,10 @@ open(Dirname, Opts) ->
     %% Get the number of seconds we are willing to wait for the keydir init to timeout
     WaitTime = timer:seconds(get_opt(open_timeout, Opts)),
 
+    %% Set the key transform for this cask
+    KeyTransformFun = get_opt(key_transform, Opts),
+    erlang:put(key_transform, KeyTransformFun),
+
     %% Loop and wait for the keydir to come available.
     case init_keydir(Dirname, WaitTime, WritingFile /= undefined) of
         {ok, KeyDir, ReadFiles} ->
@@ -134,7 +140,8 @@ open(Dirname, Opts) ->
                                        write_lock = undefined,
                                        max_file_size = MaxFileSize,
                                        opts = ExpOpts,
-                                       keydir = KeyDir}),
+                                       keydir = KeyDir, 
+                                       key_transform = KeyTransformFun}),
             Ref;
         {error, Reason} ->
             {error, Reason}
@@ -333,12 +340,18 @@ fold(Ref, Fun, Acc0, MaxAge, MaxPut) when is_reference(Ref)->
     State = get_state(Ref),
     fold(State, Fun, Acc0, MaxAge, MaxPut);
 fold(State, Fun, Acc0, MaxAge, MaxPut) ->
+    KT = case erlang:get(key_transform) of
+             KeyTrans when is_function(KeyTrans) ->
+                 KeyTrans;
+             _ -> fun kt_id/1
+         end,
     FrozenFun = 
         fun() ->
                 case open_fold_files(State#bc_state.dirname, 3) of
                     {ok, Files} ->
                         ExpiryTime = expiry_time(State#bc_state.opts),
-                        SubFun = fun(K,V,TStamp,{_FN,FTS,Offset,_Sz},Acc) ->
+                        SubFun = fun(K0,V,TStamp,{_FN,FTS,Offset,_Sz},Acc) ->
+                                         K = KT(K0),
                                          case (TStamp < ExpiryTime) of
                                              true ->
                                                  Acc;
@@ -874,16 +887,25 @@ put_state(Ref, State) ->
 reverse_sort(L) ->
     lists:reverse(lists:sort(L)).
 
+kt_id(Key) ->
+    Key.
+
 scan_key_files([], _KeyDir, Acc, _CloseFile, _EnoentOK) ->
     Acc;
-scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile, EnoentOK) ->
+scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile, 
+               EnoentOK) ->
     %% Restrictive pattern matching below is intentional
+    KT = case erlang:get(key_transform) of
+             KeyTrans when is_function(KeyTrans) ->
+                 KeyTrans;
+             _ -> fun kt_id/1
+         end,
     case bitcask_fileops:open_file(Filename) of
         {ok, File} ->
             FileTstamp = bitcask_fileops:file_tstamp(File),
             F = fun(K, Tstamp, {Offset, TotalSz}, _) ->
                         bitcask_nifs:keydir_put(KeyDir,
-                                                K,
+                                                KT(K),
                                                 FileTstamp,
                                                 TotalSz,
                                                 Offset,
@@ -1010,10 +1032,15 @@ merge_files(#mstate { input_files = [] } = State) ->
     State;
 merge_files(#mstate {  dirname = Dirname,
                        input_files = [File | Rest]} = State) ->
+    KT = case erlang:get(key_transform) of
+             KeyTrans when is_function(KeyTrans) ->
+                 KeyTrans;
+             _ -> fun kt_id/1
+         end,
     FileId = bitcask_fileops:file_tstamp(File),
     F = fun(K, V, Tstamp, Pos, State0) ->
                 if Tstamp < State0#mstate.merge_start ->
-                        merge_single_entry(K, V, Tstamp, FileId, Pos, State0);
+                        merge_single_entry(KT(K), V, Tstamp, FileId, Pos, State0);
                    true ->
                         State0
                 end
@@ -1319,16 +1346,24 @@ expiry_merge([], _LiveKeyDir, Acc) ->
 
 expiry_merge([File | Files], LiveKeyDir, Acc0) ->
     FileId = bitcask_fileops:file_tstamp(File),
+    KT = case erlang:get(key_transform) of
+             KeyTrans when is_function(KeyTrans) ->
+                 KeyTrans;
+             _ -> fun kt_id/1
+         end,
     Fun = fun(K, Tstamp, {Offset, _TotalSz}, Acc) ->
-                bitcask_nifs:keydir_remove(LiveKeyDir, K, Tstamp, FileId, Offset),
+                bitcask_nifs:keydir_remove(LiveKeyDir, KT(K), Tstamp, FileId, Offset),
                 Acc
         end,
     case bitcask_fileops:fold_keys(File, Fun, ok, default) of
         {error, Reason} ->
-            error_logger:error_msg("Error folding keys for ~p: ~p\n", [File#filestate.filename,Reason]),
+            error_logger:error_msg("Error folding keys for ~p: ~p\n", 
+                                   [File#filestate.filename,Reason]),
             Acc = Acc0;
         _ ->
-            error_logger:info_msg("All keys expired in: ~p scheduling file for deletion\n", [File#filestate.filename]),
+            error_logger:info_msg("All keys expired in: ~p scheduling "
+                                  "file for deletion\n", 
+                                  [File#filestate.filename]),
             Acc = lists:append(Acc0, [File])
      end,
     expiry_merge(Files, LiveKeyDir, Acc).
