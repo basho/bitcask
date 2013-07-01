@@ -23,6 +23,7 @@
 
 -export([init/0,
          keydir_new/0, keydir_new/1,
+         maybe_keydir_new/1,
          keydir_mark_ready/1,
          keydir_put/6,
          keydir_put/7,
@@ -76,6 +77,9 @@
 -spec keydir_new(string()) ->
         {ok, reference()} |
         {ready, reference()} | {not_ready, reference()} |
+        {error, not_ready}.
+-spec maybe_keydir_new(string()) ->
+        {ok, reference()} |
         {error, not_ready}.
 -spec keydir_mark_ready(reference()) ->
         ok.
@@ -164,6 +168,9 @@ keydir_new() ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_new(Name) when is_list(Name) ->
+    erlang:nif_error({error, not_loaded}).
+
+maybe_keydir_new(Name) when is_list(Name) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_mark_ready(_Ref) ->
@@ -439,6 +446,7 @@ keydir_itr_named_test() ->
     {not_ready, Ref} = keydir_new("keydir_itr_named_test"),
     keydir_mark_ready(Ref),
     keydir_itr_test_base(Ref).
+
 
 keydir_itr_test_base(Ref) ->
     ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),

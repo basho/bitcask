@@ -497,7 +497,7 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
     end,
 
     %% Get the live keydir
-    case bitcask_nifs:keydir_new(Dirname) of
+    case bitcask_nifs:maybe_keydir_new(Dirname) of
         {ready, LiveKeyDir} ->
             %% Simplest case; a key dir is already available and
             %% loaded. Go ahead and open just the files we wish to
@@ -514,30 +514,9 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
                         || F <- FilesToMerge],
             InFiles1 = [F || F <- InFiles0, F /= skip];
 
-        {not_ready, LiveKeyDir} ->
-            %% Live keydir is newly created. We need to go ahead and
-            %% load all available data into the keydir in case another
-            %% reader/writer comes along in the same VM. Note that we
-            %% won't necessarily merge all these files.
-            AllFiles = scan_key_files(readable_files(Dirname), LiveKeyDir, [],
-                                      false, true),
-
-            %% Partition all files to files we'll merge and files we
-            %% won't (so that we can close those extra files once
-            %% they've been loaded into the keydir)
-            P = fun(F) ->
-                        lists:member(bitcask_fileops:filename(F), FilesToMerge)
-                end,
-            {InFiles1, UnusedFiles} = lists:partition(P, AllFiles),
-
-            %% Close the unused files
-            [bitcask_fileops:close(U) || U <- UnusedFiles],
-
-            bitcask_nifs:keydir_mark_ready(LiveKeyDir);
-
         {error, not_ready} ->
-            %% Someone else is loading the keydir. We'll bail here and
-            %% try again later.
+            %% Someone else is loading the keydir, or this cask isn't open. 
+            %% We'll bail here and try again later.
 
             ok = bitcask_lockops:release(Lock),
             % Make erlc happy w/ non-local exit
@@ -1563,9 +1542,14 @@ merge_test() ->
     %% Verify number of files in directory
     3 = length(readable_files("/tmp/bc.test.merge")),
 
+    %% test that we can't merge a closed cask.
+    {error, not_ready} = (catch merge("/tmp/bc.test.merge")),
+
     %% Merge everything
+    M = bitcask:open("/tmp/bc.test.merge"),
     timer:sleep(1100),
     ok = merge("/tmp/bc.test.merge"),
+    bitcask:close(M),
 
     %% Verify we've now only got one file
     1 = length(readable_files("/tmp/bc.test.merge")),
@@ -1575,7 +1559,6 @@ merge_test() ->
     lists:foldl(fun({K, V}, _) ->
                         {ok, V} = bitcask:get(B, K)
                 end, undefined, default_dataset()).
-
 
 bitfold_test() ->
     os:cmd("rm -rf /tmp/bc.test.bitfold"),
@@ -1648,7 +1631,9 @@ expire_merge_test() ->
 
     %% Merge everything
     timer:sleep(1100),
+    M = bitcask:open("/tmp/bc.test.mergeexpire"),
     ok = merge("/tmp/bc.test.mergeexpire",[{expiry_secs,1}]),
+    bitcask:close(M),
 
     %% Verify we've now only got one file
     ok = bitcask_merge_delete:testonly__delete_trigger(),
@@ -1715,7 +1700,9 @@ delete_merge_test() ->
     close(B1),
 
     timer:sleep(1100),
+    M = bitcask:open("/tmp/bc.test.delmerge"),
     ok = merge("/tmp/bc.test.delmerge",[]),
+    bitcask:close(M),
 
     %% Verify we've now only got one item left
     B2 = bitcask:open("/tmp/bc.test.delmerge"),
@@ -1742,9 +1729,11 @@ delete_partial_merge_test() ->
     %% selective merge, hit all of the files with deletes but not
     %%  all of the ones with deleted data
     timer:sleep(1100),
+    M = bitcask:open("/tmp/bc.test.pardel"),
     ok = merge("/tmp/bc.test.pardel",[],{lists:reverse(lists:nthtail(2,
                                            lists:reverse(readable_files(
                                                "/tmp/bc.test.pardel")))),[]}),
+    bitcask:close(M),
 
     %% Verify we've now only got one item left
     B2 = bitcask:open("/tmp/bc.test.pardel"),
@@ -1913,7 +1902,9 @@ trailing_junk_big_datafile_test() ->
     ok = file:close(FH),
 
     %% Merge everything
+    M = bitcask:open(Dir),
     ok = merge(Dir),
+    bitcask:close(M),
 
     B2 = bitcask:open(Dir, [read_write]),
     KeyList = bitcask:fold(B2, fun(K, _V, Acc0) -> [K|Acc0] end, []),
@@ -1957,7 +1948,9 @@ truncated_merge_test() ->
     ok = corrupt_file(Data5, 15, <<"!">>),
     %% Merge everything
     timer:sleep(1100),
+    M = bitcask:open(Dir),
     ok = merge(Dir),
+    bitcask:close(M),
 
     %% Verify we've now only got one file
     ok = bitcask_merge_delete:testonly__delete_trigger(),
