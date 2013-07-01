@@ -325,6 +325,7 @@ static ERL_NIF_TERM ATOM_BOF;
 // Prototypes
 ERL_NIF_TERM bitcask_nifs_keydir_new0(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_new1(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_maybe_keydir_new1(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_mark_ready(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_get_int(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_get_epoch(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
@@ -374,6 +375,7 @@ static ErlNifFunc nif_funcs[] =
 #endif
     {"keydir_new", 0, bitcask_nifs_keydir_new0},
     {"keydir_new", 1, bitcask_nifs_keydir_new1},
+    {"maybe_keydir_new", 1, bitcask_nifs_maybe_keydir_new1},
     {"keydir_mark_ready", 1, bitcask_nifs_keydir_mark_ready},
     {"keydir_put_int", 10, bitcask_nifs_keydir_put_int},
     {"keydir_get_int", 3, bitcask_nifs_keydir_get_int},
@@ -428,6 +430,36 @@ ERL_NIF_TERM bitcask_nifs_keydir_new0(ErlNifEnv* env, int argc, const ERL_NIF_TE
     ERL_NIF_TERM result = enif_make_resource(env, handle);
     enif_release_resource_compat(env, handle);
     return enif_make_tuple2(env, ATOM_OK, result);
+}
+
+ERL_NIF_TERM bitcask_nifs_maybe_keydir_new1(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    char name[4096];
+    size_t name_sz;
+    if (enif_get_string(env, argv[0], name, sizeof(name), ERL_NIF_LATIN1))
+    {
+        name_sz = strlen(name);
+
+        // Get our private stash and check the global hash table for this entry
+        bitcask_priv_data* priv = (bitcask_priv_data*)enif_priv_data(env);
+        
+        enif_mutex_lock(priv->global_keydirs_lock);
+        khiter_t itr = kh_get(global_keydirs, priv->global_keydirs, name);
+        enif_mutex_unlock(priv->global_keydirs_lock);
+
+        if (itr != kh_end(priv->global_keydirs))
+        {
+            return bitcask_nifs_keydir_new1(env, argc, argv);
+        } 
+        else
+        {
+            return enif_make_tuple2(env, ATOM_ERROR, ATOM_NOT_READY);
+        }
+    } 
+    else 
+    {
+        return enif_make_badarg(env);
+    }
 }
 
 ERL_NIF_TERM bitcask_nifs_keydir_new1(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
