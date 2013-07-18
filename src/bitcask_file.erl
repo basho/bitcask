@@ -165,6 +165,9 @@ handle_call(_Request, _From, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
+handle_info({'DOWN', _Ref, _, _Pid, _Status}, State=#state{fd=undefined}) ->
+    error_logger:warning_msg("gen_server killed before file was opened"),
+    {stop, {error, killed}, State};
 handle_info({'DOWN', _Ref, _, _Pid, _Status}, State=#state{fd=Fd}) ->
     %% Owner has stopped, close file and shutdown
     ok = file:close(Fd),

@@ -186,7 +186,7 @@ close_write_file(Ref) ->
 -spec get(reference(), binary()) ->
                  not_found | {ok, Value::binary()} | {error, Err::term()}.
 get(Ref, Key) ->
-    get(Ref, Key, 2).
+    get(Ref, Key, 40).
 
 -spec get(reference(), binary(), integer()) ->
                  not_found | {ok, Value::binary()} | {error, Err::term()}.
@@ -333,6 +333,7 @@ fold(Ref, Fun, Acc0, MaxAge, MaxPut) when is_reference(Ref)->
     State = get_state(Ref),
     fold(State, Fun, Acc0, MaxAge, MaxPut);
 fold(State, Fun, Acc0, MaxAge, MaxPut) ->
+    FoldStart = bitcask_time:tstamp(),
     FrozenFun = 
         fun() ->
                 case open_fold_files(State#bc_state.dirname, 3) of
@@ -344,7 +345,8 @@ fold(State, Fun, Acc0, MaxAge, MaxPut) ->
                                                  Acc;
                                              false ->
                                                  case bitcask_nifs:keydir_get(
-                                                        State#bc_state.keydir, K) of
+                                                        State#bc_state.keydir, K,
+                                                        FoldStart) of
                                                      not_found ->
                                                          Acc;
                                                      E when is_record(E, bitcask_entry) ->
@@ -1330,7 +1332,7 @@ expiry_merge([File | Files], LiveKeyDir, Acc0) ->
         _ ->
             error_logger:info_msg("All keys expired in: ~p scheduling file for deletion\n", [File#filestate.filename]),
             Acc = lists:append(Acc0, [File])
-     end,
+    end,
     expiry_merge(Files, LiveKeyDir, Acc).
 
 %% ===================================================================
@@ -1462,38 +1464,46 @@ fold_visits_frozen_test_() ->
     [?_test(fold_visits_frozen_test(false)),
      ?_test(fold_visits_frozen_test(true))].
 
+slow_worker() ->
+    receive
+        {owner, Pid, List} -> Pid
+    end,
+    SlowCollect = fun(K, V, Acc) ->
+                          receive
+                              go -> ok
+                          end,
+                          [{K, V} | Acc]
+                  end,
+    B = bitcask:open("/tmp/bc.test.frozenfold"),
+    L = fold(B, SlowCollect, [], -1, -1), 
+    case List =:= lists:sort(L) of 
+        true ->
+            Pid ! done;
+        false ->
+            Pid ! {sad, L}
+    end,
+    %%?debugFmt("slow worker finished~n", []),
+    bitcask:close(B).
+    
+finish_worker_loop(Pid) ->
+    receive
+        done ->
+            done;
+        {sad, L} -> 
+            {sad, L}
+    after 0 ->
+            Pid ! go,
+            finish_worker_loop(Pid)
+    end.
+
+
 fold_visits_frozen_test(RollOver) ->
+    %%?debugFmt("rollover is ~p~n", [RollOver]),
     Cask = "/tmp/bc.test.frozenfold",
     B = init_dataset(Cask, default_dataset()),
     try
-        Ref = (get_state(B))#bc_state.keydir,
-        Me = self(),
-        
-        %% Freeze the keydir with default_dataset written
-        FrozenFun = fun() ->
-                            Me ! frozen,
-                            receive
-                                done ->
-                                ok
-                            end
-                    end,
-        FreezeWaiter = proc_lib:spawn_link(
-                         fun() ->
-                                 B2 = bitcask:open(Cask, [read]),
-                                 Ref2 = (get_state(B2))#bc_state.keydir,
-                                 %% Start a function that waits in a frozen keydir for a message
-                                 %% so the test fold can guarantee a frozen keydir
-                                 ok = bitcask_nifs:keydir_frozen(Ref2, FrozenFun, -1, -1),
-                                 bitcask:close(B2)
-                         end),
-        receive
-            frozen ->
-                ok
-        after 
-            1000 ->
-                ?assert(keydir_not_frozen)
-        end,
-
+        Pid = spawn(fun slow_worker/0),
+        Pid ! {owner, self(), default_dataset()},
         %% If checking file rollover, update the state so the next write will 
         %% trigger a 'wrap' return.
         case RollOver of
@@ -1503,27 +1513,31 @@ fold_visits_frozen_test(RollOver) ->
             _ ->
                 ok
         end,
+        timer:sleep(1100),
         
         %% A delete, an update and an insert
         ok = delete(B, <<"k">>),
         ok = put(B, <<"k2">>, <<"v2-2">>),
         ok = put(B, <<"k4">>, <<"v4">>),
-
+     
+        timer:sleep(1100),
         CollectAll = fun(K, V, Acc) ->
                              [{K, V} | Acc]
                      end,
-        L = fold(B, CollectAll, [], -1, -1),
-        ?assertEqual(default_dataset(), lists:sort(L)),
 
         %% Unfreeze the keydir, waiting until complete
-        FreezeWaiter ! done,
-        bitcask_nifs:keydir_wait_pending(Ref),
+        case finish_worker_loop(Pid) of
+            done -> ok;
+            {sad, L} -> 
+                ?assertEqual(default_dataset(), lists:sort(L))
+        end,
 
         %% Check we see the updated fold
         L2 = fold(B, CollectAll, [], -1, -1),
         ?assertEqual([{<<"k2">>,<<"v2-2">>},
                       {<<"k3">>,<<"v3">>},
                       {<<"k4">>,<<"v4">>}], lists:sort(L2))
+        %%?debugFmt("got past the asserts??~n", [])
     after
         bitcask:close(B)
     end.
@@ -1851,7 +1865,6 @@ expire_keydir_test() ->
 delete_keydir_test() ->
     close(init_dataset("/tmp/bc.test.deletekeydir", [],
                        default_dataset())),
-
     KDB = bitcask:open("/tmp/bc.test.deletekeydir", [read_write]),
 
     %% three keys in the keydir now
