@@ -63,7 +63,6 @@
          {max_fold_puts, 0},               % maximum number of updates
 
          %% Data expiration can be caused by setting this to a
-         %% Data expiration can be caused by setting this to a
          %% positive value.  If so, items older than the value
          %% will be discarded.
          {expiry_secs, -1}
