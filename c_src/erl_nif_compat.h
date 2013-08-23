@@ -62,6 +62,7 @@ extern "C" {
     enif_realloc(P, S)
 
 #define enif_free_compat(E, P) \
+    fprintf(stderr, "freeing %p\n", P);\
     enif_free(P)
 
 #endif /* R14 */

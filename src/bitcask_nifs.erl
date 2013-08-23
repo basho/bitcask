@@ -35,8 +35,6 @@
          keydir_itr/3,
          keydir_itr_next/1,
          keydir_itr_release/1,
-         keydir_frozen/4,
-         keydir_wait_pending/1,
          keydir_info/1,
          keydir_release/1,
          lock_acquire/2,
@@ -222,8 +220,7 @@ keydir_copy(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_itr(Ref, MaxAge, MaxPuts) ->
-    {Mega,Secs,Micro} = os:timestamp(),
-    TS = <<((Mega * 1000000 + Secs) * 1000000 + Micro):64/unsigned-native>>,
+    TS = bitcask_time:tstamp(),
     keydir_itr_int(Ref, TS, MaxAge, MaxPuts).
 
 keydir_itr_int(_Ref, _Ts, _MaxAge, _MaxPuts) ->
@@ -245,22 +242,11 @@ keydir_itr_release(_Ref) ->
     ok.
 
 keydir_fold(Ref, Fun, Acc0, MaxAge, MaxPuts) ->
-    FrozenFun = fun() -> keydir_fold_cont(keydir_itr_next(Ref), Ref, Fun, Acc0) end,
-    keydir_frozen(Ref, FrozenFun, MaxAge, MaxPuts).
-
-%% Execute the function once the keydir is frozen
-keydir_frozen(Ref, FrozenFun, MaxAge, MaxPuts) ->
     case keydir_itr(Ref, MaxAge, MaxPuts) of
-        out_of_date ->
-            case keydir_wait_ready() of
-                ok ->
-                    keydir_frozen(Ref, FrozenFun, -1, -1);
-                Else ->
-                    Else
-            end;
         ok ->
             try
-                FrozenFun()
+                keydir_fold_cont(keydir_itr_next(Ref), 
+                                 Ref, Fun, Acc0)
             after
                 keydir_itr_release(Ref)
             end;
@@ -268,42 +254,9 @@ keydir_frozen(Ref, FrozenFun, MaxAge, MaxPuts) ->
             {error, Reason}
     end.
     
-%% Wait for any pending interation to complete
-keydir_wait_pending(Ref) ->
-    %% Create an iterator, passing a zero timestamp to force waiting for
-    %% any current iteration to complete
-    case keydir_itr_int(Ref, <<0:64/unsigned-native>>, 0, 0) of
-        out_of_date -> % no iter created, wait for message from last fold_keys
-            receive
-                ready ->
-                    ok;
-                error ->
-                    {error, shutdown}
-            end;
-        ok ->
-            keydir_itr_release(Ref),
-            ok
-    end.
 
--ifdef(PULSE).
-keydir_wait_ready() ->
-    receive
-        ready -> % fold no matter what on second attempt
-            ok;
-        error ->
-            {error, shutdown}
-    after 1000 ->
-            keydir_wait_ready()
-    end.
--else.
-keydir_wait_ready() ->
-    receive
-        ready -> % fold no matter what on second attempt
-            ok;
-        error ->
-            {error, shutdown}
-    end.
--endif.
+
+
 
 keydir_info(_Ref) ->
     erlang:nif_error({error, not_loaded}).
@@ -482,16 +435,6 @@ keydir_named_not_ready_test() ->
 
     {error, not_ready} = keydir_new("k2").
 
-keydir_itr_while_itr_error_test() ->
-    {ok, Ref1} = keydir_new(),
-    ok = keydir_itr(Ref1, -1, -1),
-    try
-        ?assertEqual({error, iteration_in_process},
-                     keydir_itr(Ref1, -1, -1))
-    after
-        keydir_itr_release(Ref1)
-    end.
-
 keydir_double_itr_test() -> % check iterating flag is cleared
     {ok, Ref1} = keydir_new(),
     Folder = fun(_,Acc) -> Acc end,
@@ -506,24 +449,27 @@ keydir_del_while_pending_test() ->
     Name = "k_del_while_pending_test",
     {not_ready, Ref1} = keydir_new(Name),
     Key = <<"abc">>,
-    ok = keydir_put(Ref1, Key, 0, 1234, 0, 1),
+    T = bitcask_time:tstamp() - 10,
+    ok = keydir_put(Ref1, Key, 0, 1234, 0, T),
     keydir_mark_ready(Ref1),
     ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
-                                offset = <<0:64/unsigned-native>>, tstamp = 1}, 
-                 keydir_get_int(Ref1, Key, 16#ffffffff)),
+                                offset = <<0:64/unsigned-native>>, 
+                                tstamp = T}, 
+                 keydir_get_int(Ref1, Key, T+1000)),
     {ready, Ref2} = keydir_new(Name),
     try
         %% Start keyfold iterator on Ref2
         ok = keydir_itr(Ref2, -1, -1),
+        timer:sleep(1200),
         %% Delete Key
         ?assertEqual(ok, keydir_remove(Ref1, Key)),
         ?assertEqual(not_found, keydir_get(Ref1, Key)),
-
         %% Keep iterating on Ref2 and check result is [Key]
         Fun = fun(IterKey, Acc) -> [IterKey | Acc] end,
         ?assertEqual([#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
-                                     offset = 0, tstamp = 1}], 
-                     keydir_fold_cont(keydir_itr_next(Ref2), Ref2, Fun, []))
+                                     offset = 0, tstamp = T}], 
+                     keydir_fold_cont(keydir_itr_next(Ref2), 
+                                      Ref2, Fun, []))
     after
         %% End iteration
         ok = keydir_itr_release(Ref2)
@@ -537,20 +483,24 @@ keydir_create_del_while_pending_test() ->
     Key = <<"abc">>,
     keydir_mark_ready(Ref1),
     {ready, Ref2} = keydir_new(Name),
+    T = bitcask_time:tstamp() + 10,
     try
         %% Start keyfold iterator on Ref2
         ok = keydir_itr(Ref2, -1, -1),
         %% Delete Key
-        ok = keydir_put(Ref1, Key, 0, 1234, 0, 1),
+        ok = keydir_put(Ref1, Key, 0, 1234, 0, T),
         ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
-                                     offset = <<0:64/unsigned-native>>, tstamp = 1}, 
-                     keydir_get_int(Ref1, Key, bitcask_time:tstamp())),
+                                     offset = <<0:64/unsigned-native>>, tstamp = T}, 
+                     keydir_get_int(Ref1, Key, bitcask_time:tstamp()+10)),
+        timer:sleep(1200),
         ?assertEqual(ok, keydir_remove(Ref1, Key)),
         ?assertEqual(not_found, keydir_get(Ref1, Key)),
 
         %% Keep iterating on Ref2 and check result is [] it was started after iter
         Fun = fun(IterKey, Acc) -> [IterKey | Acc] end,
-        ?assertEqual([], keydir_fold_cont(keydir_itr_next(Ref2), Ref2, Fun, []))
+        ?assertEqual([], 
+                     keydir_fold_cont(keydir_itr_next(Ref2), 
+                                      Ref2, Fun, []))
     after
         %% End iteration
         ok = keydir_itr_release(Ref2)
@@ -564,18 +514,21 @@ keydir_del_put_while_pending_test() ->
     Key = <<"abc">>,
     keydir_mark_ready(Ref1),
     {ready, Ref2} = keydir_new(Name),
+    T = bitcask_time:tstamp() + 10,
     try
-        %% Start keyfold iterator on Ref2
+        %% Start keyfold iterator on Ref2 at ~T-10
         ok = keydir_itr(Ref2, -1, -1),
-        %% Delete Key
-        ?assertEqual(ok, keydir_remove(Ref1, Key)),
-        ok = keydir_put(Ref1, Key, 0, 1234, 0, 1),
+        timer:sleep(1200),
+        %% Delete Key at ~T-9
+        ?assertEqual(ok, keydir_remove(Ref1, Key)), 
+        ok = keydir_put(Ref1, Key, 0, 1234, 0, T),
         ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
-                                     offset = <<0:64/unsigned-native>>, tstamp = 1}, 
-                     keydir_get_int(Ref1, Key, bitcask_time:tstamp())),
-
+                                     offset = <<0:64/unsigned-native>>, tstamp = T}, 
+                     keydir_get_int(Ref1, Key, bitcask_time:tstamp() + 10 )),
         %% Keep iterating on Ref2 and check result is [] it was started after iter
-        Fun = fun(IterKey, Acc) -> [IterKey | Acc] end,
+        Fun = fun(IterKey, Acc) -> 
+                      [IterKey | Acc] 
+              end,
         ?assertEqual([], keydir_fold_cont(keydir_itr_next(Ref2), Ref2, Fun, []))
     after
         %% End iteration
@@ -583,65 +536,24 @@ keydir_del_put_while_pending_test() ->
     end,
     %% Check key is still present
     ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
-                                offset = <<0:64/unsigned-native>>, tstamp = 1}, 
-                 keydir_get_int(Ref1, Key, bitcask_time:tstamp())).
+                                offset = <<0:64/unsigned-native>>, tstamp = T}, 
+                 keydir_get_int(Ref1, Key, bitcask_time:tstamp()+10)).
 
 keydir_multi_put_during_itr_test() ->
+    ?debugFmt("bump stderr", []),
     {not_ready, Ref} = bitcask_nifs:keydir_new("t"),
     bitcask_nifs:keydir_mark_ready(Ref),
+    T = bitcask_time:tstamp(),
     bitcask_nifs:keydir_put(Ref, <<"k">>, 123, 1, 0, 1),
     bitcask_nifs:keydir_itr(Ref, 0, 0),
     bitcask_nifs:keydir_put(Ref, <<"k">>, 123, 2, 10, 2),
     bitcask_nifs:keydir_put(Ref, <<"k">>, 123, 3, 20, 3),
     bitcask_nifs:keydir_put(Ref, <<"k">>, 123, 4, 30, 4),
+    ?debugFmt("bump stderr", []),
     bitcask_nifs:keydir_itr_release(Ref).
 
-keydir_itr_out_of_date_test() ->
-    Name = "keydir_itr_out_of_date_test",
-    {not_ready, Ref1} = bitcask_nifs:keydir_new(Name),
-    bitcask_nifs:keydir_mark_ready(Ref1),
-    ok = bitcask_nifs:keydir_itr_int(Ref1, <<1000000:64/unsigned-native>>, 0, 0),
-    {ready, Ref2} = bitcask_nifs:keydir_new(Name),
-    %% now() will have ensured a new usecs for keydir_itr/3 - check out of date immediately
-    ?assertEqual(out_of_date, bitcask_nifs:keydir_itr_int(Ref2, <<1000001:64/unsigned-native>>,
-                                                          0, 0)),
-    keydir_itr_release(Ref1),
-    ?assertEqual(ok, receive
-                         ready ->
-                             ok
-                     after
-                         1000 ->
-                             timeout
-                     end).
-
-keydir_itr_many_out_of_date_test() ->
-    Name = "keydir_itr_many_out_of_date_test",
-    {not_ready, Ref1} = bitcask_nifs:keydir_new(Name),
-    bitcask_nifs:keydir_mark_ready(Ref1),
-    ok = bitcask_nifs:keydir_itr_int(Ref1, <<1000000:64/unsigned-native>>, 0, 0),
-    Me = self(),
-    F = fun() ->
-                {ready, Ref2} = bitcask_nifs:keydir_new(Name),
-                Me ! {ready, self()},
-                out_of_date = bitcask_nifs:keydir_itr_int(Ref2, <<1000001:64/unsigned-native>>,
-                                                          0, 0),
-                receive
-                    ready ->
-                        Me ! {done, self()}
-                end
-        end,
-    %% Check the pending_awaken array grows nicely
-    Pids = [proc_lib:spawn_link(F) || _X <- lists:seq(1, 100)],
-    ?assertEqual(lists:usort([receive {ready, Pid} -> ready
-                              after 500 -> {timeout, Pid}
-                              end || Pid <- Pids]), [ready]),
-    %% Wake them up and check them.
-    keydir_itr_release(Ref1),
-    ?assertEqual(lists:usort([receive {done, Pid} -> ok
-                              after 500 -> {timeout, Pid}
-                              end || Pid <- Pids]), [ok]).
-
 keydir_itr_many_update_test() ->
+    ?debugFmt("started?", []),
     Name = "keydir_itr_many_update_test",
     {not_ready, Ref1} = bitcask_nifs:keydir_new(Name),
     bitcask_nifs:keydir_mark_ready(Ref1),
@@ -669,41 +581,6 @@ keydir_itr_many_update_test() ->
     ?assertEqual(lists:usort([receive {done, Pid} -> ok
                               after 500 -> {timeout, Pid}
                               end || Pid <- Pids]), [ok]).
-
-keydir_wait_pending_test() ->
-    Name = "keydir_wait_pending_test",
-    {not_ready, Ref1} = keydir_new(Name),
-    keydir_mark_ready(Ref1),
-
-    %% Begin iterating
-    ok = bitcask_nifs:keydir_itr(Ref1, 0, 0),
-
-    %% Spawn a process to wait on pending
-    Me = self(),
-    F = fun() ->
-                {ready, Ref2} = keydir_new(Name),
-                Me ! waiting,
-                keydir_wait_pending(Ref2),
-                Me ! waited
-        end,
-    spawn(F),
-
-    %% Make sure it starts
-    ok = receive waiting -> ok
-         after   1000 -> start_err
-         end,
-    %% Give it a chance to call keydir_wait_pending then blocks
-    timer:sleep(100),
-    nothing = receive Msg -> {msg, Msg}
-              after  1000 -> nothing
-        end,
-
-    %% End iterating - make sure the waiter wakes up
-    keydir_itr_release(Ref1),
-    ok = receive waited -> ok
-         after  1000 -> timeout_err
-         end.
-
 
 -ifdef(EQC).
 
