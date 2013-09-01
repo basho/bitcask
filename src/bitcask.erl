@@ -1032,6 +1032,20 @@ merge_files(#mstate {  dirname = Dirname,
              end,
     merge_files(State2#mstate { input_files = Rest }).
 
+merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) when State#mstate.partial, V =:= ?TOMBSTONE ->
+    %% In the case where we are doing a partial merge, we must keep
+    %% tombstones around, because otherwise, some existing non-merged
+    %% file might cause a key to be retained which ought to be
+    %% deleted.
+
+    ok = bitcask_nifs:keydir_put(State#mstate.del_keydir, K,
+                                 FileId, 0, Offset, Tstamp),
+    bitcask_nifs:keydir_remove(State#mstate.live_keydir, K,
+                               Tstamp, FileId, Offset),
+    inner_merge_write(K, V, Tstamp,
+                      FileId, Offset, State),
+    State;
+
 merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
     case out_of_date(K, Tstamp, FileId, Pos, State#mstate.expiry_time, false,
                      [State#mstate.live_keydir, State#mstate.del_keydir]) of
@@ -1055,11 +1069,7 @@ merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
                     bitcask_nifs:keydir_remove(State#mstate.live_keydir, K,
                                                Tstamp, FileId, Offset),
 
-                    case State#mstate.partial of
-                        true -> inner_merge_write(K, V, Tstamp,
-                                                  FileId, Offset, State);
-                        false -> State
-                    end;
+                    State;
                 false ->
                     ok = bitcask_nifs:keydir_remove(State#mstate.del_keydir, K),
                     inner_merge_write(K, V, Tstamp, FileId, Offset, State)
@@ -1799,6 +1809,34 @@ corrupt_file_test() ->
     close(B4),
 
     ok.
+
+merge_delete_test_() ->
+    {timeout, 60, fun merge_delete_test_body/0}.
+
+merge_delete_test_body() ->
+    Opts = [{max_file_size, 120}],
+    Dir = "/tmp/bc.test.merge-delete",
+    os:cmd("rm -rf /tmp/bc.test.merge-delete"),
+    B = bitcask:open(Dir, [read_write | Opts]),
+    PutSome = fun() ->
+                      [bitcask:put(B, <<X:32>>, <<"yo this is a value">>) ||
+                          X <- lists:seq(1,5)]
+              end,
+    PutSome(),
+    bitcask:delete(B, <<3:32>>),
+    bitcask:merge(Dir, Opts, ["/tmp/bc.test.merge-delete/2.bitcask.data"]),
+    bitcask:close(B),
+
+    B2 = bitcask:open(Dir, [read_write | Opts]),
+    V = bitcask:get(B2, <<3:32>>),
+    Result = if (V =:= not_found) ->
+                     ok;
+                true ->
+                     Error = lists:flatten(io_lib:format("expected not_found, got ~p", [V])),
+                     erlang:error(Error)
+             end,
+    bitcask:close(B2),
+    Result.
 
 invalid_data_size_test() ->
     TestDir = "/tmp/bc.test.invalid_data_size_test",
