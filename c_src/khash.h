@@ -237,6 +237,14 @@ static const double __ac_HASH_UPPER = 0.77;
 			h->upper_bound = (khint_t)(h->n_buckets * __ac_HASH_UPPER + 0.5); \
 		}																\
 	}																	\
+	static inline khint_t kh_put_will_resize_##name(kh_##name##_t *h)   \
+	{																	\
+        if (h->n_occupied >= h->upper_bound) {                          \
+            return 1;                                                   \
+        } else {                                                        \
+            return 0;                                                   \
+        }                                                               \
+    }                                                                   \
 	static inline khint_t kh_put_##name(kh_##name##_t *h, khkey_t key, int *ret) \
 	{																	\
 		khint_t x;														\
@@ -376,6 +384,7 @@ static inline khint_t __ac_X31_hash_string(const char *s)
 				the bucket has been deleted [int*]
   @return       Iterator to the inserted element [khint_t]
  */
+#define kh_put_will_resize(name, h) kh_put_will_resize_##name(h)
 #define kh_put(name, h, k, r) kh_put_##name(h, k, r)
 
 /*! @function

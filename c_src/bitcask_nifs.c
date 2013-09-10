@@ -24,6 +24,8 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <stdint.h>
+#include <time.h>
+#include <assert.h>
 
 #include "erl_nif.h"
 #include "erl_driver.h"
@@ -91,6 +93,28 @@ typedef struct
     uint32_t newest_tstamp; // newest observed tstamp in a file
 } bitcask_fstats_entry;
 
+struct bitcask_keydir_entry_sib
+{
+    uint32_t file_id;
+    uint32_t total_sz;
+    uint64_t offset;
+    uint32_t tstamp;
+    uint32_t newest_put;
+    struct bitcask_keydir_entry_sib * next;
+};
+typedef struct bitcask_keydir_entry_sib bitcask_keydir_entry_sib;
+
+typedef struct
+{
+    bitcask_keydir_entry_sib * sibs;
+    uint16_t key_sz;
+    char     key[0];
+} bitcask_keydir_entry_head;
+
+#define IS_ENTRY_LIST(p) ((uint64_t)p&1)
+#define GET_ENTRY_LIST_POINTER(p) ((bitcask_keydir_entry_head*)((uint64_t)p&~1))
+#define MAKE_ENTRY_LIST_POINTER(p) ((bitcask_keydir_entry*)((uint64_t)p|1))
+
 KHASH_MAP_INIT_INT(fstats, bitcask_fstats_entry*);
 
 typedef khash_t(entries) entries_hash_t;
@@ -101,11 +125,12 @@ typedef struct
     entries_hash_t* entries;
     entries_hash_t* pending;  // pending keydir entries during keydir folding
     fstats_hash_t*  fstats;
-    size_t        key_count;
-    size_t        key_bytes;
+    uint32_t      key_count;
+    uint32_t      key_bytes;
     uint32_t      biggest_file_id;
     unsigned int  refcount;
     unsigned int  keyfolders;
+    uint32_t      newest_folder;
     uint64_t      iter_generation;
     uint64_t      pending_updated;
     uint64_t      pending_start; // os:timestamp() as 64-bit integer
@@ -122,6 +147,7 @@ typedef struct
     bitcask_keydir* keydir;
     int             iterating;
     khiter_t        iterator;
+    uint32_t        timestamp;
 } bitcask_keydir_handle;
 
 typedef struct
@@ -158,6 +184,9 @@ typedef struct
                                  (e)->offset == 0)
 #define set_pending_tombstone(e) {(e)->tstamp = 0; \
                                   (e)->offset = 0; }
+
+#define TRUE 1
+#define FALSE 0
 
 // Atoms (initialized in on_load)
 static ERL_NIF_TERM ATOM_ALLOCATION_ERROR;
@@ -227,6 +256,8 @@ static void lock_release(bitcask_lock_handle* handle);
 static void bitcask_nifs_keydir_resource_cleanup(ErlNifEnv* env, void* arg);
 static void bitcask_nifs_file_resource_cleanup(ErlNifEnv* env, void* arg);
 
+/*static void print_entry_list(bitcask_keydir_entry *e);*/
+
 static ErlNifFunc nif_funcs[] =
 {
 #ifdef PULSE
@@ -236,9 +267,9 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_new", 1, bitcask_nifs_keydir_new1},
     {"keydir_mark_ready", 1, bitcask_nifs_keydir_mark_ready},
     {"keydir_put_int", 9, bitcask_nifs_keydir_put_int},
-    {"keydir_get_int", 2, bitcask_nifs_keydir_get_int},
-    {"keydir_remove", 2, bitcask_nifs_keydir_remove},
-    {"keydir_remove_int", 5, bitcask_nifs_keydir_remove},
+    {"keydir_get_int", 3, bitcask_nifs_keydir_get_int},
+    {"keydir_remove", 3, bitcask_nifs_keydir_remove},
+    {"keydir_remove_int", 6, bitcask_nifs_keydir_remove},
     {"keydir_copy", 1, bitcask_nifs_keydir_copy},
     {"keydir_itr_int", 4, bitcask_nifs_keydir_itr},
     {"keydir_itr_next_int", 1, bitcask_nifs_keydir_itr_next},
@@ -401,6 +432,7 @@ static void update_fstats(ErlNifEnv* env, bitcask_keydir* keydir,
     entry->live_bytes  += live_bytes_increment;
     entry->total_bytes += total_bytes_increment;
 
+
     if ((tstamp != 0 && tstamp < entry->oldest_tstamp) ||
         entry->oldest_tstamp == 0)
     {
@@ -415,19 +447,54 @@ static void update_fstats(ErlNifEnv* env, bitcask_keydir* keydir,
 
 static khint_t keydir_entry_hash(bitcask_keydir_entry* entry)
 {
-    return MURMUR_HASH(entry->key, entry->key_sz, 42);
+    khint_t h;
+    if (IS_ENTRY_LIST(entry))
+    {
+        bitcask_keydir_entry_head* par = GET_ENTRY_LIST_POINTER(entry);
+        h = MURMUR_HASH(par->key, par->key_sz, 42);
+    }
+    else
+    {
+        h = MURMUR_HASH(entry->key, entry->key_sz, 42);
+    }
+    return h;
 }
 
 static khint_t keydir_entry_equal(bitcask_keydir_entry* lhs,
                                   bitcask_keydir_entry* rhs)
 {
-    if (lhs->key_sz != rhs->key_sz)
+    char* lkey;
+    char* rkey;
+    int lsz, rsz;
+
+    if (IS_ENTRY_LIST(lhs)) {
+        bitcask_keydir_entry_head* h = GET_ENTRY_LIST_POINTER(lhs);
+        lkey = &h->key[0];
+        lsz = h->key_sz;
+    }
+    else
+    {
+        lkey = &lhs->key[0];
+        lsz = lhs->key_sz;
+    }
+    if (IS_ENTRY_LIST(rhs)) {
+        bitcask_keydir_entry_head* h = GET_ENTRY_LIST_POINTER(rhs);
+        rkey = &h->key[0];
+        rsz = h->key_sz;
+    }
+    else
+    {
+        rkey = &rhs->key[0];
+        rsz = rhs->key_sz;
+    }
+
+    if (lsz != rsz)
     {
         return 0;
     }
     else
     {
-        return (memcmp(lhs->key, rhs->key, lhs->key_sz) == 0);
+        return (memcmp(lkey, rkey, lsz) == 0);
     }
 }
 
@@ -452,8 +519,8 @@ static khiter_t get_entries_hash(ErlNifEnv* env, entries_hash_t *hash, ErlNifBin
         itr = kh_get(entries, hash, e);
         free(e);
     }
-  
-    if (itr != kh_end(hash)) 
+
+    if (itr != kh_end(hash))
     {
         if (itr_ptr != NULL)
         {
@@ -471,6 +538,23 @@ static khiter_t get_entries_hash(ErlNifEnv* env, entries_hash_t *hash, ErlNifBin
     }
 }
 
+static inline int is_sib_tombstone(bitcask_keydir_entry_sib *s)
+{
+    if (s->file_id == 0xffffffff &&
+        s->total_sz == 0xffffffff &&
+        s->offset == 0xffffffffffffffff)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+static inline int is_tombstone(bitcask_keydir_entry_head *h)
+{
+    return is_sib_tombstone(h->sibs);
+}
+
 // Find an entry in the pending or entries keydir and update the hash/itr/entry pointers
 // if non-NULL.  If iterating is true, restrict search to the frozen keydir.
 static int find_keydir_entry(ErlNifEnv* env, bitcask_keydir* keydir, ErlNifBinary* key,
@@ -478,11 +562,11 @@ static int find_keydir_entry(ErlNifEnv* env, bitcask_keydir* keydir, ErlNifBinar
                              bitcask_keydir_entry** entry_ptr, int iterating)
 {
     // Search pending if present
-    if (keydir->pending != NULL && !iterating) 
+    if (keydir->pending != NULL && !iterating)
     {
         if (get_entries_hash(env, keydir->pending, key, itr_ptr, entry_ptr))
         {
-            if (hash_ptr != NULL) 
+            if (hash_ptr != NULL)
             {
                 *hash_ptr = keydir->pending;
             }
@@ -492,21 +576,235 @@ static int find_keydir_entry(ErlNifEnv* env, bitcask_keydir* keydir, ErlNifBinar
     // If not in pending, check normal entries
     if (get_entries_hash(env, keydir->entries, key, itr_ptr, entry_ptr))
     {
-        if (hash_ptr != NULL) 
+        if (hash_ptr != NULL)
         {
             *hash_ptr = keydir->entries;
         }
         return 1;
     }
-    
+
     // Not in entries or pending
     return 0;
 }
 
+static bitcask_keydir_entry* new_kd_entry_at_time(bitcask_keydir_entry_head* old,
+                                                  uint32_t time)
+{
+
+    bitcask_keydir_entry_head* head = GET_ENTRY_LIST_POINTER(old);
+
+    //grab the newest sib
+    bitcask_keydir_entry_sib* s = head->sibs;
+
+    while (s != NULL)
+    {
+        // break if we're at the right one or at the last sib
+        // this can breaks snapshot isolation, but it's better
+        // that dropping data, I think.
+        if (time >= s->tstamp || s->next == NULL)
+        {
+            break;
+        }
+        s = s->next;
+    }
+
+    if (s == NULL || is_sib_tombstone(s))
+    {
+        return NULL;
+    }
+
+    bitcask_keydir_entry *ret = malloc(sizeof(bitcask_keydir_entry)+head->key_sz);
+
+    ret->file_id = s->file_id;
+    ret->total_sz = s->total_sz;
+    ret->offset = s->offset;
+    ret->tstamp = s->tstamp;
+
+    ret->key_sz = head->key_sz;
+    memcpy(ret->key, head->key, head->key_sz);
+
+    return ret;
+}
+
+static inline bitcask_keydir_entry* new_kd_entry(bitcask_keydir_entry_head* old) {
+    return new_kd_entry_at_time(old, 0xffffffff);
+}
+
+static void update_kd_entry_list(bitcask_keydir_entry *old,
+                                 bitcask_keydir_entry *new,
+                                 uint32_t newest_folder) {
+    bitcask_keydir_entry_head* h = GET_ENTRY_LIST_POINTER(old);
+    bitcask_keydir_entry_sib* new_sib;
+
+    //if we're a write newer than the newest folder, just fold in
+    if (newest_folder < h->sibs->tstamp)
+    {
+        new_sib = h->sibs;
+
+        new_sib->file_id = new->file_id;
+        new_sib->total_sz = new->total_sz;
+        new_sib->offset = new->offset;
+        new_sib->tstamp = new->tstamp;
+   }
+    else // otherwise make a new sib
+    {
+        new_sib = malloc(sizeof(bitcask_keydir_entry_sib));
+
+        new_sib->file_id = new->file_id;
+        new_sib->total_sz = new->total_sz;
+        new_sib->offset = new->offset;
+        new_sib->tstamp = new->tstamp;
+        new_sib->next = h->sibs;
+
+        h->sibs = new_sib;
+    }
+ }
+
+static bitcask_keydir_entry* new_kd_entry_list(bitcask_keydir_entry *old,
+                                               bitcask_keydir_entry *new) {
+    bitcask_keydir_entry_head* ret;
+    bitcask_keydir_entry_sib *old_sib, *new_sib;
+    ret = malloc(sizeof(bitcask_keydir_entry_head) + old->key_sz);
+    old_sib = malloc(sizeof(bitcask_keydir_entry_sib));
+    new_sib = malloc(sizeof(bitcask_keydir_entry_sib));
+
+    //fill in list head, use old since new could be a tombstone
+    memcpy(ret->key, old->key, old->key_sz);
+    ret->key_sz = old->key_sz;
+    ret->sibs = new_sib;
+
+    //make new sib
+    new_sib->file_id = new->file_id;
+    new_sib->total_sz = new->total_sz;
+    new_sib->offset = new->offset;
+    new_sib->tstamp = new->tstamp;
+    new_sib->next = old_sib;
+
+    //make new sib
+    old_sib->file_id = old->file_id;
+    old_sib->total_sz = old->total_sz;
+    old_sib->offset = old->offset;
+    old_sib->tstamp = old->tstamp;
+    old_sib->next = NULL;
+
+    return MAKE_ENTRY_LIST_POINTER(ret);
+}
+
+// Debugging statements commented out to silence unused fn warnings
+/*
+static void print_entry_list(bitcask_keydir_entry *e)
+{
+    bitcask_keydir_entry_head* h = GET_ENTRY_LIST_POINTER(e);
+    char buf[4096];
+    assert(h->key_sz+1 < 4096);
+    memcpy(&buf, h->key, h->key_sz);
+    buf[h->key_sz] = '\0';
+
+    fprintf(stderr, "entry list %p key: %s keylen %d\n",
+            h, buf, h->key_sz);
+
+    int sib_count = 0;
+
+    bitcask_keydir_entry_sib
+        *s = h->sibs;
+    while (s != NULL) {
+        fprintf(stderr, "sib %d \n\t%u\t\t%u\n\t%llu\t\t%u\n\n",
+                sib_count, s->file_id, s->total_sz, s->offset, s->tstamp);
+        sib_count++;
+        s = s->next;
+        if( s == NULL )
+            break;
+    }
+}
+
+static void print_entry(bitcask_keydir_entry *e)
+{
+    fprintf(stderr, "entry %p key: %x keylen %d\n",
+            e, e->key+4, e->key_sz);
+
+    fprintf(stderr, "\n\t%u\t\t%u\n\t%llu\t\t%u\n\n",
+            e->file_id, e->total_sz, e->offset, e->tstamp);
+}
+
+static void print_keydir(bitcask_keydir* keydir)
+{
+    khiter_t itr;
+    bitcask_keydir_entry* current_entry;
+    fprintf(stderr, "printing keydir: %s size %d\n\n", keydir->name,
+            kh_size(keydir->entries));
+    // should likely dump some useful stuff here, but don't need it
+    // right now
+    fprintf(stderr, "entries:\n");
+    for (itr = kh_begin(keydir->entries);
+         itr != kh_end(keydir->entries);
+         ++itr)
+    {
+
+        if (kh_exist(keydir->entries, itr))
+        {
+            current_entry = kh_key(keydir->entries, itr);
+            if (IS_ENTRY_LIST(current_entry))
+            {
+                print_entry_list(current_entry);
+            }
+            else
+            {
+                print_entry(current_entry);
+            }
+        }
+    }
+    fprintf(stderr, "\npending:\n");
+    if (keydir->pending == NULL)
+    {
+        fprintf(stderr, "NULL\n");
+    }
+    else
+    {
+        for (itr = kh_begin(keydir->pending);
+             itr != kh_end(keydir->pending);
+             ++itr)
+        {
+
+            if (kh_exist(keydir->pending, itr))
+            {
+                current_entry = kh_key(keydir->pending, itr);
+                if (IS_ENTRY_LIST(current_entry))
+            {
+                print_entry_list(current_entry);
+            }
+                else
+                {
+                    print_entry(current_entry);
+                }
+            }
+        }
+    }
+}
+*/
+
+static void free_entry_list(bitcask_keydir_entry* e)
+{
+    bitcask_keydir_entry_head* h = GET_ENTRY_LIST_POINTER(e);
+
+    bitcask_keydir_entry_sib
+        *temp = NULL,
+        *s = h->sibs;
+    while (s != NULL) {
+        temp = s;
+        s = s->next;
+
+        free(temp);
+    }
+
+    free(h);
+}
+
 // Allocate, populate and add entry to the keydir hash based on the key and entry structure
-static bitcask_keydir_entry* add_entry(ErlNifEnv* env, bitcask_keydir* keydir,
-                      entries_hash_t* hash,
-                      ErlNifBinary* key, bitcask_keydir_entry* entry)
+// never need to add an entry list, can update to it later.
+static bitcask_keydir_entry* add_entry(bitcask_keydir* keydir,
+                                       entries_hash_t* hash,
+                                       ErlNifBinary* key,
+                                       bitcask_keydir_entry* entry)
 {
     bitcask_keydir_entry* new_entry = malloc(sizeof(bitcask_keydir_entry) +
                                              key->size);
@@ -531,22 +829,112 @@ static void move_pending_entry(ErlNifEnv* env, bitcask_keydir* keydir,
 
 
 // Update the current entry with newer information
-static void update_entry(ErlNifEnv* env, bitcask_keydir* keydir,
+static void update_entry(bitcask_keydir* keydir,
                          bitcask_keydir_entry* cur_entry,
-                         bitcask_keydir_entry* upd_entry)
+                         bitcask_keydir_entry* upd_entry,
+                         int is_pending_tombstone)
 {
-    cur_entry->file_id = upd_entry->file_id;
-    cur_entry->total_sz = upd_entry->total_sz;
-    cur_entry->offset = upd_entry->offset;
-    cur_entry->tstamp = upd_entry->tstamp;
+    int is_entry_list = IS_ENTRY_LIST(cur_entry);
+    /* assert(!IS_ENTRY_LIST(upd_entry)); */
+    //cases:
+    // - updating pending tombstone
+    // - updating normal entry during fold to entry list
+    // - updating normal entry outside of a fold
+    // - updating entry list during fold
+    // - updating entry list outside of fold to normal entry
+    if(is_pending_tombstone || // updating pending tombstone
+       (!is_entry_list &&      // updating standard entry
+        keydir->keyfolders == 0) ||
+       (keydir->pending != NULL && // updating standard entry in pending
+        keydir->keyfolders != 0))
+    {
+        /* assert(!IS_ENTRY_LIST(cur_entry)); */
+        //only regular entries are possible here
+        cur_entry->file_id = upd_entry->file_id;
+        cur_entry->total_sz = upd_entry->total_sz;
+        cur_entry->offset = upd_entry->offset;
+        cur_entry->tstamp = upd_entry->tstamp;
+    }
+    else
+    {
+        if (keydir->keyfolders != 0)
+        {
+            if (is_entry_list)
+            {
+                //still during a fold, update the entry list
+                update_kd_entry_list(cur_entry, upd_entry,
+                                     keydir->newest_folder);
+            }
+            else
+            {
+                //update the entry into an entry list
+                khiter_t itr = kh_get(entries, keydir->entries, cur_entry);
+                kh_key(keydir->entries, itr) = new_kd_entry_list(cur_entry,
+                                                                 upd_entry);
+                free(cur_entry);
+            }
+        }
+        else
+        {
+            khiter_t itr = kh_get(entries, keydir->entries, cur_entry);
+            bitcask_keydir_entry_head* h = GET_ENTRY_LIST_POINTER(cur_entry);
+
+            bitcask_keydir_entry* new_entry =
+                malloc(sizeof(bitcask_keydir_entry) +
+                       h->key_sz);
+            new_entry->file_id = upd_entry->file_id;
+            new_entry->total_sz = upd_entry->total_sz;
+            new_entry->offset = upd_entry->offset;
+            new_entry->tstamp = upd_entry->tstamp;
+            new_entry->key_sz = h->key_sz;
+            memcpy(new_entry->key, h->key, h->key_sz);
+            kh_key(keydir->entries, itr) = new_entry;
+
+            free_entry_list(cur_entry);
+        }
+    }
 }
 
-static void remove_entry(ErlNifEnv* env, bitcask_keydir* keydir, khiter_t itr,
-                         bitcask_keydir_entry* entry)
+static void remove_entry(bitcask_keydir* keydir, khiter_t itr,
+                         uint32_t remove_time,
+                         bitcask_keydir_entry* entry,
+                         bitcask_keydir_entry* real_entry)
 {
-    kh_del(entries, keydir->entries, itr);
-}
+    if (keydir->keyfolders == 0)
+    {
+        kh_del(entries, keydir->entries, itr);
+        if(real_entry == NULL) {
+            free(entry);
+        }
+        else
+        {
+            free_entry_list(real_entry);
+        }
+    }
+    else
+    {
+        bitcask_keydir_entry tombstone;
+        tombstone.tstamp = remove_time;
+        tombstone.offset = 0xffffffffffffffff;
+        tombstone.total_sz = 0xffffffff;
+        tombstone.file_id = 0xffffffff;
+        tombstone.key_sz = 0;
 
+        if (real_entry == NULL)
+        {
+            //this is an entry, update into an entry list
+            bitcask_keydir_entry* new_entry_list;
+            new_entry_list = new_kd_entry_list(entry, &tombstone);
+            kh_key(keydir->entries, itr) = new_entry_list;
+        }
+        else
+        {
+            //need to update the entry list with a tombstone
+            update_kd_entry_list(real_entry, &tombstone,
+                                 keydir->newest_folder);
+        }
+    }
+}
 
 ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
@@ -572,14 +960,23 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
         bitcask_keydir* keydir = handle->keydir;
         LOCK(keydir);
 
+        // First, check if this put will resize the keydir
+        // if yes:
+        //   if we're not folding; we don't care, just do it.
+        //   if we are folding, start the pending keydir
+        //   if we have a pending keydir, noop
+
         DEBUG("+++ Put file_id=%d offset=%d total_sz=%d\r\n",
               (int) entry.file_id, (int) entry.offset,
               (int)entry.total_sz);
 
         // Check for put on a new key or updating a pending tombstone
         int tombstone = 0;
-        int found = find_keydir_entry(env, keydir, &key, &hash, &itr, &old_entry, 0);
-        if (found == 1 && hash == keydir->pending && is_pending_tombstone(old_entry))
+        int found = find_keydir_entry(env, keydir, &key, &hash,
+                                      &itr, &old_entry, 0);
+        if (found == 1 &&
+            hash == keydir->pending &&
+            is_pending_tombstone(old_entry))
         {
             found = 0;
             tombstone = 1;
@@ -589,6 +986,30 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
         {
             UNLOCK(keydir);
             return ATOM_ALREADY_EXISTS;
+        }
+
+        if (kh_put_will_resize(entries, keydir->entries) &&
+            keydir->keyfolders != 0)
+        {
+            if (keydir->pending == NULL)
+            {
+                keydir->pending = kh_init(entries);
+                keydir->pending_start = time(NULL);
+            }
+
+        }
+
+        bitcask_keydir_entry* real_entry = NULL;
+        if (found &&
+            IS_ENTRY_LIST(old_entry))
+        {
+            if (is_tombstone(GET_ENTRY_LIST_POINTER(old_entry)))
+            {
+                found = 0;
+            }
+
+            real_entry = old_entry;
+            old_entry = new_kd_entry(GET_ENTRY_LIST_POINTER(old_entry));
         }
 
         if (!found)
@@ -602,14 +1023,21 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
             if (tombstone)
             {
                 // If a pending tombstone, update to be an active entry again
-                update_entry(env, keydir, old_entry, &entry);
+                update_entry(keydir, old_entry, &entry, tombstone);
             }
             else
             {
-                // Add entry to the pending hash if iterating, otherwise
+                // Add entry to the pending hash if frozen, otherwise
                 // add it to the main keydir
                 hash = keydir->pending == NULL ? keydir->entries : keydir->pending;
-                add_entry(env, keydir, hash, &key, &entry);
+                if (hash == keydir->entries && real_entry != NULL)
+                {
+                    update_entry(keydir, real_entry, &entry, 0);
+                }
+                else
+                {
+                    add_entry(keydir, hash, &key, &entry);
+                }
             }
 
             if (keydir->pending != NULL)
@@ -621,6 +1049,10 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
                 keydir->biggest_file_id = entry.file_id;
             }
 
+            if (real_entry != NULL)
+            {
+                free(old_entry);
+            }
             UNLOCK(keydir);
             return ATOM_OK;
         }
@@ -631,12 +1063,23 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
             !(old_file_id == old_entry->file_id &&
               old_offset == old_entry->offset))
         {
+            if (real_entry != NULL)
+            {
+                free(old_entry);
+            }
             UNLOCK(keydir);
             return ATOM_ALREADY_EXISTS;
         }
 
-        // Now that we've marshalled everything, see if the tstamp for this key is >=
-        // to what's already in the hash. Otherwise, we don't bother with the update.
+        bitcask_keydir_entry *real_old = NULL;
+        if (IS_ENTRY_LIST(old_entry))
+        {
+            real_old = old_entry;
+            old_entry = new_kd_entry(GET_ENTRY_LIST_POINTER(old_entry));
+        }
+        // Now that we've marshalled everything, see if the tstamp for this
+        // key is >= to what's already in the hash. Otherwise, we don't
+        // bother with the update.
         if ((entry.newest_put &&
              (entry.file_id >= keydir->biggest_file_id)) ||
             (! entry.newest_put &&
@@ -664,17 +1107,22 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
                               entry.total_sz);
             }
 
-            if (keydir->pending == NULL || // not folding
+            if (keydir->pending == NULL || // not frozen
                 hash == keydir->pending)   // or the old_entry already in pending
             {
                 // Update the entry info. Note that if you do multiple updates in a
                 // second, the last one in wins!
-                // TODO: Safe?
-                update_entry(env, keydir, old_entry, &entry);
+                if (real_entry) {
+                    update_entry(keydir, real_entry, &entry, FALSE);
+                }
+                else
+                {
+                    update_entry(keydir, old_entry, &entry, FALSE);
+                }
             }
             else  // old_entry is in entries, add new to pending
             {
-                add_entry(env, keydir, keydir->pending, &key, &entry);
+                add_entry(keydir, keydir->pending, &key, &entry);
             }
 
             if (keydir->pending != NULL)
@@ -686,6 +1134,10 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
                 keydir->biggest_file_id = entry.file_id;
             }
 
+            if (real_entry != NULL)
+            {
+                free(old_entry);
+            }
             UNLOCK(keydir);
             return ATOM_OK;
         }
@@ -711,14 +1163,17 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
     }
 }
 
+/* int erts_printf(const char *, ...); */
 
 ERL_NIF_TERM bitcask_nifs_keydir_get_int(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     bitcask_keydir_handle* handle;
     ErlNifBinary key;
+    uint32_t time;
 
     if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle) &&
-        enif_inspect_binary(env, argv[1], &key))
+        enif_inspect_binary(env, argv[1], &key) &&
+        enif_get_uint(env, argv[2], &time))
     {
         bitcask_keydir_entry* entry = NULL;
         bitcask_keydir* keydir = handle->keydir;
@@ -726,17 +1181,47 @@ ERL_NIF_TERM bitcask_nifs_keydir_get_int(ErlNifEnv* env, int argc, const ERL_NIF
 
         DEBUG("+++ Get issued\r\n");
 
-        if (find_keydir_entry(env, keydir, &key, NULL, NULL, &entry, handle->iterating) &&
+        if (find_keydir_entry(env, keydir, &key, NULL, NULL, &entry,
+                              handle->iterating) &&
             !is_pending_tombstone(entry))
         {
-            ERL_NIF_TERM result = enif_make_tuple6(env,
-                                                   ATOM_BITCASK_ENTRY,
-                                                   argv[1], /* Key */
-                                                   enif_make_uint(env, entry->file_id),
-                                                   enif_make_uint(env, entry->total_sz),
-                                                   enif_make_uint64_bin(env, entry->offset),
-                                                   enif_make_uint(env, entry->tstamp));
-            DEBUG(" ... returned value\r\n");
+            ERL_NIF_TERM result;
+            if (!IS_ENTRY_LIST(entry))
+            {
+                //if it isn't an entry list, ignore the requested timestamp,
+                result = enif_make_tuple6(env,
+                                          ATOM_BITCASK_ENTRY,
+                                          argv[1], /* Key */
+                                          enif_make_uint(env, entry->file_id),
+                                          enif_make_uint(env, entry->total_sz),
+                                          enif_make_uint64_bin(env,
+                                                               entry->offset),
+                                          enif_make_uint(env, entry->tstamp));
+                DEBUG(" ... returned value\r\n");
+            }
+            else
+            {
+                bitcask_keydir_entry_head* h = GET_ENTRY_LIST_POINTER(entry);
+                bitcask_keydir_entry* e = new_kd_entry_at_time(h, time);
+                if (e != NULL ) {
+                    result = enif_make_tuple6(env,
+                                              ATOM_BITCASK_ENTRY,
+                                              argv[1], /* Key */
+                                              enif_make_uint(env, e->file_id),
+                                              enif_make_uint(env, e->total_sz),
+                                              enif_make_uint64_bin(env,
+                                                                   e->offset),
+                                              enif_make_uint(env, e->tstamp));
+
+                    DEBUG(" ... returned value\r\n");
+                    free(e);
+                }
+                else
+                {
+                    result = ATOM_NOT_FOUND;
+                    DEBUG(" ... not_found\r\n");
+                }
+            }
             UNLOCK(keydir);
             return result;
         }
@@ -758,9 +1243,12 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
 {
     bitcask_keydir_handle* handle;
     ErlNifBinary key;
+    uint32_t remove_time;
 
     if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle) &&
-        enif_inspect_binary(env, argv[1], &key))
+        enif_inspect_binary(env, argv[1], &key) &&
+        enif_get_uint(env, argv[2], &remove_time))
+
     {
         khiter_t itr;
         entries_hash_t* hash;
@@ -770,36 +1258,66 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
 
         DEBUG("+++ Remove\r\n");
 
-        if (find_keydir_entry(env, keydir, &key, &hash, &itr, &entry, 0))
+        if (find_keydir_entry(env, keydir, &key, &hash, &itr, &entry,
+                              0))
         {
-            // If this call has 5 arguments, this is a conditional removal. We
+            bitcask_keydir_entry* real_entry = NULL;
+            if (IS_ENTRY_LIST(entry))
+            {
+                real_entry = entry;
+                entry = new_kd_entry_at_time(GET_ENTRY_LIST_POINTER(entry),
+                                             0xffffffff);
+                if (entry == NULL)
+                {
+                    //no need re-delete something we've already tombstoned.
+                    UNLOCK(keydir);
+                    return ATOM_OK;
+                }
+            }
+
+            // If this call has 6 arguments, this is a conditional removal. We
             // only want to actually remove the entry if the tstamp, fileid and
             // offset matches the one provided. A sort of poor-man's CAS.
-            if (argc == 5)
+            if (argc == 6)
             {
                 uint32_t tstamp;
                 uint32_t file_id;
                 uint64_t offset;
                 if (enif_get_uint(env, argv[2], (unsigned int*)&tstamp) &&
                     enif_get_uint(env, argv[3], (unsigned int*)&file_id) &&
-                    enif_get_uint64_bin(env, argv[4], (uint64_t*)&offset))
+                    enif_get_uint64_bin(env, argv[4], (uint64_t*)&offset) &&
+                    enif_get_uint(env, argv[5], &remove_time))
                 {
                     if (entry->tstamp != tstamp || entry->file_id != file_id ||
                         entry->offset != offset)
                     {
                         // Either tstamp or file_id didn't match precisely. Ignore
                         // this attempt to delete the record.
+                        if (real_entry != NULL)
+                        {
+                            free(entry);
+                        }
                         UNLOCK(keydir);
                         return ATOM_OK;
                     }
                 }
                 else
                 {
+                    if (real_entry != NULL)
+                    {
+                        free(entry);
+                    }
                     UNLOCK(keydir);
                     return enif_make_badarg(env);
                 }
             }
 
+            if (hash == keydir->pending &&
+                is_pending_tombstone(entry))
+            {
+                UNLOCK(keydir);
+                return ATOM_OK;
+            }
             // Remove the key from the keydir stats
             keydir->key_count--;
             keydir->key_bytes -= entry->key_sz;
@@ -811,27 +1329,30 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
             // If found an entry in the entries hash and not folding, remove it
             if (keydir->pending == NULL)
             {
-                remove_entry(env, keydir, itr, entry);
-                free(entry);
+                remove_entry(keydir, itr, remove_time, entry, real_entry);
             }
             // If found an entry in the pending hash, convert it to a tombstone
             else if (keydir->pending == hash)
             {
-                // If not already a tomstone, update stats and make it one
+                // If not already a tombstone, update stats and make it one
                 if (!is_pending_tombstone(entry))
                 {
                     set_pending_tombstone(entry);
                 }
             }
-            // Otherwise add a tombstone to the pending hash (iteration must have 
+            // Otherwise add a tombstone to the pending hash (iteration must have
             // started between put/remove call in bitcask:delete.
             else
             {
                 bitcask_keydir_entry* pending_entry =
-                    add_entry(env, keydir, keydir->pending, &key, entry);
+                    add_entry(keydir, keydir->pending, &key, entry);
                 set_pending_tombstone(pending_entry);
             }
-  
+
+            if (real_entry != NULL)
+            {
+                free(entry);
+            }
             UNLOCK(keydir);
             return ATOM_OK;
         }
@@ -935,11 +1456,11 @@ ERL_NIF_TERM bitcask_nifs_keydir_copy(ErlNifEnv* env, int argc, const ERL_NIF_TE
 // and that the current view is not too old.
 // Call with ts set to zero to force a wait on any pending keydir.
 // Set maxage or maxputs negative to ignore them.  Set both negative to force
-// using the keydir - useful when a process has waited once and needs to run 
+// using the keydir - useful when a process has waited once and needs to run
 // next time.
 static int can_itr_keydir(bitcask_keydir* keydir, uint64_t ts, int maxage, int maxputs)
 {
-    if (keydir->pending == NULL ||   // not frozen or caller wants to reuse 
+    if (keydir->pending == NULL ||   // not frozen or caller wants to reuse
         (maxage < 0 && maxputs < 0)) // the exiting freeze
     {
         return 1;
@@ -951,7 +1472,7 @@ static int can_itr_keydir(bitcask_keydir* keydir, uint64_t ts, int maxage, int m
     else
     {
         uint64_t age = ts - keydir->pending_start;
-        return ((maxage < 0 || age <= maxage) && 
+        return ((maxage < 0 || age <= maxage) &&
                 (maxputs < 0 || keydir->pending_updated <= maxputs));
     }
 }
@@ -962,7 +1483,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr(ErlNifEnv* env, int argc, const ERL_NIF_TER
 
     if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle))
     {
-        uint64_t ts;
+        uint32_t ts;
         int maxage;
         int maxputs;
 
@@ -977,7 +1498,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr(ErlNifEnv* env, int argc, const ERL_NIF_TER
             return enif_make_tuple2(env, ATOM_ERROR, ATOM_ITERATION_IN_PROCESS);
         }
 
-        if (!(enif_get_uint64_bin(env, argv[1], (uint64_t*)&ts) &&
+        if (!(enif_get_uint(env, argv[1], &ts) &&
               enif_get_int(env, argv[2], (int*)&maxage) &&
               enif_get_int(env, argv[3], (int*)&maxputs)))
         {
@@ -987,12 +1508,9 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr(ErlNifEnv* env, int argc, const ERL_NIF_TER
 
         if (can_itr_keydir(keydir, ts, maxage, maxputs))
         {
-            if (keydir->pending == NULL)
-            {
-                keydir->pending = kh_init(entries);
-                keydir->pending_start = ts;
-            }
             handle->iterating = 1;
+            handle->timestamp = ts;
+            keydir->newest_folder = ts;
             keydir->keyfolders++;
             handle->iterator = kh_begin(keydir->entries);
             UNLOCK(handle->keydir);
@@ -1003,7 +1521,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr(ErlNifEnv* env, int argc, const ERL_NIF_TER
             // Grow the pending_awaken array if necessary
             if (keydir->pending_awaken_count == keydir->pending_awaken_size)
             {   // Grow 16-at-a-time, expect a single alloc
-                keydir->pending_awaken_size += 16;  
+                keydir->pending_awaken_size += 16;
                 size_t size = keydir->pending_awaken_size * sizeof(keydir->pending_awaken[0]);
                 if (keydir->pending_awaken == NULL)
                 {
@@ -1033,11 +1551,20 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
     if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle))
     {
         bitcask_keydir* keydir = handle->keydir;
+        int locked = 0;
 
         if (handle->iterating != 1)
         {
             // Iteration not started!
             return enif_make_tuple2(env, ATOM_ERROR, ATOM_ITERATION_NOT_STARTED);
+        }
+
+        if (keydir->pending != NULL)
+        {
+            //no need to grab the lock if the keydir has frozen
+            //need to complete as quickly as possible.
+            LOCK(keydir);
+            locked = 1;
         }
 
         while (handle->iterator != kh_end(keydir->entries))
@@ -1046,10 +1573,26 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
             {
                 bitcask_keydir_entry* entry = kh_key(keydir->entries, handle->iterator);
                 ErlNifBinary key;
+                int is_synthetic = 0;
+
+                if (IS_ENTRY_LIST(entry)) {
+                    is_synthetic = 1;
+                    entry = new_kd_entry_at_time(GET_ENTRY_LIST_POINTER(entry),
+                                                 handle->timestamp);
+                    if (entry == NULL)
+                    {
+                        (handle->iterator)++;
+                        continue;
+                    }
+                }
 
                 // Alloc the binary and make sure it succeeded
                 if (!enif_alloc_binary_compat(env, entry->key_sz, &key))
                 {
+                    if (locked)
+                    {
+                        UNLOCK(keydir);
+                    }
                     return ATOM_ALLOCATION_ERROR;
                 }
 
@@ -1064,9 +1607,17 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
                                                      enif_make_uint(env, entry->total_sz),
                                                      enif_make_uint64_bin(env, entry->offset),
                                                      enif_make_uint(env, entry->tstamp));
+                if (is_synthetic)
+                {
+                    free(entry);
+                }
 
                 // Update the iterator to the next entry
                 (handle->iterator)++;
+                if (locked)
+                {
+                    UNLOCK(keydir);
+                }
                 return curr;
             }
             else
@@ -1076,6 +1627,10 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
             }
         }
 
+        if (locked)
+        {
+            UNLOCK(keydir);
+        }
         // The iterator is at the end of the table
         return ATOM_NOT_FOUND;
     }
@@ -1101,7 +1656,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_release(ErlNifEnv* env, int argc, const ERL
 
         handle->iterating = 0;
         handle->keydir->keyfolders--;
-        if (handle->keydir->keyfolders == 0)
+
+        if (handle->keydir->keyfolders == 0 && handle->keydir->pending != NULL)
         {
             merge_pending_entries(env, handle->keydir);
             handle->keydir->iter_generation++;
@@ -1156,12 +1712,13 @@ ERL_NIF_TERM bitcask_nifs_keydir_info(ErlNifEnv* env, int argc, const ERL_NIF_TE
 
         ERL_NIF_TERM iter_info =
             enif_make_tuple3(env,
-                             enif_make_uint64_bin(env, keydir->iter_generation),
+                             enif_make_uint64(env, keydir->iter_generation),
                              enif_make_ulong(env, keydir->keyfolders),
                              keydir->pending == NULL ? ATOM_FALSE : ATOM_TRUE);
+
         ERL_NIF_TERM result = enif_make_tuple4(env,
-                                               enif_make_ulong(env, keydir->key_count),
-                                               enif_make_ulong(env, keydir->key_bytes),
+                                               enif_make_uint(env, keydir->key_count),
+                                               enif_make_uint(env, keydir->key_bytes),
                                                fstats_list,
                                                iter_info);
         UNLOCK(keydir);
@@ -1700,7 +2257,7 @@ static void merge_pending_entries(ErlNifEnv* env, bitcask_keydir* keydir)
             bitcask_keydir_entry* pending_entry = kh_key(keydir->pending, pend_itr);
             khiter_t ent_itr = kh_get(entries, keydir->entries, pending_entry);
 
-            DEBUG("Pending Entry: key=%s key_sz=%d file_id=%d tstamp=%u offset=%u size=%d\r\n", 
+            DEBUG("Pending Entry: key=%s key_sz=%d file_id=%d tstamp=%u offset=%u size=%d\r\n",
                     pending_entry->key, pending_entry->key_sz,
                     pending_entry->file_id,
                     (unsigned int) pending_entry->tstamp,
@@ -1737,13 +2294,22 @@ static void merge_pending_entries(ErlNifEnv* env, bitcask_keydir* keydir)
                 /* entries: present, pending:tombstone */
                 if (is_pending_tombstone(pending_entry))
                 {
-                    remove_entry(env, keydir, ent_itr, entries_entry);
-                    free(entries_entry);
+                    if (IS_ENTRY_LIST(entries_entry))
+                    {
+                        remove_entry(keydir, ent_itr, 0xffffffff,
+                                     NULL, entries_entry);
+                    }
+                    else
+                    {
+
+                        remove_entry(keydir, ent_itr, 0xffffffff,
+                                     entries_entry, NULL);
+                    }
                 }
                 /* entries: present, pending:value */
                 else
                 {
-                    update_entry(env, keydir, entries_entry, pending_entry);
+                    update_entry(keydir, entries_entry, pending_entry, FALSE);
                 }
                 free(pending_entry);
             }
@@ -1801,7 +2367,14 @@ static void free_keydir(bitcask_keydir* keydir)
         if (kh_exist(keydir->entries, itr))
         {
             current_entry = kh_key(keydir->entries, itr);
-            free(current_entry);
+            if (IS_ENTRY_LIST(current_entry))
+            {
+                free_entry_list(current_entry);
+            }
+            else
+            {
+                free(current_entry);
+            }
         }
     }
 
@@ -1846,6 +2419,8 @@ static void bitcask_nifs_keydir_resource_cleanup(ErlNifEnv* env, void* arg)
     {
         bitcask_priv_data* priv = (bitcask_priv_data*)enif_priv_data(env);
         enif_mutex_lock(priv->global_keydirs_lock);
+
+        enif_mutex_lock(keydir->mutex);
         keydir->refcount--;
         if (keydir->refcount == 0)
         {
@@ -1853,9 +2428,11 @@ static void bitcask_nifs_keydir_resource_cleanup(ErlNifEnv* env, void* arg)
             // remove it from the hashtable so no one else tries to use it
             khiter_t itr = kh_get(global_keydirs, priv->global_keydirs, keydir->name);
             kh_del(global_keydirs, priv->global_keydirs, itr);
+            enif_mutex_unlock(keydir->mutex);
         }
         else
         {
+            enif_mutex_unlock(keydir->mutex);
             // At least one other reference; just throw away our keydir pointer
             // so the check below doesn't release the memory.
             keydir = 0;
@@ -1867,7 +2444,7 @@ static void bitcask_nifs_keydir_resource_cleanup(ErlNifEnv* env, void* arg)
         enif_mutex_unlock(priv->global_keydirs_lock);
     }
 
-    // If keydir is still defined, it's either privately owner or has a
+    // If keydir is still defined, it's either privately owned or has a
     // refcount of 0. Either way, we want to release it.
     if (keydir)
     {
@@ -1969,12 +2546,10 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
     ATOM_O_SYNC = enif_make_atom(env, "o_sync");
 
 #ifdef PULSE
-	pulse_c_send_on_load(env);
+    pulse_c_send_on_load(env);
 #endif
 
     return 0;
 }
 
 ERL_NIF_INIT(bitcask_nifs, nif_funcs, &on_load, NULL, NULL, NULL);
-
-
