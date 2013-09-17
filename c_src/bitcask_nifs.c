@@ -990,6 +990,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
         LOCK(keydir);
         entry.key = (char*)key.data;
         entry.key_sz = key.size;
+        entry.entry = NULL;
 
         // First, check if this put will resize the keydir
         // if yes:
@@ -1031,7 +1032,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
         }
 
         bitcask_keydir_entry_proxy old_proxy;
-        if (found && !proxy_kd_entry(old_entry, &old_proxy))
+        int old_proxy_set = found && proxy_kd_entry(old_entry, &old_proxy);
+        if (found && !old_proxy_set)
         {
             found = 0;
         }
@@ -1054,7 +1056,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
                 // Add entry to the pending hash if frozen, otherwise
                 // add it to the main keydir
                 hash = keydir->pending == NULL ? keydir->entries : keydir->pending;
-                if (hash == keydir->entries && old_entry != NULL)
+                if (hash == keydir->entries && old_proxy_set)
                 {
                     update_entry(keydir, old_entry, &entry, 0);
                 }
