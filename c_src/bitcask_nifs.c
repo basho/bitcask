@@ -114,8 +114,8 @@ typedef struct
 #define GET_ENTRY_LIST_POINTER(p) ((bitcask_keydir_entry_head*)((uint64_t)p&(uint64_t)~1))
 #define MAKE_ENTRY_LIST_POINTER(p) ((bitcask_keydir_entry*)((uint64_t)p|(uint64_t)1))
 
-#define MAX_TIME (uint32_t)-1
-#define MAX_OFFSET (uint64_t)-1
+#define MAX_TIME ((uint32_t)-1)
+#define MAX_OFFSET ((uint64_t)-1)
 
 KHASH_MAP_INIT_INT(fstats, bitcask_fstats_entry*);
 
@@ -127,8 +127,8 @@ typedef struct
     entries_hash_t* entries;
     entries_hash_t* pending;  // pending keydir entries during keydir folding
     fstats_hash_t*  fstats;
-    uint32_t      key_count;
-    uint32_t      key_bytes;
+    uint64_t      key_count;
+    uint64_t      key_bytes;
     uint32_t      biggest_file_id;
     unsigned int  refcount;
     unsigned int  keyfolders;
@@ -923,6 +923,7 @@ static void remove_entry(bitcask_keydir* keydir, khiter_t itr,
             bitcask_keydir_entry* new_entry_list;
             new_entry_list = new_kd_entry_list(entry, &tombstone);
             kh_key(keydir->entries, itr) = new_entry_list;
+            free(entry);
         }
         else
         {
@@ -1724,8 +1725,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_info(ErlNifEnv* env, int argc, const ERL_NIF_TE
                              keydir->pending == NULL ? ATOM_FALSE : ATOM_TRUE);
 
         ERL_NIF_TERM result = enif_make_tuple4(env,
-                                               enif_make_uint(env, keydir->key_count),
-                                               enif_make_uint(env, keydir->key_bytes),
+                                               enif_make_uint64(env, keydir->key_count),
+                                               enif_make_uint64(env, keydir->key_bytes),
                                                fstats_list,
                                                iter_info);
         UNLOCK(keydir);
@@ -2399,6 +2400,7 @@ static void free_keydir(bitcask_keydir* keydir)
     }
 
     kh_destroy(fstats, keydir->fstats);
+    free(keydir);
 }
 
 
