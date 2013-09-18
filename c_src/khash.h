@@ -177,6 +177,20 @@ static const double __ac_HASH_UPPER = 0.77;
 			return __ac_iseither(h->flags, i)? h->n_buckets : i;		\
 		} else return 0;												\
 	}																	\
+	static inline khint_t kh_get_custom_##name(const kh_##name##_t *h, void* key, khint_t (*hash_func)(void*), khint_t (*eq_func)(khkey_t, void*)) \
+	{																	\
+		if (h->n_buckets) {												\
+			khint_t inc, k, i, last;									\
+			k = hash_func(key); i = k % h->n_buckets;					\
+			inc = 1 + k % (h->n_buckets - 1); last = i;					\
+			while (!__ac_isempty(h->flags, i) && (__ac_isdel(h->flags, i) || !eq_func(h->keys[i], key))) { \
+				if (i + inc >= h->n_buckets) i = i + inc - h->n_buckets; \
+				else i += inc;											\
+				if (i == last) return h->n_buckets;						\
+			}															\
+			return __ac_iseither(h->flags, i)? h->n_buckets : i;		\
+		} else return 0;												\
+	}																	\
 	static inline void kh_resize_##name(kh_##name##_t *h, khint_t new_n_buckets) \
 	{																	\
 		khint32_t *new_flags = 0;										\
@@ -395,6 +409,17 @@ static inline khint_t __ac_X31_hash_string(const char *s)
   @return       Iterator to the found element, or kh_end(h) is the element is absent [khint_t]
  */
 #define kh_get(name, h, k) kh_get_##name(h, k)
+
+/*! @function
+  @abstract     Retrieve a key from the hash table using custom hash and equals functions.
+  @param  name  Name of the hash table [symbol]
+  @param  h     Pointer to the hash table [khash_t(name)*]
+  @param  k     Key
+  @param  hf    Hash function
+  @param  ef    Equals (key, custom key) function
+  @return       Iterator to the found element, or kh_end(h) is the element is absent [khint_t]
+ */
+#define kh_get_custom(name, h, k, hf, ef) kh_get_custom_##name(h, k, hf, ef)
 
 /*! @function
   @abstract     Remove a key from the hash table.
