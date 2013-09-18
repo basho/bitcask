@@ -579,9 +579,14 @@ static inline int is_sib_tombstone(bitcask_keydir_entry_sib *s)
     return 0;
 }
 
-static inline int is_tombstone(bitcask_keydir_entry_head *h)
+static inline int is_tombstone(bitcask_keydir_entry *e)
 {
-    return is_sib_tombstone(h->sibs);
+    if (!IS_ENTRY_LIST(e))
+    {
+        return 0;
+    }
+
+    return is_sib_tombstone(GET_ENTRY_LIST_POINTER(e)->sibs);
 }
 
 
@@ -684,8 +689,7 @@ static void find_keydir_entry(bitcask_keydir* keydir, ErlNifBinary* key,
         ret->hash = keydir->entries;
         if (proxy_kd_entry_at_time(ret->entries_entry, tstamp, &ret->proxy))
         {
-            ret->is_tombstone =
-                is_tombstone(GET_ENTRY_LIST_POINTER(ret->entries_entry));
+            ret->is_tombstone = is_tombstone(ret->entries_entry);
             return;
         }
     }
