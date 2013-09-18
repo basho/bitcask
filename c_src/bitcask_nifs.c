@@ -1066,7 +1066,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
             keydir->pending_start = time(NULL);
         }
 
-        if (!f.found)
+        if (!f.found || f.is_tombstone)
         {
             keydir->key_count++;
             keydir->key_bytes += key.size;
@@ -1226,7 +1226,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
         find_result fr;
         find_keydir_entry(keydir, &key, remove_time, 0, &fr);
 
-        if (fr.found)
+        if (fr.found && !fr.is_tombstone)
         {
             // If a conditional remove, bail if not a match.
             int cond_no_match = is_conditional &&
