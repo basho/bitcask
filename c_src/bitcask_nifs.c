@@ -581,12 +581,8 @@ static inline int is_sib_tombstone(bitcask_keydir_entry_sib *s)
 
 static inline int is_tombstone(bitcask_keydir_entry *e)
 {
-    if (!IS_ENTRY_LIST(e))
-    {
-        return 0;
-    }
-
-    return is_sib_tombstone(GET_ENTRY_LIST_POINTER(e)->sibs);
+    return IS_ENTRY_LIST(e) &&
+        is_sib_tombstone(GET_ENTRY_LIST_POINTER(e)->sibs);
 }
 
 
@@ -1173,7 +1169,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_get_int(ErlNifEnv* env, int argc, const ERL_NIF
         find_result f;
         find_keydir_entry(keydir, &key, time, handle->iterating, &f);
 
-        if (f.found)
+        if (f.found && !f.is_tombstone)
         {
             ERL_NIF_TERM result;
             result = enif_make_tuple6(env,
@@ -1181,8 +1177,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_get_int(ErlNifEnv* env, int argc, const ERL_NIF
                                       argv[1], /* Key */
                                       enif_make_uint(env, f.proxy.file_id),
                                       enif_make_uint(env, f.proxy.total_sz),
-                                      enif_make_uint64_bin(env,
-                                                           f.proxy.offset),
+                                      enif_make_uint64_bin(env, f.proxy.offset),
                                       enif_make_uint(env, f.proxy.tstamp));
             DEBUG(" ... returned value\r\n");
             UNLOCK(keydir);
