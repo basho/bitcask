@@ -100,7 +100,6 @@ typedef struct
     uint32_t tstamp;
     uint16_t key_sz;
     char *   key;
-    bitcask_keydir_entry * entry;
 } bitcask_keydir_entry_proxy;
 
 struct bitcask_keydir_entry_sib
@@ -597,7 +596,6 @@ static int proxy_kd_entry_at_time(bitcask_keydir_entry* old,
         ret->tstamp = old->tstamp;
         ret->key_sz = old->key_sz;
         ret->key = old->key;
-        ret->entry = old;
 
         return 1;
     }
@@ -631,7 +629,6 @@ static int proxy_kd_entry_at_time(bitcask_keydir_entry* old,
 
     ret->key_sz = head->key_sz;
     ret->key = head->key;
-    ret->entry = (bitcask_keydir_entry*)old;
 
     return 1;
 }
@@ -1042,7 +1039,6 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
         bitcask_keydir* keydir = handle->keydir;
         entry.key = (char*)key.data;
         entry.key_sz = key.size;
-        entry.entry = NULL;
 
         LOCK(keydir);
 
