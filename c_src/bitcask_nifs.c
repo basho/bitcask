@@ -271,8 +271,6 @@ static void lock_release(bitcask_lock_handle* handle);
 static void bitcask_nifs_keydir_resource_cleanup(ErlNifEnv* env, void* arg);
 static void bitcask_nifs_file_resource_cleanup(ErlNifEnv* env, void* arg);
 
-void print_entry_list(bitcask_keydir_entry *e);
-
 static ErlNifFunc nif_funcs[] =
 {
 #ifdef PULSE
@@ -760,6 +758,7 @@ static bitcask_keydir_entry* new_kd_entry_list(bitcask_keydir_entry *old,
     return MAKE_ENTRY_LIST_POINTER(ret);
 }
 
+#ifdef BITCASK_DEBUG
 void print_entry_list(bitcask_keydir_entry *e)
 {
     bitcask_keydir_entry_head* h = GET_ENTRY_LIST_POINTER(e);
@@ -777,7 +776,7 @@ void print_entry_list(bitcask_keydir_entry *e)
         *s = h->sibs;
     while (s != NULL) {
         fprintf(stderr, "sib %d \n\t%u\t\t%u\n\t%llu\t\t%u\n\n",
-                sib_count, s->file_id, s->total_sz, s->offset, s->tstamp);
+                sib_count, s->file_id, s->total_sz, (unsigned long long)s->offset, s->tstamp);
         sib_count++;
         s = s->next;
         if( s == NULL )
@@ -797,7 +796,7 @@ void print_entry(bitcask_keydir_entry *e)
             e, (unsigned)e->key[0], e->key_sz);
 
     fprintf(stderr, "\n\t%u\t\t%u\n\t%llu\t\t%u\n\n",
-            e->file_id, e->total_sz, e->offset, e->tstamp);
+            e->file_id, e->total_sz, (unsigned long long)e->offset, e->tstamp);
 }
 
 void print_keydir(bitcask_keydir* keydir)
@@ -840,6 +839,7 @@ void print_keydir(bitcask_keydir* keydir)
         }
     }
 }
+#endif
 
 static void free_entry_list(bitcask_keydir_entry* e)
 {
@@ -2385,7 +2385,7 @@ static void bitcask_nifs_file_resource_cleanup(ErlNifEnv* env, void* arg)
 
 
 #ifdef BITCASK_DEBUG
-static void dump_fstats(bitcask_keydir* keydir)
+void dump_fstats(bitcask_keydir* keydir)
 {
     bitcask_fstats_entry* curr_f;
     khiter_t itr;
