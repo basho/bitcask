@@ -689,6 +689,7 @@ static void find_keydir_entry(bitcask_keydir* keydir, ErlNifBinary* key,
         ret->is_tombstone = is_tombstone(ret->entries_entry);
         ret->no_snapshot = !proxy_kd_entry_at_time(ret->entries_entry, tstamp,
                 &ret->proxy);
+        ret->found = 1;
         return;
     }
 
