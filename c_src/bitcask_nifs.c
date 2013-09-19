@@ -97,16 +97,6 @@ typedef struct
     uint32_t newest_tstamp; // newest observed tstamp in a file
 } bitcask_fstats_entry;
 
-typedef struct
-{
-    uint32_t file_id;
-    uint32_t total_sz;
-    uint64_t offset;
-    uint32_t tstamp;
-    uint16_t key_sz;
-    char *   key;
-} bitcask_keydir_entry_proxy;
-
 struct bitcask_keydir_entry_sib
 {
     uint32_t file_id;
@@ -124,9 +114,23 @@ typedef struct
     char     key[0];
 } bitcask_keydir_entry_head;
 
+// An entry pointer may be tagged to indicate it really points to an
+// list of entries with different timestamps. Those are created when
+// there are concurrent iterations and updates.
 #define IS_ENTRY_LIST(p) ((uint64_t)p&1)
 #define GET_ENTRY_LIST_POINTER(p) ((bitcask_keydir_entry_head*)((uint64_t)p&(uint64_t)~1))
 #define MAKE_ENTRY_LIST_POINTER(p) ((bitcask_keydir_entry*)((uint64_t)p|(uint64_t)1))
+
+// Holds values fetched from a regular entry or a snapshot from an entry list.
+typedef struct
+{
+    uint32_t file_id;
+    uint32_t total_sz;
+    uint64_t offset;
+    uint32_t tstamp;
+    uint16_t key_sz;
+    char *   key;
+} bitcask_keydir_entry_proxy;
 
 #define MAX_TIME ((uint32_t)-1)
 #define MAX_SIZE ((uint32_t)-1)
@@ -140,15 +144,20 @@ typedef khash_t(fstats) fstats_hash_t;
 
 typedef struct
 {
+    // The hash where entries are usually stored. It may contain
+    // regular entries or entry lists created during keyfolding.
     entries_hash_t* entries;
-    entries_hash_t* pending;  // pending keydir entries during keydir folding
+    // Hash used when it's not possible to update entries without
+    // resizing it, which would break ongoing keyfolder on it.
+    // It can only contain regular entries, not entry lists.
+    entries_hash_t* pending;
     fstats_hash_t*  fstats;
     uint64_t      key_count;
     uint64_t      key_bytes;
     uint32_t      biggest_file_id;
     unsigned int  refcount;
     unsigned int  keyfolders;
-    uint32_t      newest_folder;
+    uint32_t      newest_folder;  // Start time for the last keyfolder
     uint64_t      iter_generation;
     uint64_t      pending_updated;
     uint64_t      pending_start; // os:timestamp() as 64-bit integer
@@ -197,7 +206,8 @@ typedef struct
 #define LOCK(keydir)      { if (keydir->mutex) enif_mutex_lock(keydir->mutex); }
 #define UNLOCK(keydir)    { if (keydir->mutex) enif_mutex_unlock(keydir->mutex); }
 
-// Pending tombstones
+// Related to tombstones in the pending hash.
+// Notice that tombstones in the entries hash are different.
 #define is_pending_tombstone(e) ((e)->tstamp == 0 &&   \
                                  (e)->offset == 0)
 #define set_pending_tombstone(e) {(e)->tstamp = 0; \
@@ -512,12 +522,16 @@ static khint_t keydir_entry_equal(bitcask_keydir_entry* lhs,
     }
 }
 
+// Custom hash function to be able to look up entries using a
+// ErlNifBinary without allocating a new entry just for that.
 static khint_t nif_binary_hash(void* void_bin)
 {
     ErlNifBinary * bin =(ErlNifBinary*)void_bin;
     return MURMUR_HASH(bin->data, bin->size, 42);
 }
 
+// Custom equals function to be able to look up entries using a
+// ErlNifBinary without allocating a new entry just for that.
 static khint_t nif_binary_entry_equal(bitcask_keydir_entry* lhs,
         void * void_rhs)
 {
@@ -583,13 +597,17 @@ static inline int is_sib_tombstone(bitcask_keydir_entry_sib *s)
     return 0;
 }
 
+// True if the entry is a tombstone in the entries hash.
+// Notice that tombstones in the pending hash are different.
+// Use is_pending_tombstone() on those.
 static inline int is_tombstone(bitcask_keydir_entry *e)
 {
     return IS_ENTRY_LIST(e) &&
         is_sib_tombstone(GET_ENTRY_LIST_POINTER(e)->sibs);
 }
 
-
+// Extracts the entry values from a regular entry or from the 
+// closest snapshot in time in an entry list.
 static int proxy_kd_entry_at_time(bitcask_keydir_entry* old,
         uint32_t time, bitcask_keydir_entry_proxy * ret)
 {
@@ -635,19 +653,23 @@ static int proxy_kd_entry_at_time(bitcask_keydir_entry* old,
     return 1;
 }
 
+// Extracts entry values from a regular entry or the latest snapshot
+// from an entry list.
 static inline int proxy_kd_entry(bitcask_keydir_entry* old,
         bitcask_keydir_entry_proxy * proxy)
 {
     return proxy_kd_entry_at_time(old, MAX_TIME, proxy);
 }
 
+// All info about a lookup with find_keydir_entry.
 typedef struct
 {
     // Entry found in the pending hash. If set, entries_entry will be NULL.
     bitcask_keydir_entry * pending_entry;
     // Entry found in the entries hash. If set, pending_entry is NULL
     bitcask_keydir_entry * entries_entry;
-    // Copy of the value of a regular or list entry for quick access
+    // Copy of the values of the found entry, if any, whether it's
+    // a regular entry or list.
     bitcask_keydir_entry_proxy proxy;
     // Hash (entries or pending) where the entry was found.
     entries_hash_t * hash;
@@ -659,8 +681,8 @@ typedef struct
     char no_snapshot;
 } find_result;
 
-// Find an entry in the pending or entries keydir and update the hash/itr/entry pointers
-// if non-NULL.  If iterating is true, restrict search to the frozen keydir.
+// Find an entry in the pending hash when they keydir is frozen, or in the
+// entries hash otherwise.
 static void find_keydir_entry(bitcask_keydir* keydir, ErlNifBinary* key,
         uint32_t tstamp, int iterating, find_result * ret)
 {
@@ -698,6 +720,7 @@ static void find_keydir_entry(bitcask_keydir* keydir, ErlNifBinary* key,
     ret->found = ret->is_tombstone = 0;
     return;
 }
+
 static void update_kd_entry_list(bitcask_keydir_entry *old,
                                  bitcask_keydir_entry_proxy *new,
                                  uint32_t newest_folder) {
@@ -900,7 +923,10 @@ static void update_regular_entry(bitcask_keydir_entry* cur_entry,
     cur_entry->tstamp = upd_entry->tstamp;
 }
 
-// Update the current entry (not from pending) with newer information
+// Updates an entry from the entries hash, not from pending.
+// Use update_regular_entry on pending hash entries instead.
+// While iterating, regular entries will become entry lists,
+// otherwise the result is a regular, single value entry.
 static void update_entry(bitcask_keydir* keydir,
                          bitcask_keydir_entry* cur_entry,
                          bitcask_keydir_entry_proxy* upd_entry)
@@ -952,6 +978,7 @@ static void update_entry(bitcask_keydir* keydir,
     }
 }
 
+// Remove entry from either hash and free its memory.
 static void remove_entry(bitcask_keydir* keydir, khiter_t itr)
 {
     bitcask_keydir_entry * entry = kh_key(keydir->entries, itr);
@@ -959,6 +986,9 @@ static void remove_entry(bitcask_keydir* keydir, khiter_t itr)
     free_entry(entry);
 }
 
+// Adds a tombstone to an existing entries hash entry. Regular entries are
+// converted to lists first. Only to be called during iterations.
+// Entries are simply removed when there are no iterations.
 static void set_entry_tombstone(bitcask_keydir* keydir, khiter_t itr,
                          uint32_t remove_time)
 {
@@ -985,6 +1015,8 @@ static void set_entry_tombstone(bitcask_keydir* keydir, khiter_t itr,
     }
 }
 
+// Adds or updates an entry in the pending hash if they keydir is frozen
+// or in the entries hash otherwise.
 static void put_entry(bitcask_keydir * keydir, find_result * r,
         bitcask_keydir_entry_proxy * entry)
 {
@@ -1004,7 +1036,7 @@ static void put_entry(bitcask_keydir * keydir, find_result * r,
     {
         update_entry(keydir, r->entries_entry, entry);
     }
-    // Not found and not iterating, add to entries
+    // Not found and not frozen, add to entries
     else
     {
         add_entry(keydir, keydir->entries, entry);
@@ -1046,9 +1078,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
               (int)entry.total_sz);
         DEBUG_KEYDIR(keydir);
 
-        // Check for put on a new key or updating a pending tombstone
         find_result f;
-        find_keydir_entry(keydir, &key, (uint32_t)-1, 0, &f);
+        find_keydir_entry(keydir, &key, MAX_TIME, 0, &f);
 
         // If conditional put and not found, bail early
         if (!f.found && old_file_id != 0)
@@ -1519,6 +1550,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
 
                 if (!proxy_kd_entry_at_time(entry, handle->timestamp, &proxy))
                 {
+                    // No value in the snapshot for the iteration time
                     (handle->iterator)++;
                     continue;
                 }
@@ -1583,6 +1615,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_release(ErlNifEnv* env, int argc, const ERL
         handle->iterating = 0;
         handle->keydir->keyfolders--;
 
+        // If last iterator closing, unfreeze keydir and merge pending entries.
         if (handle->keydir->keyfolders == 0 && handle->keydir->pending != NULL)
         {
             merge_pending_entries(env, handle->keydir);
