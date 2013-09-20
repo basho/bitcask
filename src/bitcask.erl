@@ -83,6 +83,7 @@
                   del_keydir,
                   expiry_time,
                   expiry_grace_time,
+                  key_transform :: function(),
                   opts }).
 
 %% A bitcask is a directory containing:
@@ -124,11 +125,11 @@ open(Dirname, Opts) ->
     WaitTime = timer:seconds(get_opt(open_timeout, Opts)),
 
     %% Set the key transform for this cask
-    KeyTransformFun = get_opt(key_transform, Opts),
-    erlang:put(key_transform, KeyTransformFun),
+    KeyTransformFun = get_key_transform(get_opt(key_transform, Opts)),
 
     %% Loop and wait for the keydir to come available.
-    case init_keydir(Dirname, WaitTime, WritingFile /= undefined) of
+    case init_keydir(Dirname, WaitTime, WritingFile /= undefined, 
+                     KeyTransformFun) of
         {ok, KeyDir, ReadFiles} ->
             %% Ensure that expiry_secs is in Opts and not just application env
             ExpOpts = [{expiry_secs,get_opt(expiry_secs,Opts)}|Opts],
@@ -340,11 +341,7 @@ fold(Ref, Fun, Acc0, MaxAge, MaxPut) when is_reference(Ref)->
     State = get_state(Ref),
     fold(State, Fun, Acc0, MaxAge, MaxPut);
 fold(State, Fun, Acc0, MaxAge, MaxPut) ->
-    KT = case erlang:get(key_transform) of
-             KeyTrans when is_function(KeyTrans) ->
-                 KeyTrans;
-             _ -> fun kt_id/1
-         end,
+    KT = State#bc_state.key_transform,
     FrozenFun = 
         fun() ->
                 case open_fold_files(State#bc_state.dirname, 3) of
@@ -500,6 +497,8 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
     Partial = not(lists:usort(readable_files(Dirname)) == 
                   lists:usort(FilesToMerge)),
     
+    KT = get_key_transform(get_opt(key_transform, Opts)),
+
     %% Try to lock for merging
     case bitcask_lockops:acquire(merge, Dirname) of
         {ok, Lock} ->
@@ -533,7 +532,7 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
             %% reader/writer comes along in the same VM. Note that we
             %% won't necessarily merge all these files.
             AllFiles = scan_key_files(readable_files(Dirname), LiveKeyDir, [],
-                                      false, true),
+                                      false, true, KT),
 
             %% Partition all files to files we'll merge and files we
             %% won't (so that we can close those extra files once
@@ -602,10 +601,11 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
                       del_keydir = DelKeyDir,
                       expiry_time = expiry_time(Opts),
                       expiry_grace_time = expiry_grace_time(Opts),
+                      key_transform = KT,
                       opts = Opts },
 
     %% Finally, start the merge process
-    ExpiredFilesFinished = expiry_merge(InExpiredFiles, LiveKeyDir, []),
+    ExpiredFilesFinished = expiry_merge(InExpiredFiles, LiveKeyDir, KT, []),
     State1 = merge_files(State),
 
     %% Make sure to close the final output file
@@ -890,16 +890,11 @@ reverse_sort(L) ->
 kt_id(Key) ->
     Key.
 
-scan_key_files([], _KeyDir, Acc, _CloseFile, _EnoentOK) ->
+scan_key_files([], _KeyDir, Acc, _CloseFile, _EnoentOK, _KT) ->
     Acc;
 scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile, 
-               EnoentOK) ->
+               EnoentOK, KT) ->
     %% Restrictive pattern matching below is intentional
-    KT = case erlang:get(key_transform) of
-             KeyTrans when is_function(KeyTrans) ->
-                 KeyTrans;
-             _ -> fun kt_id/1
-         end,
     case bitcask_fileops:open_file(Filename) of
         {ok, File} ->
             FileTstamp = bitcask_fileops:file_tstamp(File),
@@ -918,15 +913,16 @@ scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile,
                true ->
                     ok
             end,
-            scan_key_files(Rest, KeyDir, [File | Acc], CloseFile, EnoentOK);
+            scan_key_files(Rest, KeyDir, [File | Acc], CloseFile, 
+                           EnoentOK, KT);
         {error, enoent} when EnoentOK ->
-            scan_key_files(Rest, KeyDir, Acc, CloseFile, EnoentOK)
+            scan_key_files(Rest, KeyDir, Acc, CloseFile, EnoentOK, KT)
     end.
 
 %%
 %% Initialize a keydir for a given directory.
 %%
-init_keydir(Dirname, WaitTime, ReadWriteModeP) ->
+init_keydir(Dirname, WaitTime, ReadWriteModeP, KT) ->
     %% Get the named keydir for this directory. If we get it and it's already
     %% marked as ready, that indicates another caller has already loaded
     %% all the data from disk and we can short-circuit scanning all the files.
@@ -959,7 +955,7 @@ init_keydir(Dirname, WaitTime, ReadWriteModeP) ->
                    true ->
                         ok
                 end,
-                init_keydir_scan_key_files(Dirname, KeyDir)
+                init_keydir_scan_key_files(Dirname, KeyDir, KT)
             after
                 ok = bitcask_lockops:release(Lock)
             end,
@@ -975,25 +971,25 @@ init_keydir(Dirname, WaitTime, ReadWriteModeP) ->
                 Value when is_integer(Value), Value =< 0 -> %% avoids 'infinity'!
                     {error, timeout};
                 _ ->
-                    init_keydir(Dirname, WaitTime - 100, ReadWriteModeP)
+                    init_keydir(Dirname, WaitTime - 100, ReadWriteModeP, KT)
             end
     end.
 
-init_keydir_scan_key_files(Dirname, KeyDir) ->
-    init_keydir_scan_key_files(Dirname, KeyDir, ?DIABOLIC_BIG_INT).
+init_keydir_scan_key_files(Dirname, KeyDir, KT) ->
+    init_keydir_scan_key_files(Dirname, KeyDir, KT, ?DIABOLIC_BIG_INT).
 
-init_keydir_scan_key_files(_Dirname, _Keydir, 0) ->
+init_keydir_scan_key_files(_Dirname, _Keydir, _KT, 0) ->
     %% If someone launches enough parallel merge operations to
     %% interfere with our attempts to scan this keydir for this many
     %% times, then we are just plain unlucky.  Or QuickCheck smites us
     %% from lofty Mt. Stochastic.
     {error, {init_keydir_scan_key_files, too_many_iterations}};
-init_keydir_scan_key_files(Dirname, KeyDir, Count) ->
+init_keydir_scan_key_files(Dirname, KeyDir, KT, Count) ->
     try
         SortedFiles = readable_files(Dirname),
-        _ = scan_key_files(SortedFiles, KeyDir, [], true, false)
+        _ = scan_key_files(SortedFiles, KeyDir, [], true, false, KT)
     catch _:_ ->
-            init_keydir_scan_key_files(Dirname, KeyDir, Count - 1)
+            init_keydir_scan_key_files(Dirname, KeyDir, KT, Count - 1)
     end.
 
 get_filestate(FileId,
@@ -1031,12 +1027,9 @@ list_data_files(Dirname, WritingFile, MergingFile) ->
 merge_files(#mstate { input_files = [] } = State) ->
     State;
 merge_files(#mstate {  dirname = Dirname,
-                       input_files = [File | Rest]} = State) ->
-    KT = case erlang:get(key_transform) of
-             KeyTrans when is_function(KeyTrans) ->
-                 KeyTrans;
-             _ -> fun kt_id/1
-         end,
+                       input_files = [File | Rest],
+                       key_transform = KT
+                    } = State) ->
     FileId = bitcask_fileops:file_tstamp(File),
     F = fun(K, V, Tstamp, Pos, State0) ->
                 if Tstamp < State0#mstate.merge_start ->
@@ -1341,16 +1334,10 @@ poll_deferred_delete_queue_empty() ->
     end.
 
 %% Internal merge function for cache_merge functionality.
-expiry_merge([], _LiveKeyDir, Acc) ->
+expiry_merge([], _LiveKeyDir, _KT, Acc) ->
     Acc;
-
-expiry_merge([File | Files], LiveKeyDir, Acc0) ->
+expiry_merge([File | Files], LiveKeyDir, KT, Acc0) ->
     FileId = bitcask_fileops:file_tstamp(File),
-    KT = case erlang:get(key_transform) of
-             KeyTrans when is_function(KeyTrans) ->
-                 KeyTrans;
-             _ -> fun kt_id/1
-         end,
     Fun = fun(K, Tstamp, {Offset, _TotalSz}, Acc) ->
                 bitcask_nifs:keydir_remove(LiveKeyDir, KT(K), Tstamp, FileId, Offset),
                 Acc
@@ -1365,8 +1352,14 @@ expiry_merge([File | Files], LiveKeyDir, Acc0) ->
                                   "file for deletion\n", 
                                   [File#filestate.filename]),
             Acc = lists:append(Acc0, [File])
-     end,
-    expiry_merge(Files, LiveKeyDir, Acc).
+    end,
+    expiry_merge(Files, LiveKeyDir, KT, Acc).
+
+get_key_transform(KT) 
+  when is_function(KT) ->
+    KT;
+get_key_transform(_State) ->
+    fun kt_id/1.
 
 %% ===================================================================
 %% EUnit tests
