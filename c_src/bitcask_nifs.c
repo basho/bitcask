@@ -791,7 +791,7 @@ void print_entry_list(bitcask_keydir_entry *e)
     memcpy(&buf, h->key, h->key_sz);
     buf[h->key_sz] = '\0';
 
-    fprintf(stderr, "entry list %p key: %s keylen %d\n",
+    fprintf(stderr, "entry list %p key: %s keylen %d\r\n",
             h, buf, h->key_sz);
 
     int sib_count = 0;
@@ -799,7 +799,7 @@ void print_entry_list(bitcask_keydir_entry *e)
     bitcask_keydir_entry_sib
         *s = h->sibs;
     while (s != NULL) {
-        fprintf(stderr, "sib %d \n\t%u\t\t%u\n\t%llu\t\t%u\n\n",
+        fprintf(stderr, "sib %d \r\n\t%u\t\t%u\r\n\t%llu\t\t%u\r\n\r\n",
                 sib_count, s->file_id, s->total_sz, (unsigned long long)s->offset, s->tstamp);
         sib_count++;
         s = s->next;
@@ -816,10 +816,10 @@ void print_entry(bitcask_keydir_entry *e)
         return;
     }
 
-    fprintf(stderr, "entry %p key: %x keylen %d\n",
-            e, (unsigned)e->key[0], e->key_sz);
+    fprintf(stderr, "entry %p key: %d keylen %d\r\n",
+            e, (int)e->key[3], e->key_sz);
 
-    fprintf(stderr, "\n\t%u\t\t%u\n\t%llu\t\t%u\n\n",
+    fprintf(stderr, "\r\n\t%u\t\t%u\r\n\t%llu\t\t%u\r\n\r\n",
             e->file_id, e->total_sz, (unsigned long long)e->offset, e->tstamp);
 }
 
@@ -827,11 +827,11 @@ void print_keydir(bitcask_keydir* keydir)
 {
     khiter_t itr;
     bitcask_keydir_entry* current_entry;
-    fprintf(stderr, "printing keydir: %s size %d\n\n", keydir->name,
+    fprintf(stderr, "printing keydir: %s size %d\r\n\r\n", keydir->name,
             kh_size(keydir->entries));
     // should likely dump some useful stuff here, but don't need it
     // right now
-    fprintf(stderr, "entries:\n");
+    fprintf(stderr, "entries:\r\n");
     for (itr = kh_begin(keydir->entries);
          itr != kh_end(keydir->entries);
          ++itr)
@@ -843,10 +843,10 @@ void print_keydir(bitcask_keydir* keydir)
             print_entry(current_entry);
         }
     }
-    fprintf(stderr, "\npending:\n");
+    fprintf(stderr, "\r\npending:\r\n");
     if (keydir->pending == NULL)
     {
-        fprintf(stderr, "NULL\n");
+        fprintf(stderr, "NULL\r\n");
     }
     else
     {
@@ -1073,9 +1073,10 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
 
         LOCK(keydir);
 
-        DEBUG("+++ Put file_id=%d offset=%d total_sz=%d\r\n",
+        DEBUG("+++ Put key = %d file_id=%d offset=%d total_sz=%d tstamp=%u old_file_id=%d\r\n",
+               (int)(key.data[3]),
               (int) entry.file_id, (int) entry.offset,
-              (int)entry.total_sz);
+              (int)entry.total_sz, (unsigned) entry.tstamp, (int)old_file_id);
         DEBUG_KEYDIR(keydir);
 
         find_result f;
@@ -1108,7 +1109,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
 
             put_entry(keydir, &f, &entry);
 
-            DEBUG("Put new\n");
+            DEBUG("+++ Put new\r\n");
             DEBUG_KEYDIR(keydir);
 
             UNLOCK(keydir);
@@ -1120,7 +1121,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
             !(old_file_id == f.proxy.file_id &&
               old_offset == f.proxy.offset))
         {
-            DEBUG("Conditional not match\n");
+            DEBUG("++ Conditional not match\r\n");
             UNLOCK(keydir);
             return ATOM_ALREADY_EXISTS;
         }
@@ -1158,7 +1159,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
 
             put_entry(keydir, &f, &entry);
             UNLOCK(keydir);
-            DEBUG("Finished put\n");
+            DEBUG("Finished put\r\n");
             DEBUG_KEYDIR(keydir);
             return ATOM_OK;
         }
@@ -1171,7 +1172,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
                               0, 1, 0, entry.total_sz);
             }
             UNLOCK(keydir);
-            DEBUG("No update\n");
+            DEBUG("No update\r\n");
             return ATOM_ALREADY_EXISTS;
         }
     }
@@ -1201,7 +1202,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_get_int(ErlNifEnv* env, int argc, const ERL_NIF
         find_result f;
         find_keydir_entry(keydir, &key, time, handle->iterating, &f);
 
-        if (f.found && !f.is_tombstone)
+        if (f.found && !f.is_tombstone && !f.no_snapshot)
         {
             ERL_NIF_TERM result;
             result = enif_make_tuple6(env,
@@ -1211,7 +1212,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_get_int(ErlNifEnv* env, int argc, const ERL_NIF
                                       enif_make_uint(env, f.proxy.total_sz),
                                       enif_make_uint64_bin(env, f.proxy.offset),
                                       enif_make_uint(env, f.proxy.tstamp));
-            DEBUG(" ... returned value\r\n");
+            DEBUG(" ... returned value file id=%u size=%u ofs=%u tstamp=%u\r\n",
+                    f.proxy.file_id, f.proxy.total_sz, f.proxy.offset, f.proxy.tstamp);
             DEBUG_ENTRY(f.entries_entry ? f.entries_entry : f.pending_entry);
             UNLOCK(keydir);
             return result;
@@ -1258,7 +1260,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
         bitcask_keydir* keydir = handle->keydir;
         LOCK(keydir);
 
-        DEBUG("+++ Remove\r\n");
+        DEBUG("+++ Remove %s\r\n", is_conditional ? "conditional" : "");
         DEBUG_KEYDIR(keydir);
 
         find_result fr;
@@ -1273,7 +1275,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
                  fr.proxy.offset != offset))
             {
                 UNLOCK(keydir);
-                DEBUG("Conditional no match");
+                DEBUG("+++Conditional no match\r\n");
                 return ATOM_OK;
             }
 
@@ -1308,7 +1310,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
             {
                 set_entry_tombstone(keydir, fr.itr, remove_time);
             }
-            DEBUG("Removed\n");
+            DEBUG("Removed\r\n");
             DEBUG_KEYDIR(keydir);
 
             UNLOCK(keydir);
@@ -1528,12 +1530,12 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
 
     if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle))
     {
-        DEBUG("+++ itr next\n");
+        DEBUG("+++ itr next\r\n");
         bitcask_keydir* keydir = handle->keydir;
 
         if (handle->iterating != 1)
         {
-            DEBUG("Itr not started\n");
+            DEBUG("Itr not started\r\n");
             // Iteration not started!
             return enif_make_tuple2(env, ATOM_ERROR, ATOM_ITERATION_NOT_STARTED);
         }
@@ -1577,7 +1579,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
                 // Update the iterator to the next entry
                 (handle->iterator)++;
                 UNLOCK(keydir);
-                DEBUG("Found entry\n");
+                DEBUG("Found entry\r\n");
                 DEBUG_ENTRY(entry);
                 return curr;
             }
@@ -2208,7 +2210,7 @@ static void msg_pending_awaken(ErlNifEnv* env, bitcask_keydir* keydir,
 // start iterating once we are merged.  keydir must be locked before calling.
 static void merge_pending_entries(ErlNifEnv* env, bitcask_keydir* keydir)
 {
-    DEBUG("Merge pending entries. Keydir before merging\n");
+    DEBUG("Merge pending entries. Keydir before merging\r\n");
     DEBUG_KEYDIR(keydir);
 
     khiter_t pend_itr;
