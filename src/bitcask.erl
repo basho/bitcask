@@ -217,7 +217,8 @@ get(Ref, Key, TryNum) ->
                                 {ok, _Key, ?TOMBSTONE} ->
                                     not_found;
                                 {ok, _Key, Value} ->
-                                    {ok, Value};
+                                    Val = decompress(Value),
+                                    {ok, Val};
                                 {error, eof} ->
                                     not_found;
                                 {error, _} = Err ->
@@ -1222,9 +1223,11 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State, Retries, _LastErr)
     end,
 
     Tstamp = bitcask_time:tstamp(),
+
+    CValue = compress(Value, State#bc_state.opts),
     {ok, WriteFile2, Offset, Size} = bitcask_fileops:write(
                                        State2#bc_state.write_file,
-                                       Key, Value, Tstamp),
+                                       Key, CValue, Tstamp),
     case bitcask_nifs:keydir_put(State2#bc_state.keydir, Key,
                                  bitcask_fileops:file_tstamp(WriteFile2),
                                  Size, Offset, Tstamp, true) of
@@ -1332,6 +1335,36 @@ expiry_merge([File | Files], LiveKeyDir, Acc0) ->
             Acc = lists:append(Acc0, [File])
      end,
     expiry_merge(Files, LiveKeyDir, Acc).
+
+enable_compression(Opts) -> 
+    case get_opt(enable_compression, Opts) of
+        true ->
+            true;
+        _ ->
+            false
+    end.
+
+compress(Value, Opts) ->
+    case enable_compression(Opts) of
+        true ->
+            case snappy:compress(Value) of
+                {ok, Compressed} ->
+                    Compressed;
+                _ ->
+                    Value
+            end;
+        false ->
+            Value
+    end.
+
+decompress(Value) ->
+    case snappy:is_valid(Value) of
+        true ->
+            {ok, Val} = snappy:decompress(Value),
+            Val;
+        false ->
+            Value
+    end.
 
 %% ===================================================================
 %% EUnit tests
