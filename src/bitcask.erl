@@ -1344,12 +1344,29 @@ enable_compression(Opts) ->
             false
     end.
 
+compression_threshold(Opts) -> 
+    case get_opt(compression_threshold, Opts) of
+        T when is_float(T) ->
+            true;
+        _ ->
+            0.8
+    end.
+
+check_compression_threshold(Value, Compressed, Opts) ->
+    Threshold = compression_threshold(Opts),
+    case (byte_size(Compressed) / byte_size(Value)) of
+        Ratio when Ratio < Threshold ->
+            Compressed;
+        _ ->
+            Value
+    end.
+
 compress(Value, Opts) ->
     case enable_compression(Opts) of
         true ->
             case snappy:compress(Value) of
                 {ok, Compressed} ->
-                    Compressed;
+                    check_compression_threshold(Value, Compressed, Opts);
                 _ ->
                     Value
             end;
