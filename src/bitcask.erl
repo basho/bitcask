@@ -338,9 +338,9 @@ fold(Ref, Fun, Acc0, MaxAge, MaxPut) when is_reference(Ref)->
     State = get_state(Ref),
     fold(State, Fun, Acc0, MaxAge, MaxPut);
 fold(State, Fun, Acc0, MaxAge, MaxPut) ->
-    FoldTime = bitcask_time:tstamp(),
     FrozenFun = 
         fun() ->
+                FoldTime = bitcask_time:tstamp(),
                 case open_fold_files(State#bc_state.dirname, 3) of
                     {ok, Files} ->
                         ExpiryTime = expiry_time(State#bc_state.opts),
