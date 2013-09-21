@@ -238,6 +238,9 @@ get(Ref, Key, TryNum) ->
 %% @doc Store a key and value in a bitcase datastore.
 -spec put(reference(), Key::binary(), Value::binary()) -> ok.
 put(Ref, Key, Value) ->
+    put(Ref, Key, Value, key).
+
+put(Ref, Key, Value, ValueType) ->
     #bc_state { write_file = WriteFile } = State = get_state(Ref),
 
     %% Make sure we have a file open to write
@@ -249,14 +252,16 @@ put(Ref, Key, Value) ->
             ok
     end,
 
-    {Ret, State1} = do_put(Key, Value, State, ?DIABOLIC_BIG_INT, undefined),
+    {Ret, State1} = do_put(Key, Value, State, 
+                           ?DIABOLIC_BIG_INT, undefined,
+                           ValueType),
     put_state(Ref, State1),
     Ret.
 
 %% @doc Delete a key from a bitcask datastore.
 -spec delete(reference(), Key::binary()) -> ok.
 delete(Ref, Key) ->
-    put(Ref, Key, ?TOMBSTONE),
+    put(Ref, Key, ?TOMBSTONE, tombstone),
     ok = bitcask_nifs:keydir_remove((get_state(Ref))#bc_state.keydir, Key).
 
 %% @doc Force any writes to sync to disk.
@@ -344,6 +349,7 @@ fold(State, Fun, Acc0, MaxAge, MaxPut) ->
     KT = State#bc_state.key_transform,
     FrozenFun = 
         fun() ->
+                FoldTime = bitcask_time:tstamp(),
                 case open_fold_files(State#bc_state.dirname, 3) of
                     {ok, Files} ->
                         ExpiryTime = expiry_time(State#bc_state.opts),
@@ -354,7 +360,8 @@ fold(State, Fun, Acc0, MaxAge, MaxPut) ->
                                                  Acc;
                                              false ->
                                                  case bitcask_nifs:keydir_get(
-                                                        State#bc_state.keydir, K) of
+                                                        State#bc_state.keydir, K,
+                                                        FoldTime) of
                                                      not_found ->
                                                          Acc;
                                                      E when is_record(E, bitcask_entry) ->
@@ -594,6 +601,7 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
                       merge_lock = Lock,
                       max_file_size = get_opt(max_file_size, Opts),
                       input_files = InFiles,
+                      merge_start = MergeStart,
                       out_file = Outfile,
                       merged_files = [],
                       partial = Partial,
@@ -1032,7 +1040,7 @@ merge_files(#mstate {  dirname = Dirname,
                     } = State) ->
     FileId = bitcask_fileops:file_tstamp(File),
     F = fun(K, V, Tstamp, Pos, State0) ->
-                if Tstamp < State0#mstate.merge_start ->
+                if Tstamp =< State0#mstate.merge_start ->
                         merge_single_entry(KT(K), V, Tstamp, FileId, Pos, State0);
                    true ->
                         State0
@@ -1053,7 +1061,8 @@ merge_files(#mstate {  dirname = Dirname,
     merge_files(State2#mstate { input_files = Rest }).
 
 merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
-    case out_of_date(K, Tstamp, FileId, Pos, State#mstate.expiry_time, false,
+    case out_of_date(K, Tstamp, FileId, Pos, State#mstate.expiry_time, 
+                     State#mstate.merge_start, false,
                      [State#mstate.live_keydir, State#mstate.del_keydir]) of
         true ->
             %% NOTE: This remove is conditional on an exact match on
@@ -1122,26 +1131,27 @@ inner_merge_write(K, V, Tstamp, OldFileId, OldOffset, State) ->
     %% file. It's possible that this is a noop, as
     %% someone else may have written a newer value
     %% whilst we were processing.
-    _ = bitcask_nifs:keydir_put(
-          State#mstate.live_keydir, K,
-          bitcask_fileops:file_tstamp(Outfile),
-          Size, Offset, Tstamp, OldFileId, OldOffset),
-    
+    _ = bitcask_nifs:keydir_put(State#mstate.live_keydir, K,
+                                bitcask_fileops:file_tstamp(Outfile),
+                                Size, Offset, Tstamp, OldFileId, OldOffset),
     State1#mstate { out_file = Outfile }.
 
 
-out_of_date(_Key, _Tstamp, _FileId, _Pos, _ExpiryTime, EverFound, []) ->
-    %% if we ever found it, and non of the entries were out of date,
+out_of_date(_Key, _Tstamp, _FileId, _Pos, _ExpiryTime, 
+            _MergeStart, EverFound, []) ->
+    %% if we ever found it, and none of the entries were out of date,
     %% then it's not out of date
     EverFound == false;
-out_of_date(_Key, Tstamp, _FileId, _Pos, ExpiryTime, _EverFound, _KeyDirs)
+out_of_date(_Key, Tstamp, _FileId, _Pos, ExpiryTime, 
+            _EverFound, _MergeStart, _KeyDirs)
   when Tstamp < ExpiryTime ->
     true;
-out_of_date(Key, Tstamp, FileId, {_,_,Offset,_} = Pos, ExpiryTime, EverFound,
-            [KeyDir|Rest]) ->
-    case bitcask_nifs:keydir_get(KeyDir, Key) of
+out_of_date(Key, Tstamp, FileId, {_,_,Offset,_} = Pos, 
+            ExpiryTime, MergeStart, EverFound, [KeyDir|Rest]) ->
+    case bitcask_nifs:keydir_get(KeyDir, Key, MergeStart) of
         not_found ->
-            out_of_date(Key, Tstamp, FileId, Pos, ExpiryTime, EverFound, Rest);
+            out_of_date(Key, Tstamp, FileId, Pos, ExpiryTime, 
+                        MergeStart, EverFound, Rest);
 
         E when is_record(E, bitcask_entry) ->
             if
@@ -1162,7 +1172,7 @@ out_of_date(Key, Tstamp, FileId, {_,_,Offset,_} = Pos, ExpiryTime, EverFound,
                                 false ->
                                     out_of_date(
                                       Key, Tstamp, FileId, Pos, 
-                                      ExpiryTime, true, Rest)
+                                      ExpiryTime, MergeStart, true, Rest)
                             end;
 
                         true ->
@@ -1181,13 +1191,13 @@ out_of_date(Key, Tstamp, FileId, {_,_,Offset,_} = Pos, ExpiryTime, EverFound,
                             %% rest of the keydirs to ensure this
                             %% holds true.
                             out_of_date(Key, Tstamp, FileId, Pos,
-                                        ExpiryTime, true, Rest)
+                                        ExpiryTime, MergeStart, true, Rest)
                     end;
 
                 E#bitcask_entry.tstamp < Tstamp ->
                     %% Not out of date -- check rest of the keydirs
                     out_of_date(Key, Tstamp, FileId, Pos,
-                                ExpiryTime, true, Rest);
+                                ExpiryTime, MergeStart, true, Rest);
 
                 true ->
                     %% Out of date!
@@ -1209,9 +1219,10 @@ readable_files(Dirname) ->
 
 %% Internal put - have validated that the file is opened for write
 %% and looked up the state at this point
-do_put(_Key, _Value, State, 0, LastErr) ->
+do_put(_Key, _Value, State, 0, LastErr, _ValueType) ->
     {{error, LastErr}, State};
-do_put(Key, Value, #bc_state{write_file = WriteFile} = State, Retries, _LastErr) ->
+do_put(Key, Value, #bc_state{write_file = WriteFile} = State, 
+       Retries, _LastErr, ValueType) ->
     case bitcask_fileops:check_write(WriteFile, Key, Value,
                                      State#bc_state.max_file_size) of
         wrap ->
@@ -1245,21 +1256,43 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State, Retries, _LastErr)
     {ok, WriteFile2, Offset, Size} = bitcask_fileops:write(
                                        State2#bc_state.write_file,
                                        Key, Value, Tstamp),
-    case bitcask_nifs:keydir_put(State2#bc_state.keydir, Key,
-                                 bitcask_fileops:file_tstamp(WriteFile2),
-                                 Size, Offset, Tstamp, true) of
-        ok ->
-            {ok, State2#bc_state { write_file = WriteFile2 }};
-        already_exists ->
-            %% Assuming the timestamps in the keydir are
-            %% valid, there is an edge case where the merge thread
-            %% could have rewritten this Key to a file with a greater
-            %% file_id. Rather than synchronize the merge/writer processes, 
-            %% wrap to a new file with a greater file_id and rewrite
-            %% the key there.  Limit the number of recursions in case
-            %% there is a different issue with the keydir.
-            State3 = wrap_write_file(State2#bc_state { write_file = WriteFile2 }),
-            do_put(Key, Value, State3, Retries - 1, already_exists)
+    case ValueType of
+        key ->
+            case bitcask_nifs:keydir_put(State2#bc_state.keydir, Key,
+                                         bitcask_fileops:file_tstamp(WriteFile2),
+                                         Size, Offset, Tstamp, true) of
+                ok ->
+                    {ok, State2#bc_state { write_file = WriteFile2 }};
+                already_exists ->
+                    %% Assuming the timestamps in the keydir are
+                    %% valid, there is an edge case where the merge thread
+                    %% could have rewritten this Key to a file with a greater
+                    %% file_id. Rather than synchronize the merge/writer processes, 
+                    %% wrap to a new file with a greater file_id and rewrite
+                    %% the key there.  Limit the number of recursions in case
+                    %% there is a different issue with the keydir.
+                    State3 = wrap_write_file(
+                               State2#bc_state { write_file = WriteFile2 }),
+                    do_put(Key, Value, State3, Retries - 1, 
+                           already_exists, ValueType)
+            end;
+        tombstone ->
+            case bitcask_nifs:keydir_get(State2#bc_state.keydir, Key) of
+                not_found ->
+                    {ok, State2#bc_state { write_file = WriteFile2 }};
+                E when is_record(E, bitcask_entry) ->
+                    case E#bitcask_entry.file_id > 
+                        bitcask_fileops:file_tstamp(WriteFile2) of 
+                        true ->
+                            %% we've hit the merge edge case above, and need to
+                            %% try again
+                            State3 = wrap_write_file(State2#bc_state { write_file = WriteFile2 }),
+                            do_put(Key, Value, State3, 
+                                   Retries - 1, already_exists, ValueType);
+                        false ->
+                            {ok, State2#bc_state { write_file = WriteFile2 }}
+                    end
+            end
     end.
 
 
@@ -1482,6 +1515,22 @@ fold_corrupt_file_test() ->
     close(B4),
     ok.
 
+put_till_frozen(R, Name) ->
+    bitcask_nifs:keydir_put(R, crypto:rand_bytes(32), 0, 1234, 0, 1), 
+    {ready, Ref2} = bitcask_nifs:keydir_new(Name),
+    %%?debugFmt("Putting", []),
+    case bitcask_nifs:keydir_itr_int(Ref2, 2000001,
+                                     0, 0) of
+        ok ->
+            %%?debugFmt("keydir still OK", []),
+            bitcask_nifs:keydir_itr_release(Ref2),
+            put_till_frozen(R, Name);
+        out_of_date -> 
+            %%?debugFmt("keydir now frozen", []),
+            bitcask_nifs:keydir_itr_release(Ref2),
+            ok
+    end.
+
 %%
 %% Check that fold visits the objects at the point the keydir
 %% was frozen.  Check with and without wrapping the cask.
@@ -1522,6 +1571,9 @@ fold_visits_frozen_test(RollOver) ->
                 ?assert(keydir_not_frozen)
         end,
 
+        %% make sure that it's actually frozen
+        put_till_frozen(Ref, Cask),
+
         %% If checking file rollover, update the state so the next write will 
         %% trigger a 'wrap' return.
         case RollOver of
@@ -1546,12 +1598,96 @@ fold_visits_frozen_test(RollOver) ->
         %% Unfreeze the keydir, waiting until complete
         FreezeWaiter ! done,
         bitcask_nifs:keydir_wait_pending(Ref),
+        timer:sleep(1100),
 
         %% Check we see the updated fold
         L2 = fold(B, CollectAll, [], -1, -1),
         ?assertEqual([{<<"k2">>,<<"v2-2">>},
                       {<<"k3">>,<<"v3">>},
                       {<<"k4">>,<<"v4">>}], lists:sort(L2))
+    after
+        bitcask:close(B)
+    end.
+
+fold_visits_unfrozen_test_() ->
+    [?_test(fold_visits_unfrozen_test(false)),
+     ?_test(fold_visits_unfrozen_test(true))].
+
+slow_worker() ->
+    {Owner, Values} =
+        receive
+            {owner, O, Vs} -> {O, Vs}
+        end,
+    SlowCollect = fun(K, V, Acc) ->
+                          receive
+                              go -> ok
+                          end,
+                          [{K, V} | Acc]
+                  end,
+    B = bitcask:open("/tmp/bc.test.unfrozenfold"),
+    L = fold(B, SlowCollect, [], -1, -1), 
+    case Values =:= lists:sort(L) of 
+        true ->
+            Owner ! done;
+        false ->
+            Owner ! {sad, L}
+    end,
+    %%?debugFmt("slow worker finished~n", []),
+    bitcask:close(B).
+    
+finish_worker_loop(Pid) ->
+    receive
+        done ->
+            done;
+        {sad, L} -> 
+            {sad, L}
+    after 0 ->
+            Pid ! go,
+            finish_worker_loop(Pid)
+    end.
+
+
+fold_visits_unfrozen_test(RollOver) ->
+    %%?debugFmt("rollover is ~p~n", [RollOver]),
+    Cask = "/tmp/bc.test.unfrozenfold",
+    B = init_dataset(Cask, default_dataset()),
+    try
+        Pid = spawn(fun slow_worker/0),
+        Pid ! {owner, self(), default_dataset()},
+        %% If checking file rollover, update the state so the next write will 
+        %% trigger a 'wrap' return.
+        case RollOver of
+            true ->
+                State = get_state(B),
+                put_state(B, State#bc_state{max_file_size = 0});
+            _ ->
+                ok
+        end,
+        timer:sleep(1100),
+        
+        %% A delete, an update and an insert
+        ok = delete(B, <<"k">>),
+        ok = put(B, <<"k2">>, <<"v2-2">>),
+        ok = put(B, <<"k4">>, <<"v4">>),
+     
+        timer:sleep(1100),
+        CollectAll = fun(K, V, Acc) ->
+                             [{K, V} | Acc]
+                     end,
+
+        %% Unfreeze the keydir, waiting until complete
+        case finish_worker_loop(Pid) of
+            done -> ok;
+            {sad, L} -> 
+                ?assertEqual(default_dataset(), lists:sort(L))
+        end,
+
+        %% Check we see the updated fold
+        L2 = fold(B, CollectAll, [], -1, -1),
+        ?assertEqual([{<<"k2">>,<<"v2-2">>},
+                      {<<"k3">>,<<"v3">>},
+                      {<<"k4">>,<<"v4">>}], lists:sort(L2))
+        %%?debugFmt("got past the asserts??~n", [])
     after
         bitcask:close(B)
     end.
@@ -1867,8 +2003,8 @@ expire_keydir_test() ->
     timer:sleep(2000),
 
     %% Merge everything
-    timer:sleep(1100),
     ok = merge("/tmp/bc.test.mergeexpirekeydir",[{expiry_secs,1}]),
+    timer:sleep(1100),
 
     %% should be no keys in the keydir now
     0 = testhelper_keydir_count(KDB),
@@ -1986,6 +2122,7 @@ truncated_merge_test() ->
     %% Merge everything
     timer:sleep(1100),
     ok = merge(Dir),
+    timer:sleep(1100),
 
     %% Verify we've now only got one file
     ok = bitcask_merge_delete:testonly__delete_trigger(),
