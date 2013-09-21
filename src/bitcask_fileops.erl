@@ -611,6 +611,20 @@ fold_file_loop(Fd, FoldFn, IntFoldFn, Acc0, Args0, Prev0, ChunkSz0) ->
             {error, Reason}
     end.
 
+open_hint_file(Filename, FinalOpts) ->
+    open_hint_file(Filename, FinalOpts, 10).
+    
+open_hint_file(_Filename, _FinalOpts, 0) ->
+    throw(couldnt_open_hintfile);
+open_hint_file(Filename, FinalOpts, Count) ->
+    case bitcask_io:file_open(hintfile_name(Filename), FinalOpts) of 
+        {ok, FD} ->
+            FD;
+        {error, eexist} -> 
+            timer:sleep(50),
+            open_hint_file(Filename, FinalOpts, Count - 1)
+    end.
+
 create_file_loop(DirName, Opts, Tstamp) ->
     Filename = mk_filename(DirName, Tstamp),
     ok = filelib:ensure_dir(Filename),
@@ -625,7 +639,7 @@ create_file_loop(DirName, Opts, Tstamp) ->
 
     case bitcask_io:file_open(Filename, FinalOpts) of
         {ok, FD} ->
-            {ok, HintFD} = bitcask_io:file_open(hintfile_name(Filename), FinalOpts),
+            HintFD = open_hint_file(Filename, FinalOpts),
             {ok, #filestate{mode = read_write,
                             filename = Filename,
                             tstamp = file_tstamp(Filename),
