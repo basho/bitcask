@@ -217,7 +217,7 @@ get(Ref, Key, TryNum) ->
                                 {ok, _Key, ?TOMBSTONE} ->
                                     not_found;
                                 {ok, _Key, Value} ->
-                                    Val = decompress(Value),
+                                    Val = maybe_decompress(Value),
                                     {ok, Val};
                                 {error, eof} ->
                                     not_found;
@@ -1224,7 +1224,7 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State, Retries, _LastErr)
 
     Tstamp = bitcask_time:tstamp(),
 
-    CValue = compress(Value, State#bc_state.opts),
+    CValue = maybe_compress(Value, State#bc_state.opts),
     {ok, WriteFile2, Offset, Size} = bitcask_fileops:write(
                                        State2#bc_state.write_file,
                                        Key, CValue, Tstamp),
@@ -1349,7 +1349,7 @@ compression_threshold(Opts) ->
         T when is_float(T) ->
             T;
         _ ->
-            0.8
+            1.0
     end.
 
 check_compression_threshold(Value, Compressed, Opts) ->
@@ -1361,7 +1361,7 @@ check_compression_threshold(Value, Compressed, Opts) ->
             Value
     end.
 
-compress(Value, Opts) ->
+maybe_compress(Value, Opts) ->
     case enable_compression(Opts) of
         true ->
             case snappy:compress(Value) of
@@ -1374,12 +1374,12 @@ compress(Value, Opts) ->
             Value
     end.
 
-decompress(Value) ->
+maybe_decompress(Value) ->
     case snappy:is_valid(Value) of
         true ->
             {ok, Val} = snappy:decompress(Value),
             Val;
-        false ->
+        _ ->
             Value
     end.
 
