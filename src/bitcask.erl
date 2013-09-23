@@ -1347,7 +1347,7 @@ enable_compression(Opts) ->
 compression_threshold(Opts) -> 
     case get_opt(compression_threshold, Opts) of
         T when is_float(T) ->
-            true;
+            T;
         _ ->
             0.8
     end.
