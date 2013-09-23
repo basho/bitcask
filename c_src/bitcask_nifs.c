@@ -36,7 +36,6 @@
 #include "murmurhash.h"
 
 #include <stdio.h>
-#include <stdbool.h>
 
 #ifdef BITCASK_DEBUG
 #include <stdarg.h>
