@@ -1344,19 +1344,34 @@ enable_compression(Opts) ->
             false
     end.
 
-compression_threshold(Opts) -> 
-    case get_opt(compression_threshold, Opts) of
+compression_ratio_threshold(Opts) -> 
+    case get_opt(compression_ratio_threshold, Opts) of
         T when is_float(T) ->
             T;
         _ ->
             1.0
     end.
 
+compression_size_threshold(Opts) -> 
+    case get_opt(compression_size_threshold, Opts) of
+        T when is_integer(T) ->
+            T;
+        _ ->
+            1024
+    end.
+
 check_compression_threshold(Value, Compressed, Opts) ->
-    Threshold = compression_threshold(Opts),
-    case (byte_size(Compressed) / byte_size(Value)) of
-        Ratio when Ratio < Threshold ->
-            Compressed;
+    ValueSize = byte_size(Value),
+    SizeThreshold = compression_size_threshold(Opts),
+    case ValueSize > SizeThreshold of
+        true ->
+            RatioThreshold = compression_ratio_threshold(Opts),
+            case (byte_size(Compressed) / byte_size(Value)) of
+                Ratio when Ratio < RatioThreshold ->
+                    Compressed;
+                _ ->
+                    Value
+            end;
         _ ->
             Value
     end.
