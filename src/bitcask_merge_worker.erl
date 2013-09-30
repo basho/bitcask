@@ -151,6 +151,12 @@ merge_window() ->
             always;
         {ok, never} ->
             never;
+        {ok, []} ->
+            error_logger:error_msg("Empty bitcask_merge window list specified. "
+                                   "Defaulting to 'always'.\n"),
+            always;
+        {ok, WindowList} when is_list(WindowList) ->
+            WindowList;
         {ok, {StartHour, EndHour}} when StartHour >= 0, StartHour =< 23,
                                         EndHour >= 0, EndHour =< 23 ->
             {StartHour, EndHour};
@@ -164,11 +170,36 @@ in_merge_window(_NowHour, always) ->
     true;
 in_merge_window(_NowHour, never) ->
     false;
+in_merge_window(NowHour, Windows) when is_list(Windows) ->
+    in_merge_window_list(NowHour, Windows);
 in_merge_window(NowHour, {Start, End}) when Start =< End ->
     (NowHour >= Start) and (NowHour =< End);
 in_merge_window(NowHour, {Start, End}) when Start > End ->
     (NowHour >= Start) or (NowHour =< End).
-
+in_merge_window_list(_NowHour, []) ->
+    false;
+in_merge_window_list(NowHour, [{Start, End} | List]) when Start >= 0, Start =< 23,
+                                                          End >= 0, End =< 23,
+                                                          Start =< End ->
+    case (NowHour >= Start) and (NowHour =< End) of
+        true ->
+            true;
+        false ->
+            in_merge_window_list(NowHour, List)
+    end;
+in_merge_window_list(NowHour, [{Start, End} | List]) when Start >= 0, Start =< 23,
+                                                          End >= 0, End =< 23,
+                                                          Start > End ->
+    case (NowHour >= Start) or (NowHour =< End) of
+        true ->
+            true;
+        false ->
+            in_merge_window_list(NowHour, List)
+    end;
+in_merge_window_list(_NowHour, [E | _List]) ->
+    error_logger:error_msg("Invalid bitcask_merge window specified in list: ~p. "
+                                   "Defaulting to 'always'.\n", [E]),
+    true.
 
 %% ====================================================================
 %% Unit tests
