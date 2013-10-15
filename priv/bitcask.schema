@@ -224,10 +224,8 @@
 
 
 %% @doc Require the CRC to be present at the end of hintfiles.
-%% Bitcask defaults to a backward compatible mode where
-%% old hint files will still be accepted without them.
-%% It is safe to set this true for new deployments and will
-%% become the default setting in a future release.
+%% Setting this to false runs Bitcask in a backward compatible mode
+%% where old hint files will still be accepted without CRC signatures.
 {mapping, "bitcask.require_hint_crc", "bitcask.require_hint_crc", [
   {default, true},
   {datatype, {enum, [true, false]}},
