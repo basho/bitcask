@@ -467,7 +467,7 @@ merge(Dirname, Opts, FilesToMerge0) ->
     %% possible in some circumstances that we'll get an out-of-date
     %% list of files.
     FilesToMerge = [F || F <- FilesToMerge0,
-                         filelib:is_file(F)],
+                         bitcask_fileops:is_file(F)],
     merge1(Dirname, Opts, FilesToMerge).
 
 %% Inner merge function, assumes that bitcask is running and all files exist.
@@ -557,7 +557,7 @@ merge1(Dirname, Opts, FilesToMerge) ->
                             end, [], InFiles1)),
 
     %% Setup our first output merge file and update the merge lock accordingly
-    {ok, Outfile} = bitcask_fileops:create_file(Dirname, Opts),
+    {ok, Outfile} = bitcask_fileops:create_file(Dirname, Opts, LiveKeyDir),
     ok = bitcask_lockops:write_activefile(
            Lock, bitcask_fileops:filename(Outfile)),
 
@@ -619,7 +619,7 @@ needs_merge(Ref) ->
     %% previous merges). Close these files so that we don't leak
     %% file descriptors.
     P = fun(F) ->
-                filelib:is_file(bitcask_fileops:filename(F))
+                bitcask_fileops:is_file(bitcask_fileops:filename(F))
         end,
     {LiveFiles, DeadFiles} = lists:partition(P, State#bc_state.read_files),
 
@@ -780,7 +780,7 @@ summary_info(Ref) ->
 
     %% Remove any files that don't exist from the initial summary
     Summary = lists:keysort(1, [S || S <- Summary0,
-                                     filelib:is_file(element(2, S))]),
+                                     bitcask_fileops:is_file(element(2, S))]),
     {KeyCount, Summary}.
 
 
@@ -1055,7 +1055,8 @@ inner_merge_write(K, V, Tstamp, OldFileId, OldOffset, State) ->
                 %% Start our next file and update state
                 {ok, NewFile} = bitcask_fileops:create_file(
                                   State#mstate.dirname,
-                                  State#mstate.opts),
+                                  State#mstate.opts,
+                                  State#mstate.live_keydir),
                 NewFileName = bitcask_fileops:filename(NewFile),
                 ok = bitcask_lockops:write_activefile(
                        State#mstate.merge_lock,
@@ -1176,7 +1177,8 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State, Retries, _LastErr)
                 {ok, WriteLock} ->
                     {ok, NewWriteFile} = bitcask_fileops:create_file(
                                            State#bc_state.dirname,
-                                           State#bc_state.opts),
+                                           State#bc_state.opts,
+                                           State#bc_state.keydir),
                     ok = bitcask_lockops:write_activefile(
                            WriteLock,
                            bitcask_fileops:filename(NewWriteFile)),
@@ -1217,7 +1219,8 @@ wrap_write_file(#bc_state{write_file = WriteFile} = State) ->
     LastWriteFile = bitcask_fileops:close_for_writing(WriteFile),
     {ok, NewWriteFile} = bitcask_fileops:create_file(
                            State#bc_state.dirname,
-                           State#bc_state.opts),
+                           State#bc_state.opts,
+                           State#bc_state.keydir),
     ok = bitcask_lockops:write_activefile(
            State#bc_state.write_lock,
            bitcask_fileops:filename(NewWriteFile)),
@@ -1227,13 +1230,13 @@ wrap_write_file(#bc_state{write_file = WriteFile} = State) ->
 
 set_setuid_bit(File) ->
     %% We're intentionally opinionated about pattern matching here.
-    {ok, FI} = file:read_file_info(File),
+    {ok, FI} = bitcask_fileops:read_file_info(File),
     NewFI = FI#file_info{mode = FI#file_info.mode bor 8#4000},
-    ok = file:write_file_info(File, NewFI).
+    ok = bitcask_fileops:write_file_info(File, NewFI).
 
 has_setuid_bit(File) ->
     try
-        {ok, FI} = file:read_file_info(File),
+        {ok, FI} = bitcask_fileops:read_file_info(File),
         FI#file_info.mode band 8#4000 == 8#4000
     catch _:_ ->
             false
