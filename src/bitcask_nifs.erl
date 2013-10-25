@@ -39,8 +39,6 @@
          keydir_wait_pending/1,
          keydir_info/1,
          keydir_release/1,
-         take_keydir_lock/1,
-         release_keydir_lock/1,
          increment_file_id/1,
          decrement_file_id/1,
          lock_acquire/2,
@@ -251,12 +249,6 @@ keydir_itr_next_int(_Ref) ->
 keydir_itr_release(_Ref) ->
     ok.
 
-
-take_keydir_lock(_Ref) ->
-    erlang:nif_error({error, not_loaded}).
-    
-release_keydir_lock(_Ref) ->
-    erlang:nif_error({error, not_loaded}).
 
 increment_file_id(_Ref) ->
     erlang:nif_error({error, not_loaded}).

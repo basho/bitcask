@@ -66,38 +66,36 @@
                   reference()) -> 
                          {ok, #filestate{}}.
 create_file(DirName, Opts, Keydir) ->
-    Rep = 
-        try
-            bitcask_nifs:take_keydir_lock(Keydir),
-            {ok, Newest} = bitcask_nifs:increment_file_id(Keydir),
-            
-            Filename = mk_filename(DirName, Newest),
-            ok = ensure_dir(Filename),
-            
-            %% Check for o_sync strategy and add to opts
-            FinalOpts = 
-                case bitcask:get_opt(sync_strategy, Opts) of
-                    o_sync ->
-                        [o_sync | Opts];
-                    _ ->
-                        Opts
-                end,
-            
-            {ok, FD} = bitcask_io:file_open(Filename, FinalOpts),
-            HintFD = open_hint_file(Filename, FinalOpts),
-            {ok, #filestate{mode = read_write,
-                            filename = Filename,
-                            tstamp = file_tstamp(Filename),
-                            hintfd = HintFD, fd = FD, ofs = 0}}
-        catch Error:Reason ->
-                %% if we fail somehow, do we need to nuke any partial
-                %% state?
-                bitcask_nifs:decrement_file_id(Keydir),
-                {Error, Reason}
-        after
-            bitcask_nifs:release_keydir_lock(Keydir)
-        end,
-    Rep.
+    {ok, Lock} = bitcask_lockops:acquire(create, DirName),
+    try
+        {ok, Newest} = bitcask_nifs:increment_file_id(Keydir),
+        
+        Filename = mk_filename(DirName, Newest),
+        ok = ensure_dir(Filename),
+        
+        %% Check for o_sync strategy and add to opts
+        FinalOpts = 
+            case bitcask:get_opt(sync_strategy, Opts) of
+                o_sync ->
+                    [o_sync | Opts];
+                _ ->
+                    Opts
+            end,
+        
+        {ok, FD} = bitcask_io:file_open(Filename, FinalOpts),
+        HintFD = open_hint_file(Filename, FinalOpts),
+        {ok, #filestate{mode = read_write,
+                        filename = Filename,
+                        tstamp = file_tstamp(Filename),
+                        hintfd = HintFD, fd = FD, ofs = 0}}
+    catch Error:Reason ->
+            %% if we fail somehow, do we need to nuke any partial
+            %% state?
+            bitcask_nifs:decrement_file_id(Keydir),
+            {Error, Reason}
+    after
+        bitcask_lockops:release(Lock)
+    end.
         
 %% @doc Open an existing file for reading.
 %% Called with fully-qualified filename.
