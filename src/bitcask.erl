@@ -647,7 +647,7 @@ needs_merge(Ref) ->
     [bitcask_fileops:close(F) || F <- DeadFiles],
 
     MinLiveID = lists:foldl(fun(F, Acc) ->
-                                    Ts = bitcask_fileops:filetstamp(F),
+                                    Ts = bitcask_fileops:file_tstamp(F),
                                     erlang:min(Ts, Acc)
                             end, 0, LiveFiles),
 
