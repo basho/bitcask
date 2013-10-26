@@ -67,7 +67,7 @@
                    read_files,     % Files opened for reading
                    max_file_size,  % Max. size of a written file
                    opts,           % Original options used to open the bitcask
-                   min_live_id,    % Lowest file id of any live file
+                   min_live_id = 0,% Lowest file id of any live file
                    keydir}).       % Key directory
 
 -record(mstate, { dirname,
@@ -815,7 +815,7 @@ summary_info(Ref) ->
     Summary0 = [summarize(State#bc_state.dirname, S) ||
                    S <- Fstats, 
                    element(1, S) /= WritingFileId,
-                   element(1, S) =< State#bc_state.min_live_id],
+                   element(1, S) >= State#bc_state.min_live_id],
 
     %% Remove any files that don't exist from the initial summary
     Summary = lists:keysort(1, [S || S <- Summary0,
