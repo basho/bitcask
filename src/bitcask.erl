@@ -67,6 +67,7 @@
                    read_files,     % Files opened for reading
                    max_file_size,  % Max. size of a written file
                    opts,           % Original options used to open the bitcask
+                   min_live_id,    % Lowest file id of any live file
                    keydir}).       % Key directory
 
 -record(mstate, { dirname,
@@ -645,8 +646,14 @@ needs_merge(Ref) ->
     %% Close the dead files
     [bitcask_fileops:close(F) || F <- DeadFiles],
 
-    %% Update state with live files
-    put_state(Ref, State#bc_state { read_files = LiveFiles }),
+    MinLiveID = lists:foldl(fun(F, Acc) ->
+                                    Ts = bitcask_fileops:filetstamp(F),
+                                    erlang:min(Ts, Acc)
+                            end, 0, LiveFiles),
+
+    %% Update state with live files & lowest file id
+    put_state(Ref, State#bc_state { read_files = LiveFiles,
+                                    min_live_id = MinLiveID }),
 
     %% Triggers that would require a merge:
     %%
@@ -808,7 +815,7 @@ summary_info(Ref) ->
     Summary0 = [summarize(State#bc_state.dirname, S) ||
                    S <- Fstats, 
                    element(1, S) /= WritingFileId,
-                   element(2, S) /= 0],
+                   element(1, S) =< State#bc_state.min_live_id],
 
     %% Remove any files that don't exist from the initial summary
     Summary = lists:keysort(1, [S || S <- Summary0,
