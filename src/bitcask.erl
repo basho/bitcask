@@ -649,7 +649,7 @@ needs_merge(Ref) ->
     MinLiveID = lists:foldl(fun(F, Acc) ->
                                     Ts = bitcask_fileops:file_tstamp(F),
                                     erlang:min(Ts, Acc)
-                            end, 0, LiveFiles),
+                            end, 16#ffffffff, LiveFiles),
 
     %% Update state with live files & lowest file id
     put_state(Ref, State#bc_state { read_files = LiveFiles,
