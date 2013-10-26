@@ -773,7 +773,8 @@ status(Ref) ->
     %% TODO: Next major revision should remove this variation on status
     {KeyCount, Summary} = summary_info(Ref),
     {KeyCount, [{F#file_status.filename, F#file_status.fragmented,
-                 F#file_status.dead_bytes, F#file_status.total_bytes} || F <- Summary]}.
+                 F#file_status.dead_bytes, F#file_status.total_bytes} 
+                || F <- Summary]}.
 
 
 -spec summary_info(reference()) -> {integer(), [#file_status{}]}.
@@ -802,8 +803,12 @@ summary_info(Ref) ->
     %%
     %% Note that we also, filter the WritingFileId from any further
     %% consideration.
+    %% until we can fix the keydir, we need to remove long-dead 
+    %% datafiles from consideration to save disk traffic
     Summary0 = [summarize(State#bc_state.dirname, S) ||
-                   S <- Fstats, element(1, S) /= WritingFileId],
+                   S <- Fstats, 
+                   element(1, S) /= WritingFileId,
+                   element(2, S) /= 0],
 
     %% Remove any files that don't exist from the initial summary
     Summary = lists:keysort(1, [S || S <- Summary0,
