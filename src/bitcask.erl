@@ -639,7 +639,7 @@ needs_merge(Ref) ->
     %% previous merges). Close these files so that we don't leak
     %% file descriptors.
     P = fun(F) ->
-                filelib:is_file(bitcask_fileops:filename(F))
+                bitcask_fileops:is_file(bitcask_fileops:filename(F))
         end,
     {LiveFiles, DeadFiles} = lists:partition(P, State#bc_state.read_files),
 
@@ -819,7 +819,7 @@ summary_info(Ref) ->
 
     %% Remove any files that don't exist from the initial summary
     Summary = lists:keysort(1, [S || S <- Summary0,
-                                     filelib:is_file(element(2, S))]),
+                                     bitcask_fileops:is_file(element(2, S))]),
     {KeyCount, Summary}.
 
 

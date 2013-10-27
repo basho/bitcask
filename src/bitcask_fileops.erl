@@ -39,6 +39,7 @@
          hintfile_name/1,
          file_tstamp/1,
          check_write/4]).
+-export([read_file_info/1, write_file_info/2, is_file/1]).
 
 -include_lib("kernel/include/file.hrl").
 
@@ -656,3 +657,49 @@ most_recent_tstamp(DirName) ->
     lists:foldl(fun({TS,_},Acc) -> 
                        erlang:max(TS, Acc)
                end, 0, data_file_tstamps(DirName)).
+
+read_file_info(File) ->
+    FileName = file_name(File),
+    prim_file:read_file_info(FileName).
+
+write_file_info(File, Info) ->
+    FileName = file_name(File),
+    prim_file:write_file_info(FileName, Info).
+
+is_file(File) ->
+    case read_file_info(File) of
+        {ok, #file_info{type=regular}} ->
+            true;
+        {ok, #file_info{type=directory}} ->
+            true;
+        _ ->
+            false
+    end.
+
+%% copied from erlang's file.erl
+
+%% file_name(FileName)
+%% 	Generates a flat file name from a deep list of atoms and 
+%% 	characters (integers).
+
+file_name(N) when is_binary(N) ->
+    N;
+file_name(N) ->
+    try 
+        file_name_1(N,file:native_name_encoding())
+    catch Reason ->
+        {error, Reason}
+    end.
+
+file_name_1([C|T],latin1) when is_integer(C), C < 256->
+    [C|file_name_1(T,latin1)];
+file_name_1([C|T],utf8) when is_integer(C) ->
+    [C|file_name_1(T,utf8)];
+file_name_1([H|T],E) ->
+    file_name_1(H,E) ++ file_name_1(T,E);
+file_name_1([],_) ->
+    [];
+file_name_1(N,_) when is_atom(N) ->
+    atom_to_list(N);
+file_name_1(_,_) ->
+    throw(badarg).
