@@ -253,6 +253,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
 ERL_NIF_TERM bitcask_nifs_keydir_itr_release(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_info(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_release(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_keydir_trim_fstats(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
 ERL_NIF_TERM bitcask_nifs_create_tmp_file(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
@@ -298,6 +299,7 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_itr_release", 1, bitcask_nifs_keydir_itr_release},
     {"keydir_info", 1, bitcask_nifs_keydir_info},
     {"keydir_release", 1, bitcask_nifs_keydir_release},
+    {"keydir_trim_fstats", 2, bitcask_nifs_keydir_trim_fstats},
 
     {"lock_acquire_int",   2, bitcask_nifs_lock_acquire},
     {"lock_release_int",   1, bitcask_nifs_lock_release},
@@ -1697,6 +1699,47 @@ ERL_NIF_TERM bitcask_nifs_keydir_release(ErlNifEnv* env, int argc, const ERL_NIF
     if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle))
     {
         bitcask_nifs_keydir_resource_cleanup(env, handle);
+        return ATOM_OK;
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
+ERL_NIF_TERM bitcask_nifs_keydir_trim_fstats(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_keydir_handle* handle;
+    ERL_NIF_TERM head, tail;
+
+
+    if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle)&&
+        enif_is_list(env, argv[1]))
+    {
+        bitcask_keydir* keydir = handle->keydir;
+        
+        LOCK(keydir);
+        uint32_t file_id;
+
+        while (enif_get_list_cell(env, argv[1], &head, &tail))
+        {
+            enif_get_uint(env, head, &file_id);
+
+            khiter_t itr = kh_get(fstats, keydir->fstats, file_id);
+            if (itr == kh_end(keydir->fstats)) {
+                // not found, noop, but shouldn't happen.
+                // think about chaning the retval to signal for warning?
+                continue;
+            }
+            else
+            {
+                bitcask_fstats_entry* curr_f;
+                curr_f = kh_val(keydir->fstats, itr);
+                free(curr_f);
+                kh_del(fstats, keydir->fstats, itr);
+            }
+        }
+        UNLOCK(keydir);
         return ATOM_OK;
     }
     else

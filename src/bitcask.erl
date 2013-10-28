@@ -663,8 +663,14 @@ needs_merge(Ref) ->
         end,
     {LiveFiles, DeadFiles} = lists:partition(P, State#bc_state.read_files),
 
-    %% Close the dead files
-    [bitcask_fileops:close(F) || F <- DeadFiles],
+    %% Close the dead files and trim their stat entries.
+    DeadIds = 
+        [begin
+             bitcask_fileops:close(F),
+             bitcask_fileops:file_tstamp(F)
+         end
+         || F <- DeadFiles],
+    bitcask_nifs:keydir_trim_fstats(State#bc_state.keydir, DeadIds),
 
     %% Update state with live files
     put_state(Ref, State#bc_state { read_files = LiveFiles }),
