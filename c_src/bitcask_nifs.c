@@ -1710,7 +1710,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_release(ErlNifEnv* env, int argc, const ERL_NIF
 ERL_NIF_TERM bitcask_nifs_keydir_trim_fstats(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     bitcask_keydir_handle* handle;
-    ERL_NIF_TERM head, tail;
+    ERL_NIF_TERM head, tail, list;
 
 
     if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle)&&
@@ -1721,23 +1721,23 @@ ERL_NIF_TERM bitcask_nifs_keydir_trim_fstats(ErlNifEnv* env, int argc, const ERL
         LOCK(keydir);
         uint32_t file_id;
 
-        while (enif_get_list_cell(env, argv[1], &head, &tail))
+        list = argv[1];
+
+        while (enif_get_list_cell(env, list, &head, &tail))
         {
             enif_get_uint(env, head, &file_id);
 
             khiter_t itr = kh_get(fstats, keydir->fstats, file_id);
-            if (itr == kh_end(keydir->fstats)) {
-                // not found, noop, but shouldn't happen.
-                // think about chaning the retval to signal for warning?
-                continue;
-            }
-            else
+            if (itr != kh_end(keydir->fstats))
             {
                 bitcask_fstats_entry* curr_f;
                 curr_f = kh_val(keydir->fstats, itr);
                 free(curr_f);
                 kh_del(fstats, keydir->fstats, itr);
             }
+            // if not found, noop, but shouldn't happen.
+            // think about chaning the retval to signal for warning?
+            list = tail;
         }
         UNLOCK(keydir);
         return ATOM_OK;
