@@ -91,7 +91,6 @@ create_file(DirName, Opts, Keydir) ->
     catch Error:Reason ->
             %% if we fail somehow, do we need to nuke any partial
             %% state?
-            bitcask_nifs:decrement_file_id(Keydir),
             {Error, Reason}
     after
         bitcask_lockops:release(Lock)
@@ -145,10 +144,29 @@ close_hintfile(State = #filestate { hintfd = HintFd, hintcrc = HintCRC }) ->
 %% match our regex. 
 -spec data_file_tstamps(Dirname :: string()) -> [{integer(), string()}].
 data_file_tstamps(Dirname) ->
-    filelib:fold_files(Dirname, "^[0-9]+.bitcask.data$", false,
-                       fun(F, Acc) ->
-                               [{file_tstamp(F), F} | Acc]
-                       end, []).
+    case list_dir(Dirname) of
+        {ok, Files} ->
+            lists:foldl(
+              fun(Filename, Acc) ->
+                      case string:tokens(Filename, ".") of
+                          [TSString, _, "data"] ->
+                              [{list_to_integer(TSString), 
+                                filename:join(Dirname, Filename)}
+                                | Acc];
+                          _ ->
+                              Acc
+                      end
+              end,
+              [], Files);
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+            
+    %% filelib:fold_files(Dirname, "^[0-9]+.bitcask.data$", false,
+    %%                    fun(F, Acc) ->
+    %%                            [{file_tstamp(F), F} | Acc]
+    %%                    end, []).
 
 %% @doc Use only after merging, to permanently delete a data file.
 -spec delete(#filestate{}) -> ok | {error, atom()}.
@@ -664,12 +682,10 @@ hintfile_entry(Key, Tstamp, {Offset, TotalSz}) ->
 %% file/filelib avoidance code.
 %% ===================================================================
 
-read_file_info(File) ->
-    FileName = file_name(File),
+read_file_info(FileName) ->
     prim_file:read_file_info(FileName).
 
-write_file_info(File, Info) ->
-    FileName = file_name(File),
+write_file_info(FileName, Info) ->
     prim_file:write_file_info(FileName, Info).
 
 is_file(File) ->
@@ -717,32 +733,33 @@ ensure_dir(F) ->
             end
     end.
 
-%% copied from erlang's file.erl
+list_dir(Directory) ->
+    Port = get_efile_port(),
+    prim_file:list_dir(Port, Directory).
 
-%% file_name(FileName)
-%% 	Generates a flat file name from a deep list of atoms and 
-%% 	characters (integers).
-
-file_name(N) when is_binary(N) ->
-    N;
-file_name(N) ->
-    try 
-        file_name_1(N,file:native_name_encoding())
-    catch Reason ->
-        {error, Reason}
+get_efile_port() ->
+    Key = bitcask_efile_port,
+    case get(Key) of
+        undefined ->
+            case prim_file_drv_open(efile, [binary]) of
+                {ok, Port} ->
+                    put(Key, Port),
+                    get_efile_port();
+                Err ->
+                    error_logger:error_msg("get_efile_port: ~p\n", [Err]),
+                    timer:sleep(1000),
+                    get_efile_port()
+            end;
+        Port ->
+            Port
     end.
 
-file_name_1([C|T],latin1) when is_integer(C), C < 256->
-    [C|file_name_1(T,latin1)];
-file_name_1([C|T],utf8) when is_integer(C) ->
-    [C|file_name_1(T,utf8)];
-file_name_1([H|T],E) ->
-    file_name_1(H,E) ++ file_name_1(T,E);
-file_name_1([],_) ->
-    [];
-file_name_1(N,_) when is_atom(N) ->
-    atom_to_list(N);
-file_name_1(_,_) ->
-    throw(badarg).
-
+prim_file_drv_open(Driver, Portopts) ->
+    try erlang:open_port({spawn, Driver}, Portopts) of
+        Port ->
+            {ok, Port}
+    catch
+        error:Reason ->
+            {error, Reason}
+    end.
 

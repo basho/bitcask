@@ -255,7 +255,6 @@ ERL_NIF_TERM bitcask_nifs_keydir_info(ErlNifEnv* env, int argc, const ERL_NIF_TE
 ERL_NIF_TERM bitcask_nifs_keydir_release(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
 ERL_NIF_TERM bitcask_nifs_increment_file_id(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
-ERL_NIF_TERM bitcask_nifs_decrement_file_id(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
 ERL_NIF_TERM bitcask_nifs_create_tmp_file(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
@@ -303,7 +302,6 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_release", 1, bitcask_nifs_keydir_release},
 
     {"increment_file_id", 1, bitcask_nifs_increment_file_id},
-    {"decrement_file_id", 1, bitcask_nifs_decrement_file_id},
 
     {"lock_acquire_int",   2, bitcask_nifs_lock_acquire},
     {"lock_release_int",   1, bitcask_nifs_lock_release},
@@ -1723,23 +1721,6 @@ ERL_NIF_TERM bitcask_nifs_increment_file_id(ErlNifEnv* env, int argc, const ERL_
         uint32_t id = handle->keydir->biggest_file_id;
         UNLOCK(handle->keydir);
         return enif_make_tuple2(env, ATOM_OK, enif_make_uint(env, id));
-    }
-    else
-    {
-        return enif_make_badarg(env);
-    }
-}
-
-ERL_NIF_TERM bitcask_nifs_decrement_file_id(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
-{
-    bitcask_keydir_handle* handle;
-
-    if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle))
-    {
-        LOCK(handle->keydir);
-        (handle->keydir->biggest_file_id)--; 
-        UNLOCK(handle->keydir);
-        return ATOM_OK;
     }
     else
     {
