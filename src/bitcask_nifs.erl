@@ -40,7 +40,6 @@
          keydir_info/1,
          keydir_release/1,
          increment_file_id/1,
-         decrement_file_id/1,
          lock_acquire/2,
          lock_release/1,
          lock_readdata/1,
@@ -252,10 +251,6 @@ keydir_itr_release(_Ref) ->
 
 increment_file_id(_Ref) ->
     erlang:nif_error({error, not_loaded}).
-
-decrement_file_id(_Ref) ->
-    erlang:nif_error({error, not_loaded}).
-
 
 keydir_fold(Ref, Fun, Acc0, MaxAge, MaxPuts) ->
     FrozenFun = fun() -> keydir_fold_cont(keydir_itr_next(Ref), Ref, Fun, Acc0) end,

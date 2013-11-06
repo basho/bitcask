@@ -162,12 +162,6 @@ data_file_tstamps(Dirname) ->
             {error, Reason}
     end.
 
-            
-    %% filelib:fold_files(Dirname, "^[0-9]+.bitcask.data$", false,
-    %%                    fun(F, Acc) ->
-    %%                            [{file_tstamp(F), F} | Acc]
-    %%                    end, []).
-
 %% @doc Use only after merging, to permanently delete a data file.
 -spec delete(#filestate{}) -> ok | {error, atom()}.
 delete(#filestate{ filename = FN } = State) ->
