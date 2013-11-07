@@ -569,10 +569,6 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
                                             Acc
                                     end
                             end, {[],[]}, InFiles1),
-    %% Setup our first output merge file and update the merge lock accordingly
-    {ok, Outfile} = bitcask_fileops:create_file(Dirname, Opts),
-    ok = bitcask_lockops:write_activefile(
-           Lock, bitcask_fileops:filename(Outfile)),
 
     %% Initialize the other keydirs we need.
     {ok, DelKeyDir} = bitcask_nifs:keydir_new(),
@@ -582,7 +578,7 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
                       merge_lock = Lock,
                       max_file_size = get_opt(max_file_size, Opts),
                       input_files = InFiles,
-                      out_file = Outfile,
+                      out_file = fresh,  % will be created when needed
                       merged_files = [],
                       partial = Partial,
                       live_keydir = LiveKeyDir,
@@ -596,8 +592,13 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
     State1 = merge_files(State),
 
     %% Make sure to close the final output file
-    ok = bitcask_fileops:sync(State1#mstate.out_file),
-    ok = bitcask_fileops:close(State1#mstate.out_file),
+    case State1#mstate.out_file of
+        fresh ->
+            ok;
+        Outfile ->
+            ok = bitcask_fileops:sync(Outfile),
+            ok = bitcask_fileops:close(Outfile)
+    end,
 
     %% Close the original input files, schedule them for deletion,
     %% close keydirs, and release our lock
@@ -606,11 +607,6 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
     FileNames = [F#filestate.filename || F <- State#mstate.input_files ++ ExpiredFilesFinished],
     [catch set_setuid_bit(F) || F <- FileNames],
     bitcask_merge_delete:defer_delete(Dirname, IterGeneration, FileNames),
-    if InFiles == [] ->
-            bitcask_fileops:delete(Outfile);
-        true ->
-            ok
-    end,
 
     %% Explicitly release our keydirs instead of waiting for GC
     bitcask_nifs:keydir_release(LiveKeyDir),
@@ -1091,7 +1087,17 @@ inner_merge_write(K, V, Tstamp, OldFileId, OldOffset, State) ->
                        NewFileName),
                 State#mstate { out_file = NewFile };
             ok ->
-                State
+                State;
+            fresh ->
+                %% create the output file and take the lock.
+                {ok, NewFile} = bitcask_fileops:create_file(
+                                  State#mstate.dirname,
+                                  State#mstate.opts),
+                NewFileName = bitcask_fileops:filename(NewFile),
+                ok = bitcask_lockops:write_activefile(
+                       State#mstate.merge_lock,
+                       NewFileName),
+                State#mstate { out_file = NewFile }                
         end,
     
     {ok, Outfile, Offset, Size} =
@@ -1650,9 +1656,9 @@ expire_merge_test() ->
     timer:sleep(1100),
     ok = merge("/tmp/bc.test.mergeexpire",[{expiry_secs,1}]),
 
-    %% Verify we've now only got one file
+    %% With lazy merge file creation there will be no files.
     ok = bitcask_merge_delete:testonly__delete_trigger(),
-    1 = length(readable_files("/tmp/bc.test.mergeexpire")),
+    0 = length(readable_files("/tmp/bc.test.mergeexpire")),
 
     %% Make sure all the data is present
     B = bitcask:open("/tmp/bc.test.mergeexpire"),
