@@ -40,6 +40,7 @@
          keydir_info/1,
          keydir_release/1,
          increment_file_id/1,
+         keydir_trim_fstats/2,
          lock_acquire/2,
          lock_release/1,
          lock_readdata/1,
@@ -121,6 +122,8 @@
            integer(), integer()}],
          {integer(), integer(), boolean()}}.
 -spec keydir_release(reference()) ->
+        ok.
+-spec keydir_trim_fstats(reference(), [integer()]) ->
         ok.
 -spec lock_acquire(string(), integer()) ->
         {ok, reference()} | {error, atom()}.
@@ -317,6 +320,9 @@ keydir_info(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_release(_Ref) ->
+    erlang:nif_error({error, not_loaded}).
+
+keydir_trim_fstats(_Ref, _IDList) ->
     erlang:nif_error({error, not_loaded}).
 
 

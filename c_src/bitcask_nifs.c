@@ -253,6 +253,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
 ERL_NIF_TERM bitcask_nifs_keydir_itr_release(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_info(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_release(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_keydir_trim_fstats(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
 ERL_NIF_TERM bitcask_nifs_increment_file_id(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
@@ -300,6 +301,7 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_itr_release", 1, bitcask_nifs_keydir_itr_release},
     {"keydir_info", 1, bitcask_nifs_keydir_info},
     {"keydir_release", 1, bitcask_nifs_keydir_release},
+    {"keydir_trim_fstats", 2, bitcask_nifs_keydir_trim_fstats},
 
     {"increment_file_id", 1, bitcask_nifs_increment_file_id},
 
@@ -1721,6 +1723,52 @@ ERL_NIF_TERM bitcask_nifs_increment_file_id(ErlNifEnv* env, int argc, const ERL_
         uint32_t id = handle->keydir->biggest_file_id;
         UNLOCK(handle->keydir);
         return enif_make_tuple2(env, ATOM_OK, enif_make_uint(env, id));
+    }
+    else
+    {
+        return enif_make_badarg(env);
+    }
+}
+
+ERL_NIF_TERM bitcask_nifs_keydir_trim_fstats(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_keydir_handle* handle;
+    ERL_NIF_TERM head, tail, list;
+    uint32_t non_existent_entries = 0;
+
+    if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle)&&
+        enif_is_list(env, argv[1]))
+    {
+        bitcask_keydir* keydir = handle->keydir;
+        
+        LOCK(keydir);
+        uint32_t file_id;
+
+        list = argv[1];
+
+        while (enif_get_list_cell(env, list, &head, &tail))
+        {
+            enif_get_uint(env, head, &file_id);
+
+            khiter_t itr = kh_get(fstats, keydir->fstats, file_id);
+            if (itr != kh_end(keydir->fstats))
+            {
+                bitcask_fstats_entry* curr_f;
+                curr_f = kh_val(keydir->fstats, itr);
+                free(curr_f);
+                kh_del(fstats, keydir->fstats, itr);
+            }
+            else
+            {
+                non_existent_entries++;
+            }
+            // if not found, noop, but shouldn't happen.
+            // think about chaning the retval to signal for warning?
+            list = tail;
+        }
+        UNLOCK(keydir);
+        return enif_make_tuple2(env, ATOM_OK, 
+                                enif_make_uint(env, non_existent_entries));
     }
     else
     {

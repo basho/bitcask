@@ -129,19 +129,26 @@ prop_expiry() ->
 %                         io:format(user, "Cutoff: ~p\nExpired: ~120p\nLive: ~120p\n",
 %                                   [ExpireCutoff, Expired, Live]),
 
+                         AllDeleteOps = lists:all(fun({delete,_,_}) -> true;
+                                                     (_)            -> false
+                                                  end, Ops),
                          %% Check that needs_merge has expected result
-                         case Expired of
-                             [] ->
+                         case {AllDeleteOps, Expired} of
+                             {true, _} ->
                                  ?assertEqual(false, bitcask:needs_merge(Bref)),
                                  true;
-                             _ ->
+                             {false, []} ->
+                                 ?assertEqual(false, bitcask:needs_merge(Bref)),
+                                 true;
+                             {false, _} ->
                                  ?assertMatch({true, _}, bitcask:needs_merge(Bref)),
                                  true
                          end
                      catch
                          X:Y ->
                              io:format(user, "exception: ~p ~p @ ~p\n",
-                                       [X,Y, erlang:get_stacktrace()])
+                                       [X,Y, erlang:get_stacktrace()]),
+                             test_exception
                      after
                          bitcask:close(Bref)
                      end
