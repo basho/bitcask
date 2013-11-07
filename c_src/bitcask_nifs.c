@@ -1711,7 +1711,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_trim_fstats(ErlNifEnv* env, int argc, const ERL
 {
     bitcask_keydir_handle* handle;
     ERL_NIF_TERM head, tail, list;
-
+    uint32_t non_existent_entries = 0;
 
     if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle)&&
         enif_is_list(env, argv[1]))
@@ -1735,12 +1735,17 @@ ERL_NIF_TERM bitcask_nifs_keydir_trim_fstats(ErlNifEnv* env, int argc, const ERL
                 free(curr_f);
                 kh_del(fstats, keydir->fstats, itr);
             }
+            else
+            {
+                non_existent_entries++;
+            }
             // if not found, noop, but shouldn't happen.
             // think about chaning the retval to signal for warning?
             list = tail;
         }
         UNLOCK(keydir);
-        return ATOM_OK;
+        return enif_make_tuple2(env, ATOM_OK, 
+                                enif_make_uint(env, non_existent_entries));
     }
     else
     {
