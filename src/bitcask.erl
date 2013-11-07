@@ -659,8 +659,27 @@ needs_merge(Ref) ->
         end,
     {LiveFiles, DeadFiles} = lists:partition(P, State#bc_state.read_files),
 
-    %% Close the dead files
-    [bitcask_fileops:close(F) || F <- DeadFiles],
+    %% Close the dead files and accumulate a list for trimming their 
+    %% fstats entries.
+    DeadIds0 = 
+        [begin
+             bitcask_fileops:close(F),
+             bitcask_fileops:file_tstamp(F)
+         end
+         || F <- DeadFiles],
+    DeadIds = lists:usort(DeadIds0),
+
+    case bitcask_nifs:keydir_trim_fstats(State#bc_state.keydir, 
+                                         DeadIds) of
+        {ok, 0} ->
+            ok;
+        {ok, Warn} ->
+            error_logger:info_msg("Trimmed ~p non-zero fstat entries",
+                                  [Warn]);
+        Err ->
+            error_logger:error_msg("Error trimming fstats entries: ~p",
+                                   [Err])
+    end,
 
     %% Update state with live files
     put_state(Ref, State#bc_state { read_files = LiveFiles }),
