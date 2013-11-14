@@ -1,3 +1,5 @@
+%% -*- erlang -*-
+
 %%%% bitcask
 
 %% @doc bitcask data root
