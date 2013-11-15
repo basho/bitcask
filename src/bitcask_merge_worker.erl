@@ -42,8 +42,13 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+%% export for internal use only. also, lolerlang
+-export([spawned_merge/4]).
+
 -record(state, { queue,
                  worker}).
+
+-define(MERGE_TIMEOUT, timer:hours(2)).
 
 %% ====================================================================
 %% API
@@ -125,14 +130,31 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal worker
 %% ====================================================================
 
-do_merge(Args) ->
+do_merge(Args0) ->
     {_, {Hour, _, _}} = calendar:local_time(),
     case in_merge_window(Hour, merge_window()) of
         true ->
             Start = os:timestamp(),
-            Result = (catch apply(bitcask, merge, Args)),
+            %% worker needs to know who spawned it to respond
+            Args = Args0 ++ [self()],
+            WorkerPid = erlang:spawn_monitor(?MODULE, spawned_merge, Args),
+            Result = 
+                receive
+                    {done, Res} ->
+                        Res;
+                    {'DOWN', _Ref, process, _Pid2, Reas} ->
+                        {error, Reas};
+                    Else ->
+                        error_logger:error_msg("unexpected message from "
+                                               "merge process ~p", [Else]),
+                        {error, Else}
+                after 
+                    ?MERGE_TIMEOUT ->
+                        exit(WorkerPid, kill),
+                        {error, timeout}
+                end,
             ElapsedSecs = timer:now_diff(os:timestamp(), Start) / 1000000,
-            [_,_,Args3] = Args,
+            [_,_,Args3] = Args0,
             case Result of
                 ok ->
                     error_logger:info_msg("Merged ~p in ~p seconds.\n",
@@ -144,6 +166,10 @@ do_merge(Args) ->
         false ->
             ok
     end.
+
+spawned_merge(Dirname, Opts, Files, OwnerPid) ->
+    Result = (catch bitcask:merge(Dirname, Opts, Files)),
+    OwnerPid ! {done, Result}.
 
 merge_window() ->
     case application:get_env(bitcask, merge_window) of
