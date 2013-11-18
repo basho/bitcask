@@ -124,7 +124,7 @@
 -spec keydir_release(reference()) ->
         ok.
 -spec keydir_trim_fstats(reference(), [integer()]) ->
-        ok.
+        {ok, integer()} | {error, atom()}.
 -spec lock_acquire(string(), integer()) ->
         {ok, reference()} | {error, atom()}.
 -spec lock_release(reference()) ->
