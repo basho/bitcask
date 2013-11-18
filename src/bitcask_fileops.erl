@@ -23,7 +23,7 @@
 %% @doc Basic file i/o operations for bitcask.
 -module(bitcask_fileops).
 
--export([create_file/2,
+-export([create_file/3,
          open_file/1,
          close/1,
          close_for_writing/1,
@@ -39,6 +39,7 @@
          hintfile_name/1,
          file_tstamp/1,
          check_write/4]).
+-export([read_file_info/1, write_file_info/2, is_file/1]).
 
 -include_lib("kernel/include/file.hrl").
 
@@ -61,10 +62,40 @@
 
 %% @doc Open a new file for writing.
 %% Called on a Dirname, will open a fresh file in that directory.
--spec create_file(Dirname :: string(), Opts :: [any()]) -> {ok, #filestate{}}.
-create_file(DirName, Opts) ->
-    create_file_loop(DirName, [create] ++ Opts, most_recent_tstamp(DirName) + 1).
-
+-spec create_file(Dirname :: string(), Opts :: [any()],
+                  reference()) -> 
+                         {ok, #filestate{}}.
+create_file(DirName, Opts, Keydir) ->
+    {ok, Lock} = bitcask_lockops:acquire(create, DirName),
+    try
+        {ok, Newest} = bitcask_nifs:increment_file_id(Keydir),
+        
+        Filename = mk_filename(DirName, Newest),
+        ok = ensure_dir(Filename),
+        
+        %% Check for o_sync strategy and add to opts
+        FinalOpts = 
+            case bitcask:get_opt(sync_strategy, Opts) of
+                o_sync ->
+                    [o_sync | Opts];
+                _ ->
+                    Opts
+            end,
+        
+        {ok, FD} = bitcask_io:file_open(Filename, FinalOpts),
+        HintFD = open_hint_file(Filename, FinalOpts),
+        {ok, #filestate{mode = read_write,
+                        filename = Filename,
+                        tstamp = file_tstamp(Filename),
+                        hintfd = HintFD, fd = FD, ofs = 0}}
+    catch Error:Reason ->
+            %% if we fail somehow, do we need to nuke any partial
+            %% state?
+            {Error, Reason}
+    after
+        bitcask_lockops:release(Lock)
+    end.
+        
 %% @doc Open an existing file for reading.
 %% Called with fully-qualified filename.
 -spec open_file(Filename :: string()) -> {ok, #filestate{}} | {error, any()}.
@@ -109,16 +140,27 @@ close_hintfile(State = #filestate { hintfd = HintFd, hintcrc = HintCRC }) ->
     bitcask_io:file_close(HintFd),
     State#filestate { hintfd = undefined, hintcrc = 0 }.
 
-
 %% Build a list of {tstamp, filename} for all files in the directory that
 %% match our regex. 
 -spec data_file_tstamps(Dirname :: string()) -> [{integer(), string()}].
 data_file_tstamps(Dirname) ->
-    filelib:fold_files(Dirname, "^[0-9]+.bitcask.data$", false,
-                       fun(F, Acc) ->
-                               [{file_tstamp(F), F} | Acc]
-                       end, []).
-
+    case list_dir(Dirname) of
+        {ok, Files} ->
+            lists:foldl(
+              fun(Filename, Acc) ->
+                      case string:tokens(Filename, ".") of
+                          [TSString, _, "data"] ->
+                              [{list_to_integer(TSString), 
+                                filename:join(Dirname, Filename)}
+                                | Acc];
+                          _ ->
+                              Acc
+                      end
+              end,
+              [], Files);
+        {error, Reason} ->
+            {error, Reason}
+    end.
 
 %% @doc Use only after merging, to permanently delete a data file.
 -spec delete(#filestate{}) -> ok | {error, atom()}.
@@ -299,7 +341,7 @@ check_write(#filestate { ofs = Offset }, Key, Value, MaxSize) ->
     end.
 
 has_hintfile(#filestate { filename = Fname }) ->
-    filelib:is_file(hintfile_name(Fname)).
+    is_file(hintfile_name(Fname)).
 
 %% Return true if there is a hintfile and it has
 %% a valid CRC check
@@ -309,7 +351,7 @@ has_valid_hintfile(State) ->
             HintFile = hintfile_name(State),
             case bitcask_io:file_open(HintFile, [readonly, read_ahead]) of
                 {ok, HintFd} -> 
-                    {ok, HintI} = file:read_file_info(HintFile),
+                    {ok, HintI} = read_file_info(HintFile),
                     HintSize = HintI#file_info.size,
                     hintfile_validate_loop(HintFd, 0, HintSize);
                 _ ->
@@ -455,7 +497,7 @@ fold_hintfile(State, Fun, Acc0) ->
     case bitcask_io:file_open(HintFile, [readonly, read_ahead]) of
         {ok, HintFd} ->
             try
-                {ok, DataI} = file:read_file_info(State#filestate.filename),
+                {ok, DataI} = read_file_info(State#filestate.filename),
                 DataSize = DataI#file_info.size,
                 case fold_file_loop(HintFd, fun fold_hintfile_loop/6, Fun, Acc0, 
                                     {DataSize, HintFile}) of 
@@ -625,48 +667,93 @@ open_hint_file(Filename, FinalOpts, Count) ->
             open_hint_file(Filename, FinalOpts, Count - 1)
     end.
 
-create_file_loop(DirName, Opts, Tstamp) ->
-    Filename = mk_filename(DirName, Tstamp),
-    ok = filelib:ensure_dir(Filename),
-
-    %% Check for o_sync strategy and add to opts
-    FinalOpts = case bitcask:get_opt(sync_strategy, Opts) of
-                    o_sync ->
-                        [o_sync | Opts];
-                    _ ->
-                        Opts
-                end,
-
-    case bitcask_io:file_open(Filename, FinalOpts) of
-        {ok, FD} ->
-            HintFD = open_hint_file(Filename, FinalOpts),
-            {ok, #filestate{mode = read_write,
-                            filename = Filename,
-                            tstamp = file_tstamp(Filename),
-                            hintfd = HintFD, fd = FD, ofs = 0}};
-
-        {error, _} ->
-            %% Couldn't create a new file with the requested name,
-            %% check for the more recent timestamp and increment by
-            %% 1 and try again.
-            %% This introduces some drift into the actual creation
-            %% time, but given that we only have at most 2 writers
-            %% (writer + merger) for a given bitcask, it shouldn't be
-            %% more than a few seconds. The alternative it to sleep
-            %% until the next second rolls around -- but this
-            %% introduces lengthy, unnecessary delays.
-            %% This also handles the possibility of clock skew
-            MostRecentTS = most_recent_tstamp(DirName),
-            create_file_loop(DirName, Opts, MostRecentTS + 1)
-    end.
-
 hintfile_entry(Key, Tstamp, {Offset, TotalSz}) ->
     KeySz = size(Key),
     [<<Tstamp:?TSTAMPFIELD>>, <<KeySz:?KEYSIZEFIELD>>,
      <<TotalSz:?TOTALSIZEFIELD>>, <<Offset:?OFFSETFIELD>>, Key].
 
-%% Find the most recent timestamp for a .data file
-most_recent_tstamp(DirName) ->
-    lists:foldl(fun({TS,_},Acc) -> 
-                       erlang:max(TS, Acc)
-               end, 0, data_file_tstamps(DirName)).
+%% ===================================================================
+%% file/filelib avoidance code.
+%% ===================================================================
+
+read_file_info(FileName) ->
+    prim_file:read_file_info(FileName).
+
+write_file_info(FileName, Info) ->
+    prim_file:write_file_info(FileName, Info).
+
+is_file(File) ->
+    case read_file_info(File) of
+        {ok, #file_info{type=regular}} ->
+            true;
+        {ok, #file_info{type=directory}} ->
+            true;
+        _ ->
+            false
+    end.
+
+is_dir(File) ->
+    case read_file_info(File) of
+        {ok, #file_info{type=directory}} ->
+            true;
+        _ ->
+            false
+    end.
+
+ensure_dir("/") ->
+    ok;
+ensure_dir(F) ->
+    Dir = filename:dirname(F),
+    case is_dir(Dir) of
+        true ->
+            ok;
+        false when Dir =:= F ->
+            %% Protect against infinite loop
+            {error,einval};
+        false ->
+            ensure_dir(Dir),
+            %% this is rare enough that the serialization 
+            %% isn't super important, maybe
+            case file:make_dir(Dir) of
+                {error,eexist}=EExist ->
+                    case is_dir(Dir) of
+                        true ->
+                            ok;
+                        false ->
+                            EExist
+                    end;
+                Err ->
+                    Err
+            end
+    end.
+
+list_dir(Directory) ->
+    Port = get_efile_port(),
+    prim_file:list_dir(Port, Directory).
+
+get_efile_port() ->
+    Key = bitcask_efile_port,
+    case get(Key) of
+        undefined ->
+            case prim_file_drv_open(efile, [binary]) of
+                {ok, Port} ->
+                    put(Key, Port),
+                    get_efile_port();
+                Err ->
+                    error_logger:error_msg("get_efile_port: ~p\n", [Err]),
+                    timer:sleep(1000),
+                    get_efile_port()
+            end;
+        Port ->
+            Port
+    end.
+
+prim_file_drv_open(Driver, Portopts) ->
+    try erlang:open_port({spawn, Driver}, Portopts) of
+        Port ->
+            {ok, Port}
+    catch
+        error:Reason ->
+            {error, Reason}
+    end.
+
