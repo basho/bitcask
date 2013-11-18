@@ -54,6 +54,10 @@ file_seekbof(Ref) ->
     M = file_module(),
     M:file_seekbof(Ref).
 
+file_position(Ref, Position) ->
+    M = file_module(),
+    M:file_position(Ref, Position).
+
 file_module() ->
     case get(bitcask_file_mod) of
         undefined ->

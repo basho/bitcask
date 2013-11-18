@@ -132,13 +132,14 @@ do_merge(Args) ->
             Start = os:timestamp(),
             Result = (catch apply(bitcask, merge, Args)),
             ElapsedSecs = timer:now_diff(os:timestamp(), Start) / 1000000,
+            [_,_,Args3] = Args,
             case Result of
                 ok ->
                     error_logger:info_msg("Merged ~p in ~p seconds.\n",
-                                          [Args, ElapsedSecs]);
+                                          [Args3, ElapsedSecs]);
                 {Error, Reason} when Error == error; Error == 'EXIT' ->
                     error_logger:error_msg("Failed to merge ~p: ~p\n",
-                                           [Args, Reason])
+                                           [Args3, Reason])
             end;
         false ->
             ok
