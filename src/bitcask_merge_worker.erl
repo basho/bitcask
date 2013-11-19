@@ -53,7 +53,7 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 merge(Dir) ->
-    gen_server:call(?MODULE, {merge, [Dir]}, infinity).
+    merge(Dir, []).
 
 merge(Dir, Opts) ->
     gen_server:call(?MODULE, {merge, [Dir, Opts]}, infinity).
@@ -77,19 +77,27 @@ init([]) ->
     %% The sub-process is created per-merge request to ensure that any
     %% ports/file handles opened during the merge get properly cleaned up, even
     %% in error cases.
-    {ok, #state{ queue = queue:new() }}.
+    {ok, #state{ queue = [] }}.
 
-handle_call({merge, Args}, _From, #state { queue = Q } = State) ->
-    case queue:member(Args, Q) of
-        true ->
+handle_call({merge, Args0}, _From, #state { queue = Q } = State) ->
+    [Dirname|_] = Args0,
+    Args = list_to_tuple(Args0),
+    %% convert back and forth from tuples to lists so we can use
+    %% keyfind
+    case lists:keyfind(Dirname, 1, Q) of
+        Args ->
             {reply, already_queued, State};
+        Partial when is_tuple(Partial) ->
+            New = merge_items(Args, Partial),
+            Q1 = lists:keyreplace(Dirname, 1, Q, New),
+            {reply, ok, State#state{ queue = Q1 }};
         false ->
             case State#state.worker of
                 undefined ->
-                    WorkerPid = spawn_link(fun() -> do_merge(Args) end),
+                    WorkerPid = spawn_link(fun() -> do_merge(Args0) end),
                     {reply, ok, State#state { worker = WorkerPid }};
                 _ ->
-                    {reply, ok, State#state { queue = queue:in(Args, Q) }}
+                    {reply, ok, State#state { queue = Q ++ [Args] }}
             end
     end.
 
@@ -98,14 +106,15 @@ handle_cast(_Msg, State) ->
 
 
 handle_info({'EXIT', _Pid, normal}, #state { queue = Q } = State) ->
-    case queue:is_empty(Q) of
-        true ->
-            {noreply, State#state { worker = undefined }};
-        false ->
-            {{value, Args}, Q2} = queue:out(Q),
+    case Q of
+        [] ->
+            {noreply, State#state { worker = undefined },
+             hibernate};
+        [Args0|Q2] ->
+            Args = tuple_to_list(Args0),
             WorkerPid = spawn_link(fun() -> do_merge(Args) end),
             {noreply, State#state { queue = Q2,
-                                    worker = WorkerPid }}
+                                    worker = WorkerPid }, hibernate}
     end;
 
 handle_info({'EXIT', Pid, Reason}, #state { worker = Pid } = State) ->
@@ -119,7 +128,36 @@ terminate(_Reason, State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
+%% ====================================================================
+%% private functions
+%% ====================================================================
 
+merge_items(New, Old) ->
+    %% first element will always match
+    Dirname = element(1, New), 
+    OOpts = lists:usort(element(2, Old)),
+    NOpts = lists:usort(element(2, New)),
+    Opts = lists:umerge(OOpts, NOpts),
+    case {size(New), size(Old)} of
+        {3, 3} ->
+            Files = merge_files(element(3, New),
+                                element(3, Old)),
+            {Dirname, Opts, Files};
+        {2, 2} ->
+            {Dirname, Opts};
+        {2, 3} ->
+            {Dirname, Opts, element(3, Old)};
+        {3, 2} ->
+           {Dirname, Opts, element(3, New)}
+    end.
+
+merge_files(New, Old) ->
+    {NFiles, NExp} = New,
+    {OFiles, OExp} = Old,
+    Files0 = lists:umerge(lists:usort(NFiles), lists:usort(OFiles)),
+    Expired = lists:umerge(lists:usort(NExp), lists:usort(OExp)),
+    Files = Files0 -- Expired,
+    {Files, Expired}.
 
 %% ====================================================================
 %% Internal worker
