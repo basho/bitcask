@@ -66,8 +66,8 @@
                   reference()) -> 
                          {ok, #filestate{}}.
 create_file(DirName, Opts, Keydir) ->
-    {ok, Lock} = bitcask_lockops:acquire(create, DirName),
-    try
+    {ok, Lock} = get_create_lock(DirName),
+    try 
         {ok, Newest} = bitcask_nifs:increment_file_id(Keydir),
         
         Filename = mk_filename(DirName, Newest),
@@ -96,6 +96,22 @@ create_file(DirName, Opts, Keydir) ->
         bitcask_lockops:release(Lock)
     end.
         
+
+get_create_lock(DirName) ->
+    get_create_lock(DirName, 100).
+
+get_create_lock(_DirName, 0) ->
+    error(lock_failure);
+get_create_lock(DirName, N) -> 
+    timer:sleep(100-N),
+    case bitcask_lockops:acquire(create, DirName) of
+        {ok, Lock} ->
+            {ok, Lock};
+        {error, locked} ->
+            get_create_lock(DirName, N - 1)
+    end.
+   
+    
 %% @doc Open an existing file for reading.
 %% Called with fully-qualified filename.
 -spec open_file(Filename :: string()) -> {ok, #filestate{}} | {error, any()}.
