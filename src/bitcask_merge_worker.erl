@@ -81,7 +81,22 @@ init([]) ->
 
 handle_call({merge, Args0}, _From, #state { queue = Q } = State) ->
     [Dirname|_] = Args0,
-    Args = list_to_tuple(Args0),
+    Args1 = 
+        case length(Args0) of
+            3 ->
+                %% presort opts and files tuples for better matches
+                %% and less work later
+                [_, Opts0, Tuple0] = Args0,
+                {Files, Expired} = Tuple0,
+                Opts = lists:usort(Opts0),
+                Tuple = {lists:usort(Files), 
+                         lists:usort(Expired)},
+                [Dirname, Opts, Tuple];
+            _ ->
+                %% whole directory don't need to be sorted
+                Args0
+        end,
+    Args = list_to_tuple(Args1),
     %% convert back and forth from tuples to lists so we can use
     %% keyfind
     case lists:keyfind(Dirname, 1, Q) of
@@ -135,7 +150,8 @@ code_change(_OldVsn, State, _Extra) ->
 merge_items(New, Old) ->
     %% first element will always match
     Dirname = element(1, New), 
-    OOpts = lists:usort(element(2, Old)),
+    %% old args are already sorted
+    OOpts = element(2, Old),
     NOpts = lists:usort(element(2, New)),
     Opts = lists:umerge(OOpts, NOpts),
     case {size(New), size(Old)} of
@@ -154,8 +170,9 @@ merge_items(New, Old) ->
 merge_files(New, Old) ->
     {NFiles, NExp} = New,
     {OFiles, OExp} = Old,
-    Files0 = lists:umerge(lists:usort(NFiles), lists:usort(OFiles)),
-    Expired = lists:umerge(lists:usort(NExp), lists:usort(OExp)),
+    %% old files and expired lists are already sorted
+    Files0 = lists:umerge(lists:usort(NFiles), OFiles),
+    Expired = lists:umerge(lists:usort(NExp), OExp),
     Files = Files0 -- Expired,
     {Files, Expired}.
 
