@@ -268,58 +268,56 @@ fold(fresh, _Fun, Acc) -> Acc;
 fold(#filestate { fd=Fd, filename=Filename, tstamp=FTStamp }, Fun, Acc0) ->
     %% TODO: Add some sort of check that this is a read-only file
     ok = bitcask_io:file_seekbof(Fd),
-    case fold_file_loop(Fd, fun fold_int_loop/6, Fun, Acc0, 
+    case fold_file_loop(Fd, fun fold_int_loop/6, Fun, Acc0,
                         {Filename, FTStamp, 0, 0}) of
         {error, Reason} ->
             {error, Reason};
         Acc -> Acc
     end.
 
--spec fold_keys(fresh | #filestate{}, fun((binary(), integer(), {integer(), integer()}, any()) -> any()), any()) ->
+-type key_fold_fun() :: fun((binary(), integer(), {integer(), integer()}, any()) -> any()).
+-type key_fold_mode() :: datafile | hintfile | default | recovery.
+-spec fold_keys(fresh | #filestate{}, key_fold_fun(), any()) ->
         any() | {error, any()}.
 fold_keys(fresh, _Fun, Acc) -> Acc;
 fold_keys(State, Fun, Acc) ->
     fold_keys(State, Fun, Acc, default).
 
--spec fold_keys(fresh | #filestate{}, fun((binary(), integer(), {integer(), integer()}, any()) -> any()), any(), datafile | hintfile | default | recovery) ->
+-spec fold_keys(fresh | #filestate{}, key_fold_fun(), any(), key_fold_mode()) ->
         any() | {error, any()}.
-fold_keys(#filestate { fd = Fd } = State, Fun, Acc, Mode) ->
-    case Mode of
-        datafile ->
-            fold_keys_loop(Fd, 0, Fun, Acc);
-        hintfile ->
-            fold_hintfile(State, Fun, Acc);
-        default ->
-            case has_hintfile(State) of
-                true ->
-                    fold_hintfile(State, Fun, Acc);
-                false ->
-                    fold_keys_loop(Fd, 0, Fun, Acc)
-            end;
-        recovery -> % if hint files are corrupt, restart scanning cask files
-                    % Fun should be side-effect free or tolerant of being
-                    % called twice
-            case has_valid_hintfile(State) of
-                true ->
-                    case fold_hintfile(State, Fun, Acc) of
-                        {error, {trunc_hintfile, Acc0}} ->
-                            Acc0;
-                        {error, Reason} ->
-                            HintFile = hintfile_name(State),
-                            error_logger:error_msg("Hintfile '~s' failed fold: ~p\n",
-                                                   [HintFile, Reason]),
-                            fold_keys_loop(Fd, 0, Fun, Acc);
-                        Acc1 ->
-                            Acc1
-                    end;
-                false ->
-                    HintFile = hintfile_name(State),
-                    error_logger:error_msg("Hintfile '~s' invalid\n",
-                                           [HintFile]),
+fold_keys(#filestate { fd = Fd } = _State, Fun, Acc, datafile) ->
+    fold_keys_loop(Fd, 0, Fun, Acc);
+fold_keys(#filestate { fd = _Fd } = State, Fun, Acc, hintfile) ->
+    fold_hintfile(State, Fun, Acc);
+fold_keys(State, Fun, Acc, Mode) ->
+    fold_keys(State, Fun, Acc, Mode, has_hintfile(State)).
 
-                    fold_keys_loop(Fd, 0, Fun, Acc)
-            end
-    end.
+fold_keys(State, Fun, Acc, default, true) ->
+    fold_hintfile(State, Fun, Acc);
+fold_keys(#filestate{fd = Fd}, Fun, Acc, default, false) ->
+    fold_keys_loop(Fd, 0, Fun, Acc);
+fold_keys(State, Fun, Acc, recovery, true) ->
+    fold_keys(State, Fun, Acc, recovery, true, has_valid_hintfile(State));
+fold_keys(#filestate{fd = Fd}, Fun, Acc, recovery, false) ->
+            fold_keys_loop(Fd, 0, Fun, Acc).
+
+fold_keys(#filestate{fd=Fd}=State, Fun, Acc, recovery, _, true) ->
+    case fold_hintfile(State, Fun, Acc) of
+        {error, {trunc_hintfile, Acc0}} ->
+            Acc0;
+        {error, Reason} ->
+            HintFile = hintfile_name(State),
+            error_logger:error_msg("Hintfile '~s' failed fold: ~p\n",
+                                   [HintFile, Reason]),
+            fold_keys_loop(Fd, 0, Fun, Acc);
+        Acc1 ->
+            Acc1
+    end;
+fold_keys(#filestate{fd=Fd}=State, Fun, Acc, recovery, _, false) ->
+    HintFile = hintfile_name(State),
+    error_logger:error_msg("Hintfile '~s' invalid\n",
+                           [HintFile]),
+    fold_keys_loop(Fd, 0, Fun, Acc).
 
 -spec mk_filename(string(), integer()) -> string().
 mk_filename(Dirname, Tstamp) ->
@@ -362,18 +360,14 @@ has_hintfile(#filestate { filename = Fname }) ->
 %% Return true if there is a hintfile and it has
 %% a valid CRC check
 has_valid_hintfile(State) ->
-    case has_hintfile(State) of
-        true ->
-            HintFile = hintfile_name(State),
-            case bitcask_io:file_open(HintFile, [readonly, read_ahead]) of
-                {ok, HintFd} -> 
-                    {ok, HintI} = read_file_info(HintFile),
-                    HintSize = HintI#file_info.size,
-                    hintfile_validate_loop(HintFd, 0, HintSize);
-                _ ->
-                    false
-            end;
-        Else -> Else
+    HintFile = hintfile_name(State),
+    case bitcask_io:file_open(HintFile, [readonly, read_ahead]) of
+        {ok, HintFd} ->
+            {ok, HintI} = read_file_info(HintFile),
+            HintSize = HintI#file_info.size,
+            hintfile_validate_loop(HintFd, 0, HintSize);
+        _ ->
+            false
     end.
 
 hintfile_validate_loop(Fd, CRC0, Rem) ->
