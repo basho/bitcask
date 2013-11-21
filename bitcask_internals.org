@@ -1,0 +1,80 @@
+#+TITLE:     bitcask_internals.org
+#+AUTHOR:    evan vigil-mcclanahan
+#+EMAIL:     evan@basho.org
+#+DATE:      2013-11-20 Wed
+#+DESCRIPTION: a get-up-to-speed document for new bitcask developers
+#+KEYWORDS:
+#+LANGUAGE:  en
+#+OPTIONS:   H:3 num:t toc:t \n:nil @:t ::t |:t ^:t -:t f:t *:t <:t
+#+OPTIONS:   TeX:t LaTeX:t skip:nil d:nil todo:t pri:nil tags:not-in-toc
+#+INFOJS_OPT: view:nil toc:nil ltoc:t mouse:underline buttons:0 path:http://orgmode.org/org-info.js
+#+EXPORT_SELECT_TAGS: export
+#+EXPORT_EXCLUDE_TAGS: noexport
+#+LINK_UP:   
+#+LINK_HOME: 
+#+XSLT:
+
+* bitcask at a high level
+** bitcask is a persistent, hash that maps one binary to another
+** files are log-structured, append only.
+there will typically only be a single file open.  There may be two if
+a merge is ongoing.
+** the keydir 
+in order to make data retrevial O(1), some information is kept in an
+in-memory hash with the file and offset within that file of the latest
+version of that data.  this is implemented as a NIF in C.
+** handles
+handles are erlang-land references to a particular keydir (which is
+refcounted and will be reclaimed when there are no active
+references). all API functions take a handle. bitcask is meant for use
+as a library and is not managed by any generic behaviors.
+** hintfiles and startup
+bitcask serializes certain keydir information to the disk so that it
+has to read less data on startup.  even so, these files can be quite
+large and numerous.  bitcask partitions with many values easily take
+more than an hour to start.
+* file structure
+* the keydir/NIF details
+** file stuff
+** lock stuff
+** keydir stuff
+* putting
+the put path is relatively uncomplicated.  the only complexity is in
+its wrapping behavior when the maximum file size is reached, which
+involves the keydir to coordinate what file id is the correct
+(i.e. latest) one to use.
+* getting
+* tombstones
+* folding
+* keyfolding
+* merge_worker
+** not a good fit
+the merge_worker is a gen_server that queues merges and guarantees
+that there is only ever one in motion at any given time.
+
+it's more properly part of riak_kv_bitcask_backend, but is generically
+useful
+* merge_delete
+** also not a great fit
+plays a similar role to the merge worker, managing deferred deletions
+of outdated cask data and hint files.
+* horrors
+** khash
+c's lack of generics forces us to use a preprocessor macro-based hash
+table.  unfortunately it has a lot of undesirable characteristics from
+our perspective (no snapshotting, no option to offload some hash space
+to disk, etc).
+** overhead
+in the neighborhood of 70 bytes per key on 1.7, higher in lower
+versions. could be improved, but khash and our need for variable-size
+structs hurts us here.
+* starter projects
+** OTP-izing
+it may be a good idea for bitcask to actually move to a message-based
+architecture based on gen_servers.  it'd certainly make things
+cleaner, overall.  the real question is if we can do this and maintain
+the current high-ish level of performance/throughput.
+** cleaning up merging log output
+currently merge logging is fairly crude and often takes up a lot of
+space in the logs of clusters.  this could easily be made more concise
+and easier to read.
