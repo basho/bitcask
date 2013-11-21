@@ -123,13 +123,12 @@ handle_cast(_Msg, State) ->
 handle_info({'EXIT', _Pid, normal}, #state { queue = Q } = State) ->
     case Q of
         [] ->
-            {noreply, State#state { worker = undefined },
-             hibernate};
+            {noreply, State#state { worker = undefined }};
         [Args0|Q2] ->
             Args = tuple_to_list(Args0),
             WorkerPid = spawn_link(fun() -> do_merge(Args) end),
             {noreply, State#state { queue = Q2,
-                                    worker = WorkerPid }, hibernate}
+                                    worker = WorkerPid }}
     end;
 
 handle_info({'EXIT', Pid, Reason}, #state { worker = Pid } = State) ->
