@@ -77,7 +77,15 @@ file_seekbof(Pid) ->
 file_request(Pid, Request) ->
     case check_pid(Pid) of
         ok ->
-            gen_server:call(Pid, Request, infinity);
+            try
+                gen_server:call(Pid, Request, infinity)
+            catch
+                exit:{normal,_} when Request == file_close ->
+                    %% Honest race condition in bitcask_eqc PULSE test.
+                    ok;
+                X1:X2 ->
+                    exit({file_request_error, self(), Request, X1, X2})
+            end;
         Error ->
             Error
     end.
