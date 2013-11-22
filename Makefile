@@ -2,22 +2,25 @@ REPO		?= bitcask
 BITCASK_TAG	 = $(shell git describe --tags)
 REVISION	?= $(shell echo $(BITCASK_TAG) | sed -e 's/^$(REPO)-//')
 PKG_VERSION	?= $(shell echo $(REVISION) | tr - .)
+BASE_DIR         = $(shell pwd)
 REBAR_BIN := $(shell which rebar)
 ifeq ($(REBAR_BIN),)
 REBAR_BIN = ./rebar
 endif
+
+PULSE_TESTS = bitcask_pulse
 
 .PHONY: rel deps package pkgclean
 
 all: deps compile
 
 compile:
-	$(REBAR_BIN) compile 
+	$(REBAR_BIN) compile
 
 deps:
 	$(REBAR_BIN) get-deps
 
-clean: 
+clean:
 	$(REBAR_BIN) clean
 
 test: deps compile eunit_erlang eunit_nif
@@ -28,6 +31,10 @@ eunit_erlang:
 eunit_nif:
 	IOMODE="nif" $(REBAR_BIN) skip_deps=true eunit
 
+pulse:
+	@rm -rf $(BASE_DIR)/.eunit
+	$(REBAR_BIN) -D PULSE clean compile
+	$(REBAR_BIN) -D PULSE eunit skip_deps=true suites=$(PULSE_TESTS)
 
 # Release tarball creation
 # Generates a tarball that includes all the deps sources so no checkouts are necessary
@@ -47,7 +54,7 @@ buildtar = mkdir distdir && \
 		 mkdir ../$(BITCASK_TAG)/deps && \
 		 make deps; \
 		 for dep in deps/*; do cd $${dep} && $(call archive,$${dep},../../../$(BITCASK_TAG)); cd ../..; done
-					 
+
 distdir:
 	$(if $(BITCASK_TAG), $(call buildtar), $(error "You can't generate a release tarball from a non-tagged revision. Run 'git checkout <tag>', then 'make dist'"))
 

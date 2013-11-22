@@ -1,8 +1,8 @@
-%%% File        : bitcask_eqc.erl
+%%% File        : bitcask_pulse.erl
 %%% Author      : Ulf Norell, Hans Svensson
 %%% Description : Bitcask stress testing
 %%% Created     : 19 Mar 2012 by Ulf Norell
--module(bitcask_eqc).
+-module(bitcask_pulse).
 
 %% The while module is ifdef:ed, rebar should set PULSE
 -ifdef(PULSE).
@@ -12,7 +12,7 @@
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
 
--include("../../include/bitcask.hrl").
+-include("bitcask.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -251,7 +251,7 @@ start_node(Verbose) ->
     _ -> ok
   end,
   stop_node(),
-  {ok, _} = slave:start(host(), slave_name(), "-pa ../../../ebin " ++
+  {ok, _} = slave:start(host(), slave_name(), "-pa ../ebin " ++
                           lists:append(["-detached" || not Verbose ])),
   ok.
 
