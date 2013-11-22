@@ -83,6 +83,9 @@ file_request(Pid, Request) ->
                 exit:{normal,_} when Request == file_close ->
                     %% Honest race condition in bitcask_eqc PULSE test.
                     ok;
+                exit:{noproc,_} when Request == file_close ->
+                    %% Honest race condition in bitcask_eqc PULSE test.
+                    ok;
                 X1:X2 ->
                     exit({file_request_error, self(), Request, X1, X2})
             end;
