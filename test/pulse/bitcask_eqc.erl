@@ -69,7 +69,7 @@ command(S) ->
   frequency(
     [ {2, {call, ?MODULE, fork, [not_commands(?MODULE, #state{ is_writer = false })]}}
       || S#state.is_writer ] ++
-    [ {30, {call, ?MODULE, incr_clock, []}}
+    [ {8, {call, ?MODULE, incr_clock, []}}
       %% Any proc can call incr_clock
     ] ++
     [ {10, {call, ?MODULE, get, [S#state.handle, key()]}}
