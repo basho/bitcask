@@ -31,6 +31,8 @@
 -define(NUM_KEYS, 50).
 %% max_file_size given to bitcask.
 -define(FILE_SIZE, 1000).
+%% Signal that Bitcask is under test
+-define(BITCASK_TESTING_KEY, bitcask_testing_module).
 
 %% Used for output within EUnit...
 -define(QC_FMT(Fmt, Args),
@@ -257,10 +259,10 @@ stop_node() ->
   slave:stop(node_name()).
 
 run_on_node(local, _Verbose, M, F, A) ->
-  rpc:call(node(), M, F, A);
+  rpc:call(node(), M, F, A, 120*1000);
 run_on_node(slave, Verbose, M, F, A) ->
   start_node(Verbose),
-  rpc:call(node_name(), M, F, A).
+  rpc:call(node_name(), M, F, A, 120*1000).
 
 %% Muting the QuickCheck license printout from the slave node
 mute(true,  Fun) -> Fun();
@@ -639,6 +641,7 @@ fold_keys(H) ->
   ?CHECK_HANDLE(H, [], bitcask:fold_keys(H, fun(#bitcask_entry{key = <<K:32>>}, Ks) -> [K|Ks] end, []))).
 
 bc_open(Writer) ->
+  erlang:put(?BITCASK_TESTING_KEY, ?MODULE),
   ?LOG({open, Writer},
   case Writer of
     true  -> catch bitcask:open(?BITCASK, [read_write, {max_file_size, ?FILE_SIZE}, {open_timeout, 1234}]);

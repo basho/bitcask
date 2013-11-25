@@ -60,6 +60,10 @@
 %% races, so use a diabolical number.
 -define(DIABOLIC_BIG_INT, 100).
 
+%% In an EQC testing scenario, poll_for_merge_lock() may have failed
+%% This atom is the signal that it failed but is harmless in this situation.
+-define(POLL_FOR_MERGE_LOCK_PSEUDOFAILURE, pseudo_failure).
+
 %% @type bc_state().
 -record(bc_state, {dirname,
                    write_file,     % File for writing
@@ -988,7 +992,12 @@ init_keydir(Dirname, WaitTime, ReadWriteModeP, KT) ->
                 end,
                 init_keydir_scan_key_files(Dirname, KeyDir, KT)
             after
-                ok = bitcask_lockops:release(Lock)
+                case Lock of
+                    ?POLL_FOR_MERGE_LOCK_PSEUDOFAILURE ->
+                        ok;
+                    _ ->
+                        ok = bitcask_lockops:release(Lock)
+                end
             end,
 
             %% Now that we loaded all the data, mark the keydir as ready
@@ -1385,12 +1394,23 @@ purge_setuid_files(Dirname) ->
     end.
 
 poll_for_merge_lock(Dirname) ->
+    poll_for_merge_lock(Dirname, 200).
+
+poll_for_merge_lock(_Dirname, 0) ->
+    case erlang:get(bitcask_testing_module) of
+        undefined ->
+            {error, {poll_for_merge_lock, not_testing, max_limit}};
+        TestMod ->
+            erlang:display({poll_for_merge_lock, testing, TestMod}),
+            ?POLL_FOR_MERGE_LOCK_PSEUDOFAILURE
+    end;
+poll_for_merge_lock(Dirname, N) ->
     case bitcask_lockops:acquire(merge, Dirname) of
         {ok, Lock} ->
             Lock;
         _ ->
             timer:sleep(100),
-            poll_for_merge_lock(Dirname)
+            poll_for_merge_lock(Dirname, N-1)
     end.
 
 poll_deferred_delete_queue_empty() ->
