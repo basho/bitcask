@@ -90,8 +90,7 @@ prop_expiry() ->
          ?FORALL({Ops, Expiry, ExpiryGrace, Timestep, M1},
                  {eqc_gen:non_empty(list(ops(Keys, Values))),
                   choose(1,10), choose(1, 10), choose(5, 50), choose(5,128)},
-         ?IMPLIES(length(Ops) > 1 andalso
-                  length([foo || {put, _, _} <- Ops]) > 2,
+         ?IMPLIES(true,
                  begin
                      Dirname = "/tmp/bc.prop.expiry",
                      ?cmd("rm -rf " ++ Dirname),
@@ -116,6 +115,9 @@ prop_expiry() ->
                          %% Dump the ops into the bitcask and build a model of
                          %% what SHOULD be in the data.
                          Model = apply_kv_ops(Ops, Bref, []),
+                         %% Assist our model's calculations by incrementing
+                         %% the clock one more time.
+                         _ = next_tstamp(),
 
                          %% Close the writing file to ensure that it's included
                          %% in the needs_merge calculation
