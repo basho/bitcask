@@ -60,6 +60,10 @@
 %% races, so use a diabolical number.
 -define(DIABOLIC_BIG_INT, 100).
 
+%% In an EQC testing scenario, poll_for_merge_lock() may have failed
+%% This atom is the signal that it failed but is harmless in this situation.
+-define(POLL_FOR_MERGE_LOCK_PSEUDOFAILURE, pseudo_failure).
+
 %% @type bc_state().
 -record(bc_state, {dirname,
                    write_file,     % File for writing
@@ -68,7 +72,9 @@
                    max_file_size,  % Max. size of a written file
                    opts,           % Original options used to open the bitcask
                    key_transform :: function(),
-                   keydir}).       % Key directory
+                   keydir,
+                   read_write_p :: integer()    % integer() avoids atom -> NIF
+                  }).       % Key directory
 
 -record(mstate, { dirname,
                   merge_lock,
@@ -84,6 +90,7 @@
                   expiry_time,
                   expiry_grace_time,
                   key_transform :: function(),
+                  read_write_p :: integer(),    % integer() avoids atom -> NIF
                   opts }).
 
 %% A bitcask is a directory containing:
@@ -128,8 +135,11 @@ open(Dirname, Opts) ->
     KeyTransformFun = get_key_transform(get_opt(key_transform, Opts)),
 
     %% Loop and wait for the keydir to come available.
-    case init_keydir(Dirname, WaitTime, WritingFile /= undefined, 
-                     KeyTransformFun) of
+    ReadWriteP = WritingFile /= undefined,
+    ReadWriteI = case ReadWriteP of true  -> 1;
+                                    false -> 0
+                 end,
+    case init_keydir(Dirname, WaitTime, ReadWriteP, KeyTransformFun) of
         {ok, KeyDir, ReadFiles} ->
             %% Ensure that expiry_secs is in Opts and not just application env
             ExpOpts = [{expiry_secs,get_opt(expiry_secs,Opts)}|Opts],
@@ -142,7 +152,8 @@ open(Dirname, Opts) ->
                                        max_file_size = MaxFileSize,
                                        opts = ExpOpts,
                                        keydir = KeyDir, 
-                                       key_transform = KeyTransformFun}),
+                                       key_transform = KeyTransformFun,
+                                       read_write_p = ReadWriteI}),
             Ref;
         {error, Reason} ->
             {error, Reason}
@@ -201,7 +212,7 @@ get(Ref, Key) ->
 get(_Ref, _Key, 0) -> {error, nofile};
 get(Ref, Key, TryNum) ->
     State = get_state(Ref),
-    case bitcask_nifs:keydir_get(State#bc_state.keydir, Key) of
+    case bitcask_nifs:keydir_get(State#bc_state.keydir, Key, State#bc_state.read_write_p) of
         not_found ->
             not_found;
         E when is_record(E, bitcask_entry) ->
@@ -361,7 +372,7 @@ fold(State, Fun, Acc0, MaxAge, MaxPut) ->
                                              false ->
                                                  case bitcask_nifs:keydir_get(
                                                         State#bc_state.keydir, K,
-                                                        FoldTime) of
+                                                        FoldTime, State#bc_state.read_write_p) of
                                                      not_found ->
                                                          Acc;
                                                      E when is_record(E, bitcask_entry) ->
@@ -606,6 +617,7 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
                       expiry_time = expiry_time(Opts),
                       expiry_grace_time = expiry_grace_time(Opts),
                       key_transform = KT,
+                      read_write_p = 0,
                       opts = Opts },
 
     %% Finally, start the merge process
@@ -980,7 +992,12 @@ init_keydir(Dirname, WaitTime, ReadWriteModeP, KT) ->
                 end,
                 init_keydir_scan_key_files(Dirname, KeyDir, KT)
             after
-                ok = bitcask_lockops:release(Lock)
+                case Lock of
+                    ?POLL_FOR_MERGE_LOCK_PSEUDOFAILURE ->
+                        ok;
+                    _ ->
+                        ok = bitcask_lockops:release(Lock)
+                end
             end,
 
             %% Now that we loaded all the data, mark the keydir as ready
@@ -1074,7 +1091,7 @@ merge_files(#mstate {  dirname = Dirname,
     merge_files(State2#mstate { input_files = Rest }).
 
 merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
-    case out_of_date(K, Tstamp, FileId, Pos, State#mstate.expiry_time, 
+    case out_of_date(State, K, Tstamp, FileId, Pos, State#mstate.expiry_time,
                      State#mstate.merge_start, false,
                      [State#mstate.live_keydir, State#mstate.del_keydir]) of
         true ->
@@ -1162,20 +1179,20 @@ inner_merge_write(K, V, Tstamp, OldFileId, OldOffset, State) ->
     State1#mstate { out_file = Outfile }.
 
 
-out_of_date(_Key, _Tstamp, _FileId, _Pos, _ExpiryTime, 
+out_of_date(_State, _Key, _Tstamp, _FileId, _Pos, _ExpiryTime,
             _MergeStart, EverFound, []) ->
     %% if we ever found it, and none of the entries were out of date,
     %% then it's not out of date
     EverFound == false;
-out_of_date(_Key, Tstamp, _FileId, _Pos, ExpiryTime, 
+out_of_date(_State, _Key, Tstamp, _FileId, _Pos, ExpiryTime,
             _EverFound, _MergeStart, _KeyDirs)
   when Tstamp < ExpiryTime ->
     true;
-out_of_date(Key, Tstamp, FileId, {_,_,Offset,_} = Pos, 
+out_of_date(State, Key, Tstamp, FileId, {_,_,Offset,_} = Pos,
             ExpiryTime, MergeStart, EverFound, [KeyDir|Rest]) ->
-    case bitcask_nifs:keydir_get(KeyDir, Key, MergeStart) of
+    case bitcask_nifs:keydir_get(KeyDir, Key, MergeStart, State#mstate.read_write_p) of
         not_found ->
-            out_of_date(Key, Tstamp, FileId, Pos, ExpiryTime, 
+            out_of_date(State, Key, Tstamp, FileId, Pos, ExpiryTime,
                         MergeStart, EverFound, Rest);
 
         E when is_record(E, bitcask_entry) ->
@@ -1196,7 +1213,7 @@ out_of_date(Key, Tstamp, FileId, {_,_,Offset,_} = Pos,
                                     true;
                                 false ->
                                     out_of_date(
-                                      Key, Tstamp, FileId, Pos, 
+                                      State, Key, Tstamp, FileId, Pos,
                                       ExpiryTime, MergeStart, true, Rest)
                             end;
 
@@ -1215,13 +1232,13 @@ out_of_date(Key, Tstamp, FileId, {_,_,Offset,_} = Pos,
                             %% Thus, we are NOT out of date. Check the
                             %% rest of the keydirs to ensure this
                             %% holds true.
-                            out_of_date(Key, Tstamp, FileId, Pos,
+                            out_of_date(State, Key, Tstamp, FileId, Pos,
                                         ExpiryTime, MergeStart, true, Rest)
                     end;
 
                 E#bitcask_entry.tstamp < Tstamp ->
                     %% Not out of date -- check rest of the keydirs
-                    out_of_date(Key, Tstamp, FileId, Pos,
+                    out_of_date(State, Key, Tstamp, FileId, Pos,
                                 ExpiryTime, MergeStart, true, Rest);
 
                 true ->
@@ -1303,7 +1320,7 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State,
                            already_exists, ValueType)
             end;
         tombstone ->
-            case bitcask_nifs:keydir_get(State2#bc_state.keydir, Key) of
+            case bitcask_nifs:keydir_get(State2#bc_state.keydir, Key, State#bc_state.read_write_p) of
                 not_found ->
                     {ok, State2#bc_state { write_file = WriteFile2 }};
                 E when is_record(E, bitcask_entry) ->
@@ -1379,12 +1396,23 @@ purge_setuid_files(Dirname) ->
     end.
 
 poll_for_merge_lock(Dirname) ->
+    poll_for_merge_lock(Dirname, 200).
+
+poll_for_merge_lock(_Dirname, 0) ->
+    case erlang:get(bitcask_testing_module) of
+        undefined ->
+            {error, {poll_for_merge_lock, not_testing, max_limit}};
+        TestMod ->
+            erlang:display({poll_for_merge_lock, testing, TestMod}),
+            ?POLL_FOR_MERGE_LOCK_PSEUDOFAILURE
+    end;
+poll_for_merge_lock(Dirname, N) ->
     case bitcask_lockops:acquire(merge, Dirname) of
         {ok, Lock} ->
             Lock;
         _ ->
             timer:sleep(100),
-            poll_for_merge_lock(Dirname)
+            poll_for_merge_lock(Dirname, N-1)
     end.
 
 poll_deferred_delete_queue_empty() ->

@@ -292,7 +292,7 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_new", 1, bitcask_nifs_keydir_new1},
     {"keydir_mark_ready", 1, bitcask_nifs_keydir_mark_ready},
     {"keydir_put_int", 9, bitcask_nifs_keydir_put_int},
-    {"keydir_get_int", 3, bitcask_nifs_keydir_get_int},
+    {"keydir_get_int", 4, bitcask_nifs_keydir_get_int},
     {"keydir_remove", 3, bitcask_nifs_keydir_remove},
     {"keydir_remove_int", 6, bitcask_nifs_keydir_remove},
     {"keydir_copy", 1, bitcask_nifs_keydir_copy},
@@ -1194,10 +1194,12 @@ ERL_NIF_TERM bitcask_nifs_keydir_get_int(ErlNifEnv* env, int argc, const ERL_NIF
     bitcask_keydir_handle* handle;
     ErlNifBinary key;
     uint32_t time;
+    uint32_t rw_p;
 
     if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle) &&
         enif_inspect_binary(env, argv[1], &key) &&
-        enif_get_uint(env, argv[2], &time))
+        enif_get_uint(env, argv[2], &time) &&
+        enif_get_uint(env, argv[3], &rw_p))
     {
         bitcask_keydir* keydir = handle->keydir;
         LOCK(keydir);
@@ -1207,7 +1209,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_get_int(ErlNifEnv* env, int argc, const ERL_NIF
         find_result f;
         find_keydir_entry(keydir, &key, time, handle->iterating, &f);
 
-        if (f.found && !f.is_tombstone && !f.no_snapshot)
+        if (f.found && !f.is_tombstone && (rw_p || !f.no_snapshot))
         {
             ERL_NIF_TERM result;
             result = enif_make_tuple6(env,
