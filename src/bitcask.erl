@@ -1396,7 +1396,7 @@ purge_setuid_files(Dirname) ->
     end.
 
 poll_for_merge_lock(Dirname) ->
-    poll_for_merge_lock(Dirname, 200).
+    poll_for_merge_lock(Dirname, 20).
 
 poll_for_merge_lock(_Dirname, 0) ->
     case erlang:get(bitcask_testing_module) of
