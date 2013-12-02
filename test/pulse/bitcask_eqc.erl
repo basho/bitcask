@@ -28,9 +28,9 @@
 %% bitcask. Each test uses a fresh directory!
 -define(BITCASK, token:get_name()).
 %% Number of keys used in the tests
--define(NUM_KEYS, 50).
+-define(NUM_KEYS, 15).
 %% max_file_size given to bitcask.
--define(FILE_SIZE, 1000).
+-define(FILE_SIZE, 250).
 %% Signal that Bitcask is under test
 -define(BITCASK_TESTING_KEY, bitcask_testing_module).
 
@@ -319,13 +319,11 @@ prop_pulse(Boolean) ->
     prop_pulse(local, Boolean).
 
 prop_pulse(LocalOrSlave, Verbose) ->
-  More = 2,
-  if More < 2 -> [erlang:display({"NOTE: we are using a perhaps small More value?", More}) || _ <- lists:seq(1,10)]; true -> ok end,
-  ?FORALL(Cmds, ?LET(Cmds, more_commands(More, commands(?MODULE)), shrink_commands(Cmds)),
+  P = ?FORALL(Cmds, commands(?MODULE),
   ?IMPLIES(length(Cmds) > 0,
+  ?ALWAYS(3,                           % re-do this many times in normal runs
   ?FORALL(Seed, pulse:seed(),
   begin
-    %% ok = file:write_file("/tmp/slf-stuff-just-in-case", term_to_binary({Cmds,Seed})),
     case run_on_node(LocalOrSlave, Verbose, ?MODULE, run_commands_on_node, [LocalOrSlave, Cmds, Seed, Verbose]) of
       {'EXIT', Err} ->
         equals({'EXIT', Err}, ok);
@@ -333,6 +331,13 @@ prop_pulse(LocalOrSlave, Verbose) ->
         ?WHENFAIL(
           ?QC_FMT("\nState: ~p\n", [S]),
           aggregate(zipwith(fun command_data/2, Cmds, H),
+          measure(len_cmds, length(Cmds),
+          measure(deep_len_cmds, lists:foldl(
+                              fun({set,_,{call, _, fork, [L]}}, Acc) ->
+                                      Acc + length(L);
+                                 (_, Acc) ->
+                                      Acc + 1
+                              end, 0, Cmds),
           measure(schedule, length(Schedule),
           %% In the end we check four things:
           %% - That the root process (the writer) returns ok (passes all postconditions)
@@ -343,9 +348,10 @@ prop_pulse(LocalOrSlave, Verbose) ->
             [ {0, equals(Res, ok)}
             | [ {Pid, equals(R, ok)} || {Pid, R} <- PidRs ] ] ++
             [ {errors, equals(Errors, [])}
-            , {events, check_trace(Trace)} ]))))
+            , {events, check_trace(Trace)} ]))))))
     end
-  end))).
+  end)))),
+  ?SHRINK(P, ?ALWAYS(25, P)).          % re-do this many times during shrinking
 
 %% A EUnit wrapper for the QuickCheck property
 prop_pulse_test_() ->
@@ -488,7 +494,7 @@ check_trace(Trace) ->
             %%  K not in Keys ==> not_found in Vals[K]
             case check_fold_keys_result(orddict:to_list(Vals), lists:sort(Keys)) of
               true  -> [];
-              false -> [{bad, Pid, {fold_keys, orddict:to_list(Vals), Keys}}]
+              false -> [{bad, Pid, {fold_keys, orddict:to_list(Vals), lists:sort(Keys)}}]
             end;
         %% Check a call to fold
          ({fold, Pid, Vals}, {result, Pid, KVs}) ->
@@ -497,7 +503,7 @@ check_trace(Trace) ->
             %%  K not in KVs  ==> not_found in Vals[K]
             case check_fold_result(orddict:to_list(Vals), lists:sort(KVs)) of
               true  -> [];
-              false -> [{bad, Pid, {fold, orddict:to_list(Vals), KVs}}]
+              false -> [{bad, Pid, {fold, orddict:to_list(Vals), lists:sort(KVs)}}]
             end
         end,
       eqc_temporal:union(Events, eqc_temporal:map(fun(D) -> {values, D} end, ValueDict))),
@@ -537,6 +543,7 @@ check_trace(Trace) ->
           ?QC_FMT("  BadForkedP:\n    ~p\n", [BadForkedP])
   end,
   ?WHENFAIL(begin
+    ?QC_FMT("Time: ~p ~p\n", [date(), time()]),
     ?QC_FMT("Events:\n~p\n", [Events]),
     ?QC_FMT("Bad1stPid:\n~p\n", [Bad1stPid]),
     ?QC_FMT("Folds:\n~p\n", [Folds]),
