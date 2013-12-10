@@ -33,8 +33,8 @@ eunit_nif:
 
 pulse:
 	@rm -rf $(BASE_DIR)/.eunit
-	$(REBAR_BIN) -D PULSE clean compile
-	$(REBAR_BIN) -D PULSE eunit skip_deps=true suites=$(PULSE_TESTS)
+	BITCASK_PULSE=1 $(REBAR_BIN) clean compile
+	BITCASK_PULSE=1 $(REBAR_BIN) -D PULSE eunit skip_deps=true suites=$(PULSE_TESTS)
 
 # Release tarball creation
 # Generates a tarball that includes all the deps sources so no checkouts are necessary
