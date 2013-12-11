@@ -64,6 +64,9 @@
 %% This atom is the signal that it failed but is harmless in this situation.
 -define(POLL_FOR_MERGE_LOCK_PSEUDOFAILURE, pseudo_failure).
 
+%% default rate, in bytes, for merge rate limiting
+-define(DEFAULT_LIMIT, 5*1024*1024).
+
 %% @type bc_state().
 -record(bc_state, {dirname,
                    write_file,     % File for writing
@@ -91,6 +94,8 @@
                   expiry_grace_time,
                   key_transform :: function(),
                   read_write_p :: integer(),    % integer() avoids atom -> NIF
+                  rate_limit, % integer, rate in bytes/s
+                  rate_data = {0, []}, %storage for merge rate data between iterations
                   opts }).
 
 %% A bitcask is a directory containing:
@@ -603,6 +608,15 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
     %% Initialize the other keydirs we need.
     {ok, DelKeyDir} = bitcask_nifs:keydir_new(),
 
+    RateLimit = 
+        case application:get_env(bitcask, merge_rate_limit) of
+            N when is_integer(N) andalso
+                   N > 0 ->
+                N;
+            _ ->
+                ?DEFAULT_LIMIT
+        end,
+
     %% Initialize our state for the merge
     State = #mstate { dirname = Dirname,
                       merge_lock = Lock,
@@ -618,6 +632,7 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
                       expiry_grace_time = expiry_grace_time(Opts),
                       key_transform = KT,
                       read_write_p = 0,
+                      rate_limit = RateLimit,
                       opts = Opts },
 
     %% Finally, start the merge process
@@ -1165,6 +1180,14 @@ inner_merge_write(K, V, Tstamp, OldFileId, OldOffset, State) ->
                 State#mstate { out_file = NewFile }                
         end,
     
+
+    {SleepTime, NewData} = rate_calc(State1, byte_size(V)),
+    case SleepTime > 0 of
+        true ->
+            timer:sleep(SleepTime);
+        _ ->
+            ok
+    end,
     {ok, Outfile, Offset, Size} =
         bitcask_fileops:write(State1#mstate.out_file,
                               K, V, Tstamp),
@@ -1176,8 +1199,29 @@ inner_merge_write(K, V, Tstamp, OldFileId, OldOffset, State) ->
     _ = bitcask_nifs:keydir_put(State#mstate.live_keydir, K,
                                 bitcask_fileops:file_tstamp(Outfile),
                                 Size, Offset, Tstamp, OldFileId, OldOffset),
-    State1#mstate { out_file = Outfile }.
+    State1#mstate { out_file = Outfile, rate_data = NewData }.
 
+rate_calc(#mstate{rate_limit = Limit, rate_data = {Bytes0, Data}}, Size) ->
+    %% io:fwrite(standard_error, "Limit ~p, Size ~p initial bytes ~p ~n", 
+    %%           [Limit, Size, Bytes0]),
+    Now = os:timestamp(),
+    {Evict, Keep} = lists:partition(fun({Ts, _Sz}) ->
+                                            timer:now_diff(Now, Ts) > 1000000
+                                    end, Data),
+    EvictSize = lists:sum([Sz || {_, Sz} <- Evict]),
+    Bytes = Bytes0 - EvictSize + Size,
+    SleepMs = 
+        case Bytes > Limit of
+            true ->
+                Chunk = Limit div 1000,
+                Over = Bytes - Limit,
+                Over div Chunk;
+            false ->
+                0
+        end,
+    %% io:fwrite(standard_error, "post-calc bytes ~p sleep interval ~p ~n", 
+    %%           [Bytes, SleepMs]),
+    {SleepMs, {Bytes, [{Now, Size}|Keep]}}.
 
 out_of_date(_State, _Key, _Tstamp, _FileId, _Pos, _ExpiryTime,
             _MergeStart, EverFound, []) ->
