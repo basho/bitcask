@@ -6,7 +6,7 @@
 %% basic schema test will check to make sure that all defaults from the schema
 %% make it into the generated app.config
 basic_schema_test() ->
-    %% The defaults are defined in ../priv/bitcask.schema. it is the file under test. 
+    %% The defaults are defined in ../priv/bitcask.schema. it is the file under test.
     Config = cuttlefish_unit:generate_templated_config("../priv/bitcask.schema", [], context()),
 
     cuttlefish_unit:assert_config(Config, "bitcask.data_root", "./data/bitcask"),
@@ -27,7 +27,7 @@ basic_schema_test() ->
     cuttlefish_unit:assert_config(Config, "bitcask.io_mode", erlang),
 
     %% Make sure no multi_backend
-    cuttlefish_unit:assert_config(Config, "riak_kv.multi_backend", undefined),
+    cuttlefish_unit:assert_not_configured(Config, "riak_kv.multi_backend"),
     ok.
 
 merge_window_test() ->
@@ -37,7 +37,7 @@ merge_window_test() ->
         {["bitcask", "merge_window", "end"], 12}
     ],
 
-    %% The defaults are defined in ../priv/bitcask.schema. it is the file under test. 
+    %% The defaults are defined in ../priv/bitcask.schema. it is the file under test.
     Config = cuttlefish_unit:generate_templated_config("../priv/bitcask.schema", Conf, context()),
 
     cuttlefish_unit:assert_config(Config, "bitcask.data_root", "./data/bitcask"),
@@ -58,7 +58,7 @@ merge_window_test() ->
     cuttlefish_unit:assert_config(Config, "bitcask.io_mode", erlang),
 
     %% Make sure no multi_backend
-    cuttlefish_unit:assert_config(Config, "riak_kv.multi_backend", undefined),
+    cuttlefish_unit:assert_not_configured(Config, "riak_kv.multi_backend"),
     ok.
 
 override_schema_test() ->
@@ -86,7 +86,7 @@ override_schema_test() ->
         {["bitcask", "io_mode"], nif}
     ],
 
-    %% The defaults are defined in ../priv/bitcask.schema. it is the file under test. 
+    %% The defaults are defined in ../priv/bitcask.schema. it is the file under test.
     Config = cuttlefish_unit:generate_templated_config("../priv/bitcask.schema", Conf, context()),
 
     cuttlefish_unit:assert_config(Config, "bitcask.data_root", "/absolute/data/bitcask"),
@@ -107,7 +107,7 @@ override_schema_test() ->
     cuttlefish_unit:assert_config(Config, "bitcask.io_mode", nif),
 
     %% Make sure no multi_backend
-    cuttlefish_unit:assert_config(Config, "riak_kv.multi_backend", undefined),
+    cuttlefish_unit:assert_not_configured(Config, "riak_kv.multi_backend"),
     ok.
 
 %% this context() represents the substitution variables that rebar will use during the build process.

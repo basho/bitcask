@@ -7,11 +7,11 @@
   {default, "{{platform_data_dir}}/bitcask"}
 ]}.
 
-%% @doc The open_timeout setting specifies the maximum time Bitcask will 
-%% block on startup while attempting to create or open the data directory. 
-%% The value is in seconds and the default is 4. You generally need not 
-%% change this value. If for some reason the timeout is exceeded on open 
-%% you'll see a log message of the form: 
+%% @doc The open_timeout setting specifies the maximum time Bitcask will
+%% block on startup while attempting to create or open the data directory.
+%% The value is in seconds and the default is 4. You generally need not
+%% change this value. If for some reason the timeout is exceeded on open
+%% you'll see a log message of the form:
 %% "Failed to start bitcask backend: .... "
 %% Only then should you consider a longer timeout.
 {mapping, "bitcask.open_timeout", "bitcask.open_timeout", [
@@ -52,15 +52,15 @@
   {level, advanced}
 ]}.
 
-{translation, 
- "bitcask.sync_strategy", 
- fun(Conf) -> 
-  Setting = cuttlefish_util:conf_get_value("bitcask.sync_strategy", Conf), 
+{translation,
+ "bitcask.sync_strategy",
+ fun(Conf) ->
+  Setting = cuttlefish:conf_get("bitcask.sync_strategy", Conf),
     case Setting of
       none -> none;
       o_sync -> o_sync;
       interval ->
-        Interval = cuttlefish_util:conf_get_value("bitcask.sync_interval", Conf, undefined),
+        Interval = cuttlefish:conf_get("bitcask.sync_interval", Conf, undefined),
         {seconds, Interval};
       _Default -> none
     end
@@ -79,13 +79,13 @@
 
 %% @doc The `merge_window` setting lets you specify when during the day merge
 %% operations are allowed to be triggered. Valid options are:
-%% 
+%%
 %% * `always` (default) No restrictions
 %% * `never` Merge will never be attempted
-%% * `window` Hours during which merging is permitted, where 
+%% * `window` Hours during which merging is permitted, where
 %%     `bitcask.merge_window.start` and
 %%     `bitcask.merge_window.end` are integers between 0 and 23.
-%% 
+%%
 %% If merging has a significant impact on performance of your cluster, or your
 %% cluster has quiet periods in which little storage activity occurs, you may
 %% want to change this setting from the default.
@@ -108,16 +108,16 @@
 ]}.
 
 
-{translation, 
- "bitcask.merge_window", 
- fun(Conf) -> 
-  Setting = cuttlefish_util:conf_get_value("bitcask.merge_window", Conf), 
+{translation,
+ "bitcask.merge_window",
+ fun(Conf) ->
+  Setting = cuttlefish:conf_get("bitcask.merge_window", Conf),
     case Setting of
       always -> always;
       never -> never;
       window ->
-        Start = cuttlefish_util:conf_get_value("bitcask.merge_window.start", Conf, undefined),
-        End = cuttlefish_util:conf_get_value("bitcask.merge_window.end", Conf, undefined),
+        Start = cuttlefish:conf_get("bitcask.merge_window.start", Conf, undefined),
+        End = cuttlefish:conf_get("bitcask.merge_window.end", Conf, undefined),
         {Start, End};
       _Default -> always
     end
@@ -129,7 +129,7 @@
 %% dead keys and 4 live keys, then merge will be triggered at the default
 %% setting. Increasing this value will cause merging to occur less often,
 %% whereas decreasing the value will cause merging to happen more often.
-%% 
+%%
 %% Default is: `60`
 {mapping, "bitcask.frag_merge_trigger", "bitcask.frag_merge_trigger", [
   {datatype, integer},
@@ -137,17 +137,17 @@
   {default, 60}
 ]}.
 
- 
+
 %% @doc `dead_bytes_merge_trigger` setting describes how much
 %% data stored for dead keys in a single file will trigger merging. The
 %% value is in bytes. If a file meets or exceeds the trigger value for dead
 %% bytes, merge will be triggered. Increasing the value will cause merging
 %% to occur less often, whereas decreasing the value will cause merging to
 %% happen more often.
-%% 
+%%
 %% When either of these constraints are met by any file in the directory,
 %% Bitcask will attempt to merge files.
-%% 
+%%
 %% Default is: 512MB in bytes
 {mapping, "bitcask.dead_bytes_merge_trigger", "bitcask.dead_bytes_merge_trigger", [
   {datatype, bytesize},
@@ -162,7 +162,7 @@
 %% in the merge at the default ratio. Increasing the value will cause fewer
 %% files to be merged, decreasing the value will cause more files to be
 %% merged.
-%% 
+%%
 %% Default is: `40`
 {mapping, "bitcask.frag_threshold", "bitcask.frag_threshold", [
   {datatype, integer},
@@ -174,7 +174,7 @@
 %% amount of data occupied by dead keys in a file to cause it to be included
 %% in the merge. Increasing the value will cause fewer files to be merged,
 %% decreasing the value will cause more files to be merged.
-%% 
+%%
 %% Default is: 128MB in bytes
 {mapping, "bitcask.dead_bytes_threshold", "bitcask.dead_bytes_threshold", [
   {datatype, bytesize},
@@ -187,7 +187,7 @@
 %% than the threshold will be included. Increasing the value will cause
 %% _more_ files to be merged, decreasing the value will cause _fewer_ files
 %% to be merged.
-%% 
+%%
 %% Default is: 10MB in bytes
 {mapping, "bitcask.small_file_threshold", "bitcask.small_file_threshold", [
   {datatype, bytesize},
@@ -216,7 +216,7 @@
 %% limited time-value, or if for space reasons you need to purge data, you can
 %% set the `expiry_secs` option. If you needed to purge data automatically
 %% after 1 day, set the value to `1d`.
-%% 
+%%
 %% Default is: `-1` which disables automatic expiration
 {mapping, "bitcask.expiry", "bitcask.expiry_secs", [
   {datatype, {duration, s}},
@@ -267,11 +267,11 @@
 ]}.
 
 
-%% @doc The open_timeout setting specifies the maximum time Bitcask will 
-%% block on startup while attempting to create or open the data directory. 
-%% The value is in seconds and the default is 4. You generally need not 
-%% change this value. If for some reason the timeout is exceeded on open 
-%% you'll see a log message of the form: 
+%% @doc The open_timeout setting specifies the maximum time Bitcask will
+%% block on startup while attempting to create or open the data directory.
+%% The value is in seconds and the default is 4. You generally need not
+%% change this value. If for some reason the timeout is exceeded on open
+%% you'll see a log message of the form:
 %% "Failed to start bitcask backend: .... "
 %% Only then should you consider a longer timeout.
 {mapping, "multi_backend.$name.bitcask.open_timeout", "riak_kv.multi_backend", [
@@ -325,13 +325,13 @@
 
 %% @doc The `merge_window` setting lets you specify when during the day merge
 %% operations are allowed to be triggered. Valid options are:
-%% 
+%%
 %% * `always` (default) No restrictions
 %% * `never` Merge will never be attempted
-%% * `window` Hours during which merging is permitted, where 
+%% * `window` Hours during which merging is permitted, where
 %%     `bitcask.merge_window.start` and
 %%     `bitcask.merge_window.end` are integers between 0 and 23.
-%% 
+%%
 %% If merging has a significant impact on performance of your cluster, or your
 %% cluster has quiet periods in which little storage activity occurs, you may
 %% want to change this setting from the default.
@@ -359,7 +359,7 @@
 %% dead keys and 4 live keys, then merge will be triggered at the default
 %% setting. Increasing this value will cause merging to occur less often,
 %% whereas decreasing the value will cause merging to happen more often.
-%% 
+%%
 %% Default is: `60`
 {mapping, "multi_backend.$name.bitcask.frag_merge_trigger", "riak_kv.multi_backend", [
   {datatype, integer},
@@ -367,17 +367,17 @@
   {default, 60}
 ]}.
 
- 
+
 %% @doc `dead_bytes_merge_trigger` setting describes how much
 %% data stored for dead keys in a single file will trigger merging. The
 %% value is in bytes. If a file meets or exceeds the trigger value for dead
 %% bytes, merge will be triggered. Increasing the value will cause merging
 %% to occur less often, whereas decreasing the value will cause merging to
 %% happen more often.
-%% 
+%%
 %% When either of these constraints are met by any file in the directory,
 %% Bitcask will attempt to merge files.
-%% 
+%%
 %% Default is: 512mb in bytes
 {mapping, "multi_backend.$name.bitcask.dead_bytes_merge_trigger", "riak_kv.multi_backend", [
   {datatype, bytesize},
@@ -392,7 +392,7 @@
 %% in the merge at the default ratio. Increasing the value will cause fewer
 %% files to be merged, decreasing the value will cause more files to be
 %% merged.
-%% 
+%%
 %% Default is: `40`
 {mapping, "multi_backend.$name.bitcask.frag_threshold", "riak_kv.multi_backend", [
   {datatype, integer},
@@ -404,7 +404,7 @@
 %% amount of data occupied by dead keys in a file to cause it to be included
 %% in the merge. Increasing the value will cause fewer files to be merged,
 %% decreasing the value will cause more files to be merged.
-%% 
+%%
 %% Default is: 128mb in bytes
 {mapping, "multi_backend.$name.bitcask.dead_bytes_threshold", "riak_kv.multi_backend", [
   {datatype, bytesize},
@@ -417,7 +417,7 @@
 %% than the threshold will be included. Increasing the value will cause
 %% _more_ files to be merged, decreasing the value will cause _fewer_ files
 %% to be merged.
-%% 
+%%
 %% Default is: 10mb in bytes
 {mapping, "multi_backend.$name.bitcask.small_file_threshold", "riak_kv.multi_backend", [
   {datatype, bytesize},
@@ -446,7 +446,7 @@
 %% limited time-value, or if for space reasons you need to purge data, you can
 %% set the `expiry_secs` option. If you needed to purge data automatically
 %% after 1 day, set the value to `1d`.
-%% 
+%%
 %% Default is: `-1` which disables automatic expiration
 {mapping, "multi_backend.$name.bitcask.expiry", "riak_kv.multi_backend", [
   {datatype, {duration, s}},
