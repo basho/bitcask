@@ -355,10 +355,20 @@ prop_pulse(LocalOrSlave, Verbose) ->
 
 %% A EUnit wrapper for the QuickCheck property
 prop_pulse_test_() ->
-  {timeout, 1000000,
+  Timeout = case os:getenv("PULSE_TIME") of
+                false -> 60;
+                Val   -> list_to_integer(Val)
+            end,
+  ExtraTO = case os:getenv("PULSE_SHRINK_TIME") of
+                false -> 0;
+                Val2  -> list_to_integer(Val2)
+            end,
+  io:format(user, "prop_pulse_test time: ~p + ~p seconds\n",
+            [Timeout, ExtraTO]),
+  {timeout, (Timeout*1000) + 30,
    fun() ->
        copy_bitcask_app(),
-       ?assert(eqc:quickcheck(eqc:testing_time(60,?QC_OUT(prop_pulse()))))
+       ?assert(eqc:quickcheck(eqc:testing_time(Timeout,?QC_OUT(prop_pulse()))))
    end}.
 
 %% Needed since rebar fails miserably in setting up the .eunit test directory
