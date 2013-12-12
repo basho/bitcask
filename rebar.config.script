@@ -1,0 +1,72 @@
+PulseBuild = case os:getenv("BITCASK_PULSE") of
+                 false ->
+                     false;
+                 _ ->
+                     true
+             end,
+case PulseBuild of
+    true ->
+        PulseOpts =
+            [{pulse_no_side_effect,[{erlang,display,1}]},
+             {pulse_side_effect,
+              [ {bitcask_nifs, keydir_new, 0}
+              , {bitcask_nifs, keydir_new, 1}
+              , {bitcask_nifs, keydir_mark_ready, 1}
+              , {bitcask_nifs, keydir_put_int, 8}
+              , {bitcask_nifs, keydir_get_int, 2}
+              , {bitcask_nifs, keydir_remove, 2}
+              , {bitcask_nifs, keydir_remove_int, 5}
+              , {bitcask_nifs, keydir_copy, 1}
+              , {bitcask_nifs, keydir_itr_int, 4}
+              , {bitcask_nifs, keydir_itr_next_int, 1}
+              , {bitcask_nifs, keydir_itr_release, 1}
+              , {bitcask_nifs, keydir_info, 1}
+              , {bitcask_nifs, keydir_release, 1}
+
+              , {bitcask_nifs, lock_acquire,   2}
+              , {bitcask_nifs, lock_release,   1}
+              , {bitcask_nifs, lock_readdata,  1}
+              , {bitcask_nifs, lock_writedata, 2}
+
+              , {bitcask_nifs, file_open,   2}
+              , {bitcask_nifs, file_close,  1}
+              , {bitcask_nifs, file_sync,   1}
+              , {bitcask_nifs, file_pread,  3}
+              , {bitcask_nifs, file_pwrite, 3}
+              , {bitcask_nifs, file_read,   2}
+              , {bitcask_nifs, file_write,  2}
+              , {bitcask_nifs, file_seekbof, 1}
+
+              , {bitcask_time, tstamp, 0}
+
+              , {file, '_', '_'}
+              , {filelib, '_', '_'}
+              , {os, '_', '_'} ]},
+
+             {pulse_replace_module,
+              [ {gen_server, pulse_gen_server}
+              , {application, pulse_application}
+              , {supervisor, pulse_supervisor} ]}
+            ],
+        PulseCFlags = [{"CFLAGS", "$CFLAGS -DPULSE"}],
+        UpdConfig = case lists:keysearch(eunit_compile_opts, 1, CONFIG) of
+                        {value, {eunit_compile_opts, Opts}} ->
+                            lists:keyreplace(eunit_compile_opts,
+                                             1,
+                                             CONFIG,
+                                             {eunit_compile_opts, Opts ++ PulseOpts});
+                        _ ->
+                            [{eunit_compile_opts, PulseOpts} | CONFIG]
+                    end,
+        case lists:keysearch(port_env, 1, UpdConfig) of
+            {value, {port_env, PortEnv}} ->
+                lists:keyreplace(port_env,
+                                 1,
+                                 UpdConfig,
+                                 {port_env, PortEnv ++ PulseCFlags});
+            _ ->
+                [{port_env, PulseCFlags} | UpdConfig]
+        end;
+    false ->
+        CONFIG
+end.
