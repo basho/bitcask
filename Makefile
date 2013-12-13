@@ -26,10 +26,10 @@ clean:
 test: deps compile eunit_erlang eunit_nif
 
 eunit_erlang:
-	IOMODE="erlang" $(REBAR_BIN) skip_deps=true eunit
+	BITCASK_IO_MODE="erlang" $(REBAR_BIN) skip_deps=true eunit
 
 eunit_nif:
-	IOMODE="nif" $(REBAR_BIN) skip_deps=true eunit
+	BITCASK_IO_MODE="nif" $(REBAR_BIN) skip_deps=true eunit
 
 NOW	= $(shell date +%s)
 COUNTER = $(PWD)/$(NOW).current_counterexample.eqc
