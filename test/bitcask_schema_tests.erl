@@ -6,6 +6,7 @@
 %% basic schema test will check to make sure that all defaults from the schema
 %% make it into the generated app.config
 basic_schema_test() ->
+    lager:start(),
     %% The defaults are defined in ../priv/bitcask.schema. it is the file under test.
     Config = cuttlefish_unit:generate_templated_config("../priv/bitcask.schema", [], context()),
 
@@ -31,10 +32,11 @@ basic_schema_test() ->
     ok.
 
 merge_window_test() ->
+    lager:start(),
     Conf = [
-        {["bitcask", "merge_window"], window},
-        {["bitcask", "merge_window", "start"], 0},
-        {["bitcask", "merge_window", "end"], 12}
+        {["bitcask", "merge", "policy"], window},
+        {["bitcask", "merge", "window", "start"], 0},
+        {["bitcask", "merge", "window", "end"], 12}
     ],
 
     %% The defaults are defined in ../priv/bitcask.schema. it is the file under test.
@@ -62,27 +64,28 @@ merge_window_test() ->
     ok.
 
 override_schema_test() ->
+    lager:start(),
     %% Conf represents the riak.conf file that would be read in by cuttlefish.
     %% this proplists is what would be output by the conf_parse module
     Conf = [
         {["bitcask", "data_root"], "/absolute/data/bitcask"},
         {["bitcask", "open_timeout"], 2},
-        {["bitcask", "sync_strategy"], interval},
-        {["bitcask", "sync_interval"], "10s"},
+        {["bitcask", "sync", "strategy"], interval},
+        {["bitcask", "sync", "interval"], "10s"},
         {["bitcask", "max_file_size"], "4GB"},
-        {["bitcask", "merge_window"], never},
-        {["bitcask", "merge_window", "start"], 0},
-        {["bitcask", "merge_window", "end"], 12},
-        {["bitcask", "frag_merge_trigger"], 20},
-        {["bitcask", "dead_bytes_merge_trigger"], "256MB"},
-        {["bitcask", "frag_threshold"], 10},
-        {["bitcask", "dead_bytes_threshold"], "64MB"},
-        {["bitcask", "small_file_threshold"], "5MB"},
-        {["bitcask", "max_fold_age"], 12},
-        {["bitcask", "max_fold_puts"], 7},
+        {["bitcask", "merge", "policy"], never},
+        {["bitcask", "merge", "window", "start"], 0},
+        {["bitcask", "merge", "window", "end"], 12},
+        {["bitcask", "merge", "triggers", "fragmentation"], 20},
+        {["bitcask", "merge", "triggers", "dead_bytes"], "256MB"},
+        {["bitcask", "merge", "thresholds", "fragmentation"], 10},
+        {["bitcask", "merge", "thresholds", "dead_bytes"], "64MB"},
+        {["bitcask", "merge", "thresholds", "small_file"], "5MB"},
+        {["bitcask", "fold", "max_age"], "12ms"},
+        {["bitcask", "fold", "max_puts"], 7},
         {["bitcask", "expiry"], "20s" },
-        {["bitcask", "require_hint_crc"], false },
-        {["bitcask", "expiry_grace_time"], "15s" },
+        {["bitcask", "hintfile_checksums"], "allow_missing"},
+        {["bitcask", "expiry", "grace_time"], "15s" },
         {["bitcask", "io_mode"], nif}
     ],
 
@@ -99,7 +102,7 @@ override_schema_test() ->
     cuttlefish_unit:assert_config(Config, "bitcask.frag_threshold", 10),
     cuttlefish_unit:assert_config(Config, "bitcask.dead_bytes_threshold", 67108864),
     cuttlefish_unit:assert_config(Config, "bitcask.small_file_threshold", 5242880),
-    cuttlefish_unit:assert_config(Config, "bitcask.max_fold_age", 12),
+    cuttlefish_unit:assert_config(Config, "bitcask.max_fold_age", 12000),
     cuttlefish_unit:assert_config(Config, "bitcask.max_fold_puts", 7),
     cuttlefish_unit:assert_config(Config, "bitcask.expiry_secs", 20),
     cuttlefish_unit:assert_config(Config, "bitcask.require_hint_crc", false),
