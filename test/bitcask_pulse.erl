@@ -351,7 +351,7 @@ prop_pulse(LocalOrSlave, Verbose) ->
             , {events, check_trace(Trace)} ]))))))
     end
   end)))),
-  ?SHRINK(P, ?ALWAYS(25, P)).          % re-do this many times during shrinking
+  ?SHRINK(P, [?ALWAYS(25, P)]).          % re-do this many times during shrinking
 
 %% A EUnit wrapper for the QuickCheck property
 prop_pulse_test_() ->
