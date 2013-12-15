@@ -36,7 +36,8 @@
 
 %% API
 -export([start_link/0,
-         merge/1, merge/2, merge/3]).
+         merge/1, merge/2, merge/3,
+         status/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -60,6 +61,9 @@ merge(Dir, Opts) ->
 
 merge(Dir, Opts, Files) ->
     gen_server:call(?MODULE, {merge, [Dir, Opts, Files]}, infinity).
+
+status() ->
+    gen_server:call(?MODULE, {status}, infinity).
 
 %% ====================================================================
 %% gen_server callbacks
@@ -114,7 +118,11 @@ handle_call({merge, Args0}, _From, #state { queue = Q } = State) ->
                 _ ->
                     {reply, ok, State#state { queue = Q ++ [Args] }}
             end
-    end.
+    end;
+handle_call({status}, _From, #state { queue = Q, worker = Worker } = State) ->
+    {reply, {length(Q), Worker}, State};
+handle_call(_, _From, State) ->
+    {reply, unknown_call, State}.
 
 handle_cast(_Msg, State) ->
     {noreply, State}.

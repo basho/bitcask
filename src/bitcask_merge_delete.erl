@@ -189,4 +189,40 @@ merge_until(Dir, MinCount, CountSetuids) ->
             merge_until(Dir, MinCount, CountSetuids)
     end.
     
+regression_gh82_test_() ->
+    {timeout, 300, ?_assertEqual(ok, regression_gh82_body())}.
+
+regression_gh82_body() ->
+    Dir = "/tmp/bc.regression_gh82",
+
+    os:cmd("rm -rf " ++ Dir),
+    Reference = bitcask:open(Dir, [read_write | regression_gh82_opts()]),
+    bitcask:put(Reference, <<"key_to_delete">>, <<"tr0ll">>),
+    [ bitcask:put(Reference, term_to_binary(X), <<1:(8 * 1024 * 100)>>) || X <- lists:seq(1, 3000)],
+    bitcask:delete(Reference, <<"key_to_delete">>),
+    [ bitcask:put(Reference, term_to_binary(X), <<1:(8 * 1024 * 100)>>) || X <- lists:seq(1, 3000)],
+    timer:sleep(1000 + 1000),
+    bitcask_merge_worker:merge(Dir, regression_gh82_opts(), {[Dir ++ "/2.bitcask.data"], []}),
+    poll_merge_worker(),
+    timer:sleep(2*1000),
+    bitcask:close(Reference),
+
+    Reference2 = bitcask:open(Dir, [read_write | regression_gh82_opts()]),
+    not_found = bitcask:get(Reference2, <<"key_to_delete">>),
+    ok.
+
+regression_gh82_opts() ->
+    [{max_file_size, 268435456},
+     {dead_bytes_threshold, 89478485},
+     {dead_bytes_merge_trigger, 178956970}].
+
+poll_merge_worker() ->
+    case bitcask_merge_worker:status() of
+        {0, undefined} ->
+            ok;
+        _ ->
+            timer:sleep(100),
+            poll_merge_worker()
+    end.
+
 -endif. %% TEST
