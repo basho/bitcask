@@ -923,9 +923,6 @@ get_opt(Key, Opts) ->
 put_state(Ref, State) ->
     erlang:put(Ref, State).
 
-reverse_sort(L) ->
-    lists:reverse(lists:sort(L)).
-
 kt_id(Key) ->
     Key.
 
@@ -1061,7 +1058,7 @@ list_data_files(Dirname, WritingFile, MergingFile) ->
     Files2 = bitcask_fileops:data_file_tstamps(Dirname),
     if Files1 == Files2 ->
             %% No race, Files1 is a stable list.
-            [F || {_Tstamp, F} <- reverse_sort(Files1),
+            [F || {_Tstamp, F} <- lists:sort(Files1),
                   F /= WritingFile,
                   F /= MergingFile];
        true ->
@@ -1512,9 +1509,9 @@ write_lock_perms_test() ->
 list_data_files_test() ->
     os:cmd("rm -rf /tmp/bc.test.list; mkdir -p /tmp/bc.test.list"),
 
-    %% Generate a list of files from 12->8 (already in order we expect
+    %% Generate a list of files from 8->12
     ExpFiles = [?FMT("/tmp/bc.test.list/~w.bitcask.data", [I]) ||
-                   I <- lists:seq(12, 8, -1)],
+                   I <- lists:seq(8, 12)],
 
     %% Create each of the files
     [] = os:cmd(?FMT("touch ~s", [string:join(ExpFiles, " ")])),
