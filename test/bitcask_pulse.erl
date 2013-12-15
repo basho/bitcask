@@ -35,7 +35,7 @@
 -define(BITCASK_TESTING_KEY, bitcask_testing_module).
 %% Max number of forks to run simultaneously.  Too many means huge pauses
 %% while PULSE & postcondition checking operates.
--define(FORK_CONC_LIMIT, 4).
+-define(FORK_CONC_LIMIT, 2).
 
 %% Used for output within EUnit...
 -define(QC_FMT(Fmt, Args),
@@ -595,7 +595,7 @@ check_trace(Trace) ->
       true ->
           ok;
       false ->
-          io:format(user, "Sanity check:\n", []),
+          io:format(user, "~p Sanity check:\n", [time()]),
           ?QC_FMT("  Bad1stPid:\n    ~p\n", [Bad1stPid]),
           ?QC_FMT("  Folds:\n    ~p\n", [Folds]),
           ?QC_FMT("  BadForked2:\n    ~p\n", [BadForked2]),
@@ -605,10 +605,11 @@ check_trace(Trace) ->
     ?QC_FMT("Time: ~p ~p\n", [date(), time()]),
     ?QC_FMT("Events:\n~p\n", [Events]),
     ?QC_FMT("Bad1stPid:\n~p\n", [Bad1stPid]),
-    ?QC_FMT("Folds:\n~p\n", [Folds]),
+    %% ?QC_FMT("Folds:\n~p\n", [Folds]),
     ?QC_FMT("BadForked2:\n~p\n", [BadForked2]),
     ?QC_FMT("BadForkedP:\n~p\n", [BadForkedP]) end,
     %% There shouldn't be any Bad stuff, for the 1st pid or forked pids
+    %%%%%%%%  eqc_temporal:is_false(Bad1stPid)).
     eqc_temporal:is_false(Bad1stPid) andalso BadForkedP == false).
 
 check_fold_result([{K, Vs}|Expected], [{K, V}|Actual]) ->
@@ -688,16 +689,22 @@ incr_clock() ->
     ?LOG(incr_clock,
     bitcask_time:test__incr_fudge(1)).
 
+nice_key(K) ->
+    list_to_binary(io_lib:format("kk~2.2.0w", [K])).
+
+un_nice_key(<<"kk", Num:2/binary>>) ->
+    list_to_integer(binary_to_list(Num)).
+
 get(H, K) ->
   ?LOG({get, H, K},
-  ?CHECK_HANDLE(H, not_found, bitcask:get(H, <<K:32>>))).
+  ?CHECK_HANDLE(H, not_found, bitcask:get(H, nice_key(K)))).
 
 gets(H, {Start, End}) ->
     [get(H, K) || K <- lists:seq(Start, End)].
 
 put(H, K, V) ->
   ?LOG({put, H, K, V},
-  ?CHECK_HANDLE(H, ok, bitcask:put(H, <<K:32>>, V))).
+  ?CHECK_HANDLE(H, ok, bitcask:put(H, nice_key(K), V))).
 
 puts(H, {K1, K2}, V) ->
   case lists:usort([ put(H, K, V) || K <- lists:seq(K1, K2) ]) of
@@ -707,34 +714,43 @@ puts(H, {K1, K2}, V) ->
 
 delete(H, K) ->
   ?LOG({delete, H, K},
-  ?CHECK_HANDLE(H, ok, bitcask:delete(H, <<K:32>>))).
+  ?CHECK_HANDLE(H, ok, bitcask:delete(H, nice_key(K)))).
 
 fork_merge(H) ->
   ?LOG({fork_merge, H},
   ?CHECK_HANDLE(H, not_needed,
-  case bitcask:needs_merge(H) of
+  case needs_merge_wrapper(H) of
     {true, Files} -> catch bitcask_merge_worker:merge(?BITCASK, [], Files);
     false         -> not_needed;
-    Else -> Else
+    Else          -> Else
   end)).
 
 merge(H) ->
+  ?LOG({merge,H},
   ?CHECK_HANDLE(H, not_needed,
-  case bitcask:needs_merge(H) of
+  case needs_merge_wrapper(H) of
     {true, Files} ->
       case catch bitcask:merge(?BITCASK, [], Files) of
         {'EXIT', Err} -> Err;
         R             -> R
       end;
     false -> not_needed
-  end).
+  end)).
 
 kill(Pid) ->
   ?LOG({kill, Pid}, (catch exit(Pid, kill))).
 
 needs_merge(H) ->
   ?LOG({needs_merge, H},
-  ?CHECK_HANDLE(H, false, bitcask:needs_merge(H))).
+  ?CHECK_HANDLE(H, false, needs_merge_wrapper(H))).
+
+needs_merge_wrapper(H) ->
+    case check_no_tombstones(H, ok) of
+        ok ->
+            bitcask:needs_merge(H);
+        Else ->
+            {needs_merge_wrapper_error, Else}
+    end.
 
 join_reader(ReaderPid) ->
   receive
@@ -747,11 +763,11 @@ sync(H) ->
 
 fold(H) ->
   ?LOG({fold, H},
-  ?CHECK_HANDLE(H, [], bitcask:fold(H, fun(<<K:32>>, V, Acc) -> [{K,V}|Acc] end, []))).
+  ?CHECK_HANDLE(H, [], bitcask:fold(H, fun(Kb, V, Acc) -> [{un_nice_key(Kb),V}|Acc] end, []))).
 
 fold_keys(H) ->
   ?LOG({fold_keys, H},
-  ?CHECK_HANDLE(H, [], bitcask:fold_keys(H, fun(#bitcask_entry{key = <<K:32>>}, Ks) -> [K|Ks] end, []))).
+  ?CHECK_HANDLE(H, [], bitcask:fold_keys(H, fun(#bitcask_entry{key = Kb}, Ks) -> [un_nice_key(Kb)|Ks] end, []))).
 
 bc_open(Writer) ->
   erlang:put(?BITCASK_TESTING_KEY, ?MODULE),
@@ -1051,7 +1067,7 @@ mangle_temporal_relation_with_finite_time([H|T]) ->
 
 check_no_tombstones(Ref, Good) ->
     Res = bitcask:fold_keys(Ref, fun(K, Acc0) -> [K|Acc0] end,
-                            [], -1, -1),
+                            [], -1, -1, true),
     case [X || {tombstone, _} = X <- Res] of
         [] ->
             Good;

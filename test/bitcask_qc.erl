@@ -136,9 +136,9 @@ check_fstats(Ref, Expect) ->
 
 check_model(Ref, Model) ->
     F = fun({K, deleted}) ->
-                ?assertEqual(not_found, bitcask:get(Ref, K));
+                ?assertEqual({K, not_found}, {K, bitcask:get(Ref, K)});
            ({K, V}) ->
-                ?assertEqual({ok, V}, bitcask:get(Ref, K))
+                ?assertEqual({K, {ok, V}}, {K, bitcask:get(Ref, K)})
         end,
     lists:map(F, Model).
 
@@ -207,7 +207,7 @@ prop_merge() ->
                      Validate = fun(Fname) ->
                                         {ok, S} = bitcask_fileops:open_file(Fname),
                                         try
-                                            ?assertEqual(true, bitcask_fileops:has_valid_hintfile(S))
+                                            ?assertEqual({Fname, true}, {Fname, bitcask_fileops:has_valid_hintfile(S)})
                                         after
                                             bitcask_fileops:close(S)
                                         end

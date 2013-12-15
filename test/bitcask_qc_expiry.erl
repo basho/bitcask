@@ -64,7 +64,7 @@ write_file(Ref) ->
 current_tstamp() ->
     case erlang:get(meck_tstamp) of
         undefined ->
-            erlang:error(uninitialized_meck_tstamp);
+            next_tstamp();                      % Set it up for us
         Value ->
             Value
     end.
