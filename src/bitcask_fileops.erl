@@ -28,7 +28,7 @@
          close/1,
          close_for_writing/1,
          data_file_tstamps/1,
-         write/4,
+         write/5,
          read/3,
          sync/1,
          delete/1,
@@ -38,7 +38,8 @@
          filename/1,
          hintfile_name/1,
          file_tstamp/1,
-         check_write/4]).
+         check_write/4,
+         un_write/1]).
 -export([read_file_info/1, write_file_info/2, is_file/1]).
 
 -include_lib("kernel/include/file.hrl").
@@ -122,7 +123,7 @@ open_file(Filename) ->
         {ok, FD} ->
             {ok, #filestate{mode = read_only,
                             filename = Filename, tstamp = file_tstamp(Filename),
-                            fd = FD, ofs = 0 }};
+                            fd = FD, ofs = 0}};
         {error, Reason} ->
             {error, Reason}
     end.
@@ -152,7 +153,7 @@ close_hintfile(State = #filestate { hintfd = HintFd, hintcrc = HintCRC }) ->
     %% timestamp and offset as large as the file format supports so opening with
     %% an older version of bitcask will just reject the record at the end of the
     %% hintfile and otherwise work normally.
-    Iolist = hintfile_entry(<<>>, 0, {?MAXOFFSET, HintCRC}),
+    Iolist = hintfile_entry(<<>>, 0, 0, ?MAXOFFSET_V2, HintCRC),
     ok = bitcask_io:file_write(HintFd, Iolist),
     bitcask_io:file_sync(HintFd),
     bitcask_io:file_close(HintFd),
@@ -193,14 +194,14 @@ delete(#filestate{ filename = FN } = State) ->
 
 %% @doc Write a Key-named binary data field ("Value") to the Filestate.
 -spec write(#filestate{}, 
-            Key :: binary(), Value :: binary(), Tstamp :: integer()) ->
+            Key :: binary(), Value :: binary(), Tstamp :: integer(), TombstoneP :: boolean()) ->
         {ok, #filestate{}, Offset :: integer(), Size :: integer()} |
         {error, read_only}.
-write(#filestate { mode = read_only }, _K, _V, _Tstamp) ->
+write(#filestate { mode = read_only }, _K, _V, _Tstamp, _TombstoneP) ->
     {error, read_only};
 write(Filestate=#filestate{fd = FD, hintfd = HintFD, 
                            hintcrc = HintCRC0, ofs = Offset},
-      Key, Value, Tstamp) ->
+      Key, Value, Tstamp, TombstoneP) ->
     KeySz = size(Key),
     true = (KeySz =< ?MAXKEYSIZE),
     ValueSz = size(Value),
@@ -214,14 +215,32 @@ write(Filestate=#filestate{fd = FD, hintfd = HintFD,
     ok = bitcask_io:file_pwrite(FD, Offset, Bytes),
     %% Create and store the corresponding hint entry
     TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
-    Iolist = hintfile_entry(Key, Tstamp, {Offset, TotalSz}),
+    TombInt = if TombstoneP -> 1;
+                 true       -> 0
+              end,
+    Iolist = hintfile_entry(Key, Tstamp, TombInt, Offset, TotalSz),
     ok = bitcask_io:file_write(HintFD, Iolist),
     %% Record our final offset
     TotalSz = iolist_size(Bytes),
     HintCRC = erlang:crc32(HintCRC0, Iolist), % compute crc of hint
     {ok, Filestate#filestate{ofs = Offset + TotalSz,
-                            hintcrc = HintCRC}, Offset, TotalSz}.
+                             hintcrc = HintCRC,
+                             l_ofs = Offset,
+                             l_hbytes = iolist_size(Iolist),
+                             l_hintcrc = HintCRC0}, Offset, TotalSz}.
 
+%% WARNING: We can only undo the last write.
+un_write(Filestate=#filestate{fd = FD, hintfd = HintFD, 
+                              l_ofs = LastOffset,
+                              l_hbytes = LastHintBytes,
+                              l_hintcrc = LastHintCRC}) ->
+    {ok, _O2} = bitcask_io:file_position(FD, LastOffset),
+    ok = bitcask_io:file_truncate(FD),
+    {ok, 0} = bitcask_io:file_position(FD, 0),
+    {ok, _HO2} = bitcask_io:file_position(HintFD, {cur, -LastHintBytes}),
+    ok = bitcask_io:file_truncate(HintFD),
+    {ok, Filestate#filestate{ofs = LastOffset,
+                             hintcrc = LastHintCRC}}.
 
 %% @doc Given an Offset and Size, get the corresponding k/v from Filename.
 -spec read(Filename :: string() | #filestate{}, Offset :: integer(),
@@ -342,13 +361,17 @@ file_tstamp(#filestate{tstamp=Tstamp}) ->
 file_tstamp(Filename) when is_list(Filename) ->
     list_to_integer(filename:basename(Filename, ".bitcask.data")).
 
--spec check_write(fresh | #filestate{}, binary(), binary(), integer()) ->
+-spec check_write(fresh | #filestate{}, binary(), binary()|tombstone, integer()) ->
       fresh | wrap | ok.
 check_write(fresh, _Key, _Value, _MaxSize) ->
     %% for the very first write, special-case
     fresh;
 check_write(#filestate { ofs = Offset }, Key, Value, MaxSize) ->
-    Size = ?HEADER_SIZE + size(Key) + size(Value),
+    ValSize = case Value of
+                  tombstone -> ?TOMBSTONE_V2_SIZE;
+                  _ -> size(Value)
+              end,
+    Size = ?HEADER_SIZE + size(Key) + ValSize,
     case (Offset + Size) > MaxSize of
         true ->
             wrap;
@@ -408,7 +431,8 @@ read_crc(Fd) ->
         {ok, <<0:?TSTAMPFIELD, 
                0:?KEYSIZEFIELD,
                ExpectCRC:?TOTALSIZEFIELD, 
-               (?MAXOFFSET):?OFFSETFIELD>>} ->
+               _TombInt:?TOMBSTONEFIELD_V2,
+               (?MAXOFFSET_V2):?OFFSETFIELD_V2>>} ->
             ExpectCRC;
         _ -> error
     end.
@@ -468,7 +492,7 @@ fold_keys_loop(Fd, Offset, Fun, Acc0) ->
 
 fold_keys_int_loop(<<_Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD, 
                      KeySz:?KEYSIZEFIELD, ValueSz:?VALSIZEFIELD, 
-                     Key:KeySz/bytes, _:ValueSz/bytes,
+                     Key:KeySz/bytes, Value:ValueSz/bytes,
                      Rest/binary>>, 
                    Fun, Acc0, Consumed0, 
                    {Offset, AvgValSz0}, 
@@ -477,18 +501,23 @@ fold_keys_int_loop(<<_Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD,
     PosInfo = {Offset, TotalSz},
     Consumed = Consumed0 + TotalSz,
     AvgValSz = (AvgValSz0 + ValueSz) div 2,
-    Acc = Fun(Key, Tstamp, PosInfo, Acc0),
+    KeyPlus = case bitcask:is_tombstone(Value) of
+                  true  -> {tombstone, Key};
+                  false -> Key
+              end,
+    Acc = Fun(KeyPlus, Tstamp, PosInfo, Acc0),
     fold_keys_int_loop(Rest, Fun, Acc, Consumed, 
                        {Offset + TotalSz, AvgValSz}, EOI);
-%% in the case where values are very large, we don't actually want to 
+%% in the case where values are very large, we don't actually want to
 %% get a larger binary if we don't have to, so just issue a skip.
-fold_keys_int_loop(<<_Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD, 
-                     KeySz:?KEYSIZEFIELD, ValueSz:?VALSIZEFIELD, 
-                     Key:KeySz/bytes, 
-                     _Rest/binary>>, 
-                   Fun, Acc0, _Consumed0, 
-                   {Offset, AvgValSz0}, 
-                   _EOI) when AvgValSz0 > ?CHUNK_SIZE ->
+fold_keys_int_loop(<<_Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD,
+                     KeySz:?KEYSIZEFIELD, ValueSz:?VALSIZEFIELD,
+                     Key:KeySz/bytes,
+                     _Rest/binary>>,
+                   Fun, Acc0, _Consumed0,
+                   {Offset, AvgValSz0},
+                   _EOI) when ValueSz > ?MAX_TOMBSTONE_SIZE,
+                              AvgValSz0 > ?CHUNK_SIZE ->
     TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
     PosInfo = {Offset, TotalSz},
     Acc = Fun(Key, Tstamp, PosInfo, Acc0),
@@ -529,21 +558,26 @@ fold_hintfile(State, Fun, Acc0) ->
 %% hint record, three-tuple done indicates that we've exhausted all bytes, or
 %% it's an error
 fold_hintfile_loop(<<0:?TSTAMPFIELD, 0:?KEYSIZEFIELD,
-                     _ExpectCRC:?TOTALSIZEFIELD, (?MAXOFFSET):?OFFSETFIELD>>,
+                     _ExpectCRC:?TOTALSIZEFIELD,
+                     _TombInt:?TOMBSTONEFIELD_V2, (?MAXOFFSET_V2):?OFFSETFIELD_V2>>,
                    _Fun, Acc, Consumed, _Args, EOI) when EOI =:= true ->
     {done, Acc, Consumed + ?HINT_RECORD_SZ};
 %% main work loop here, containing the full match of hint record and key.
 %% if it gets a match, it proceeds to recurse over the rest of the big
 %% binary
 fold_hintfile_loop(<<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
-                     TotalSz:?TOTALSIZEFIELD, Offset:?OFFSETFIELD,
+                     TotalSz:?TOTALSIZEFIELD,
+                     TombInt:?TOMBSTONEFIELD_V2, Offset:?OFFSETFIELD_V2,
                      Key:KeySz/bytes, Rest/binary>>, 
                    Fun, Acc0, Consumed0, {DataSize, HintFile} = Args,
                    EOI) ->
     case Offset + TotalSz =< DataSize + 1 of 
         true ->
             PosInfo = {Offset, TotalSz},
-            Acc = Fun(Key, Tstamp, PosInfo, Acc0),
+            KeyPlus = if TombInt == 1 -> {tombstone, Key};
+                         true         -> Key
+                      end,
+            Acc = Fun(KeyPlus, Tstamp, PosInfo, Acc0),
             Consumed = KeySz + ?HINT_RECORD_SZ + Consumed0,
             fold_hintfile_loop(Rest, Fun, Acc, 
                                Consumed, Args, EOI);
@@ -679,10 +713,10 @@ open_hint_file(Filename, FinalOpts, Count) ->
             open_hint_file(Filename, FinalOpts, Count - 1)
     end.
 
-hintfile_entry(Key, Tstamp, {Offset, TotalSz}) ->
+hintfile_entry(Key, Tstamp, TombInt, Offset, TotalSz) ->
     KeySz = size(Key),
-    [<<Tstamp:?TSTAMPFIELD>>, <<KeySz:?KEYSIZEFIELD>>,
-     <<TotalSz:?TOTALSIZEFIELD>>, <<Offset:?OFFSETFIELD>>, Key].
+    [<<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD, TotalSz:?TOTALSIZEFIELD,
+       TombInt:?TOMBSTONEFIELD_V2, Offset:?OFFSETFIELD_V2>>, Key].
 
 %% ===================================================================
 %% file/filelib avoidance code.
@@ -747,7 +781,7 @@ get_efile_port() ->
     Key = bitcask_efile_port,
     case get(Key) of
         undefined ->
-            case prim_file_drv_open(efile, [binary]) of
+            case prim_file_drv_open("efile", [binary]) of
                 {ok, Port} ->
                     put(Key, Port),
                     get_efile_port();
