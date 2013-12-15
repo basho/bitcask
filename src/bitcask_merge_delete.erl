@@ -225,4 +225,60 @@ poll_merge_worker() ->
             poll_merge_worker()
     end.
 
+change_open_regression_test_() ->
+    {timeout, 300, ?_assertMatch({ok, _}, change_open_regression_body())}.
+
+change_open_regression_body() ->
+    Dir = "/tmp/bitcask.qc",
+    os:cmd("rm -rf " ++ Dir),
+    _V1 = apply(bitcask_qc_fsm,set_keys,[[<<"Ù¸l>">>,<<99,146,242,44,143,50>>,<<"[ÃF">>,<<170,99,173,156>>,<<"é\nã">>,<<159,242,98,2,240>>]]),
+    _V2 = apply(bitcask_qc_fsm,truncate_hint,[10,-14]),
+    _V3 = apply(bitcask,open,[Dir,[read_write,{open_timeout,0},{sync_strategy,none}]]),
+    _V4 = apply(bitcask,delete,[_V3,<<"[ÃF">>]),
+    _V5 = apply(bitcask,merge,[Dir]),
+    _V6 = apply(bitcask,delete,[_V3,<<"é\nã">>]),
+    _V7 = apply(bitcask,get,[_V3,<<"Ù¸l>">>]),
+    _V8 = apply(bitcask,put,[_V3,<<"[ÃF">>,<<>>]),
+    _V9 = apply(bitcask,put,[_V3,<<159,242,98,2,240>>,<<15,12,18,39,192,147>>]),
+    _V10 = apply(bitcask,put,[_V3,<<99,146,242,44,143,50>>,<<"àö&Æ§">>]),
+    _V30 = apply(bitcask,merge,[Dir]),
+    _V31 = apply(bitcask,put,[_V3,<<"Ù¸l>">>,<<>>]),
+    _V32 = apply(bitcask,merge,[Dir]),
+    _V33 = apply(bitcask,put,[_V3,<<"Ù¸l>">>,<<"dÙÑ-o">>]),
+    _V34 = apply(bitcask,put,[_V3,<<"[ÃF">>,<<"]l">>]),
+    _V35 = apply(bitcask,merge,[Dir]),
+    _V36 = apply(bitcask,close,[_V3]),
+    _V37 = apply(bitcask_qc_fsm,create_stale_lock,[]),
+    _V38 = apply(bitcask_qc_fsm,create_stale_lock,[]),
+    _V50 = apply(bitcask,open,[Dir,[read_write,{open_timeout,0},{sync_strategy,none}]]),
+    _V51 = apply(bitcask,put,[_V50,<<"k">>,<<203,197,178,224,88,151,138>>]),
+    _V52 = apply(bitcask,get,[_V50,<<159,242,98,2,240>>]),
+    _V53 = apply(bitcask,put,[_V50,<<99,146,242,44,143,50>>,<<178,142,52>>]),
+    _V54 = apply(bitcask,merge,[Dir]),
+    _V55 = apply(bitcask,get,[_V50,<<"[ÃF">>]),
+    _V56 = apply(bitcask,merge,[Dir]),
+    _V57 = apply(bitcask,merge,[Dir]),
+    _V58 = apply(bitcask,merge,[Dir]),
+    _V59 = apply(bitcask,close,[_V50]),
+    _V60 = apply(bitcask,open,[Dir,[read_write,{open_timeout,0},{sync_strategy,none}]]),
+    _V61 = apply(bitcask,merge,[Dir]),
+    _V62 = apply(bitcask,delete,[_V60,<<170,99,173,156>>]),
+    _V63 = apply(bitcask,get,[_V60,<<99,146,242,44,143,50>>]),
+    _V64 = apply(bitcask,get,[_V60,<<99,146,242,44,143,50>>]),
+    _V65 = apply(bitcask,put,[_V60,<<"k">>,<<"ÂFìb¾¡">>]),
+    _V66 = apply(bitcask,merge,[Dir]),
+    _V67 = apply(bitcask,delete,[_V60,<<159,242,98,2,240>>]),
+    _V68 = apply(bitcask,put,[_V60,<<159,242,98,2,240>>,<<24,172,219>>]),
+    _V69 = apply(bitcask,close,[_V60]),
+    _V70 = apply(bitcask,open,[Dir,[read_write,{open_timeout,0},{sync_strategy,none}]]),
+    _V71 = apply(bitcask,get,[_V70,<<159,242,98,2,240>>]),
+    case _V71 of
+        {ok,<<24,172,219>>} ->
+            {ok, "this is eqc expected result hooray test passes"};
+        {ok,<<15,12,18,39,192,147>>} ->
+            {bummer, "Original EQC failure"};
+        Else ->
+            {bummer, unexpected_failure, Else}
+    end.
+
 -endif. %% TEST
