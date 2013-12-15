@@ -272,8 +272,12 @@ put(Ref, Key, Value, ValueType) ->
 %% @doc Delete a key from a bitcask datastore.
 -spec delete(reference(), Key::binary()) -> ok.
 delete(Ref, Key) ->
-    put(Ref, Key, ?TOMBSTONE, tombstone),
-    ok = bitcask_nifs:keydir_remove((get_state(Ref))#bc_state.keydir, Key).
+    %% To avoid subtle race with a merge where merge copies a key
+    %% that we are about to delete, we must delete from the keydir
+    %% first.  The missing key from the keydir is the signal to the
+    %% merge worker that the key should not be merged.
+    ok = bitcask_nifs:keydir_remove((get_state(Ref))#bc_state.keydir, Key),
+    put(Ref, Key, ?TOMBSTONE, tombstone).
 
 %% @doc Force any writes to sync to disk.
 -spec sync(reference()) -> ok.
