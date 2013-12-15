@@ -136,9 +136,9 @@ check_fstats(Ref, Expect) ->
 
 check_model(Ref, Model) ->
     F = fun({K, deleted}) ->
-                ?assertEqual(not_found, bitcask:get(Ref, K));
+                ?assertEqual({K, not_found}, {K, bitcask:get(Ref, K)});
            ({K, V}) ->
-                ?assertEqual({ok, V}, bitcask:get(Ref, K))
+                ?assertEqual({K, {ok, V}}, {K, bitcask:get(Ref, K)})
         end,
     lists:map(F, Model).
 
