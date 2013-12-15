@@ -23,8 +23,21 @@
 
 -export([big/0, small/0]).
 
+-ifdef(PULSE).
+
+big() ->
+    ok.
+
+small() ->
+    ok.
+
+-else.
+
 big() ->
     erlang:bump_reductions(1900).
 
 small() ->
     erlang:bump_reductions(500).
+
+-endif.
+
