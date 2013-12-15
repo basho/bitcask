@@ -272,12 +272,38 @@ put(Ref, Key, Value, ValueType) ->
 %% @doc Delete a key from a bitcask datastore.
 -spec delete(reference(), Key::binary()) -> ok.
 delete(Ref, Key) ->
-    %% To avoid subtle race with a merge where merge copies a key
-    %% that we are about to delete, we must delete from the keydir
-    %% first.  The missing key from the keydir is the signal to the
-    %% merge worker that the key should not be merged.
-    ok = bitcask_nifs:keydir_remove((get_state(Ref))#bc_state.keydir, Key),
-    put(Ref, Key, ?TOMBSTONE, tombstone).
+    State = get_state(Ref),
+    %% Imagine this order of sequential operations by a single process:
+    %%    1. Open for read/write
+    %%    2. Open an iterator
+    %%    3. Put key K
+    %%    4. Delete key K
+    %%    5. Close iterator
+    %%    6. Get K -> not_found.
+    %% If we use a regular keydir_get() below, then we won't see the
+    %% mutation at step #3, so we don't delete anything.
+    %% If there is an iteration underway, we need to be able to
+    %% see the very latest mutations to the keydir to be able to
+    %% support the following operation.
+    case bitcask_nifs:keydir_get_always_latest(State#bc_state.keydir, Key, State#bc_state.read_write_p) of
+        not_found ->
+            ok;
+        E when is_record(E, bitcask_entry) ->
+            case E#bitcask_entry.tstamp < expiry_time(State#bc_state.opts) of
+                true ->
+                    %% Expired entry
+                    ok;
+                false ->
+                    %% To avoid subtle race with a merge where merge
+                    %% copies a key that we are about to delete, we
+                    %% must delete from the keydir first.  The missing
+                    %% key from the keydir is the signal to the merge
+                    %% worker that the key should not be merged.
+                    ok = bitcask_nifs:keydir_remove((get_state(Ref))#bc_state.keydir, Key),
+                    put(Ref, Key, ?TOMBSTONE, tombstone),
+                    ok
+            end
+    end.
 
 %% @doc Force any writes to sync to disk.
 -spec sync(reference()) -> ok.

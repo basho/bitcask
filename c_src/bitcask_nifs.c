@@ -212,6 +212,11 @@ typedef struct
 #define set_pending_tombstone(e) {(e)->tstamp = 0; \
                                   (e)->offset = 0; }
 
+// Use a magic number for signaling that a database is both in read-write
+// mode and that we want to do a get while ignoring the iteration status
+// of the keydir.
+#define MAGIC_OVERRIDE_ITERATING_STATUS  0x42424242
+
 // Atoms (initialized in on_load)
 static ERL_NIF_TERM ATOM_ALLOCATION_ERROR;
 static ERL_NIF_TERM ATOM_ALREADY_EXISTS;
@@ -1206,8 +1211,10 @@ ERL_NIF_TERM bitcask_nifs_keydir_get_int(ErlNifEnv* env, int argc, const ERL_NIF
 
         DEBUG("+++ Get issued\r\n");
 
+        int iterating_status = (rw_p == MAGIC_OVERRIDE_ITERATING_STATUS) ?
+            0 : handle->iterating;
         find_result f;
-        find_keydir_entry(keydir, &key, time, handle->iterating, &f);
+        find_keydir_entry(keydir, &key, time, iterating_status, &f);
 
         if (f.found && !f.is_tombstone && (rw_p || !f.no_snapshot))
         {
