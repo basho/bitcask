@@ -291,4 +291,94 @@ change_open_regression_body() ->
             {bummer, unexpected_failure, Else}
     end.
 
+new_20131217_a_test_() ->
+    {timeout, 300, ?_assertEqual(ok, new_20131217_a_body())}.
+
+new_20131217_a_body() ->
+    TestDir = token:get_name(),
+    MOD = ?MODULE,
+    V1 = <<"v">>,
+    V2 = <<"v22">>,
+    V3 = <<"v33">>,
+    V1017_expected = [{1,<<"v33">>}, {2,<<"v33">>}, {3,<<"v33">>},
+            {4,<<"v33">>}, {5,<<"v33">>}, {6,<<"v33">>},
+            {7,<<"v33">>}, {8,<<"v33">>}, {9,<<"v33">>},
+            {10,<<"v33">>}, {11,<<"v33">>}, {12,<<"v33">>},
+            {13,<<"v33">>}, {14,<<"v33">>}, {15,<<"v33">>},
+            {16,<<"v22">>}, {17,<<"v22">>}, {18,<<"v22">>},
+            {19,<<"v22">>}, {20,<<"v22">>}, {21,<<"v22">>}],
+
+    _Var1 = erlang:apply(MOD,incr_clock,[]),
+    _Var2 = erlang:apply(MOD,bc_open,[TestDir]),
+    _Var3 = erlang:apply(MOD,puts,[_Var2,{1,13},V1]),
+    _Var10 = erlang:apply(MOD,delete,[_Var2,13]),
+    not_found = get(_Var2, 13),                 %not from EQC
+    _Var14 = erlang:apply(MOD,puts,[_Var2,{1,21},V2]),
+    {ok, V2} = get(_Var2, 13),                  %not from EQC
+    _Var18 = erlang:apply(MOD,puts,[_Var2,{1,15},V3]),
+    {ok, V3} = get(_Var2, 13),                  %not from EQC
+    timer:sleep(1234),                  %not from EQC
+    {ok, V3} = get(_Var2, 13),                  %not from EQC
+    _Var24 = erlang:apply(MOD,fork_merge,[_Var2, TestDir]),
+    {ok, V3} = get(_Var2, 13),                  %not from EQC
+    timer:sleep(1235),                  %not from EQC
+    {ok, V3} = get(_Var2, 13),                  %not from EQC
+    _Var27 = erlang:apply(MOD,bc_close,[_Var2]),
+    _Var28 = erlang:apply(MOD,incr_clock,[]),
+    _Var106 = erlang:apply(MOD,bc_open,[TestDir]),
+    {ok, V3} = get(_Var106, 13),                  %not from EQC
+    _Var1017 = erlang:apply(MOD,fold,[_Var106]),
+    {ok, V3} = get(_Var106, 13),                  %not from EQC
+    ?assertEqual(V1017_expected, lists:sort(_Var1017)),
+    os:cmd("rm -rf " ++ TestDir),
+    ok.
+
+-define(NUM_KEYS, 50).
+-define(FILE_SIZE, 1000).
+
+bc_open(Dir) ->
+    bitcask:open(Dir, [read_write, {max_file_size, ?FILE_SIZE}, {open_timeout, 1234}]).
+
+nice_key(K) ->
+    list_to_binary(io_lib:format("kk~2.2.0w", [K])).
+
+un_nice_key(<<"kk", Num:2/binary>>) ->
+    list_to_integer(binary_to_list(Num)).
+
+get(H, K) ->
+  bitcask:get(H, nice_key(K)).
+
+put(H, K, V) ->
+  ok = bitcask:put(H, nice_key(K), V).
+
+puts(H, {K1, K2}, V) ->
+  case lists:usort([ put(H, K, V) || K <- lists:seq(K1, K2) ]) of
+    [ok]  -> ok;
+    Other -> Other
+  end.
+
+delete(H, K) ->
+  ok = bitcask:delete(H, nice_key(K)).
+
+fork_merge(H, Dir) ->
+  case bitcask:needs_merge(H) of
+    {true, Files} -> catch bitcask_merge_worker:merge(Dir, [], Files);
+    false         -> not_needed
+  end.
+
+incr_clock() ->
+    bitcask_time:test__incr_fudge(1).
+
+bc_close(H)    ->
+  ok = bitcask:close(H).
+
+fold_keys(H) ->
+  bitcask:fold_keys(H, fun(#bitcask_entry{key = KBin}, Ks) -> [un_nice_key(KBin)|Ks] end, []).
+
+fold(H) ->
+  bitcask:fold(H, fun(KBin, V, Acc) -> [{un_nice_key(KBin),V}|Acc] end, []).
+
+%% 37> io:format("~w.\n", [C76]).
+%% [[{set,{var,1},{call,bitcask_pulse,incr_clock,[]}},{set,{var,2},{call,bitcask_pulse,bc_open,[true]}},{set,{var,3},{call,bitcask_pulse,puts,[{var,2},{1,13},<<0>>]}},{set,{var,10},{call,bitcask_pulse,delete,[{var,2},13]}},{set,{var,14},{call,bitcask_pulse,puts,[{var,2},{1,21},<<0,0,0>>]}},{set,{var,18},{call,bitcask_pulse,puts,[{var,2},{1,15},<<0,0,0>>]}},{set,{var,24},{call,bitcask_pulse,fork_merge,[{var,2}]}},{set,{var,27},{call,bitcask_pulse,bc_close,[{var,2}]}},{set,{var,28},{call,bitcask_pulse,incr_clock,[]}},{set,{var,40},{call,bitcask_pulse,fork,[[{init,{state,undefined,false,false,[]}},{set,{not_var,6},{not_call,bitcask_pulse,bc_open,[false]}},{set,{not_var,17},{not_call,bitcask_pulse,fold,[{not_var,6}]}}]]}}],{99742,1075,90258},[{events,[]}]].
+
 -endif. %% TEST

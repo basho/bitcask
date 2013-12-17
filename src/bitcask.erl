@@ -80,7 +80,7 @@
                   merge_lock,
                   merge_start,
                   max_file_size,
-                  all_fileids :: set(),
+                  after_fileids :: set(),
                   input_files,
                   out_file,
                   merged_files,
@@ -641,7 +641,14 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
     AllFilesIds = [FileId || {FileId, _LiveCount, _TotalCount, _LiveBytes,
                               _TotalBytes, _OldestTstamp,
                               _NewestTstamp} <- Fstats],
-    AllFilesSet = sets:from_list(AllFilesIds),
+    InFilesIds = [F#filestate.tstamp || F <- InFiles],
+    InExpiredFilesIds = [F#filestate.tstamp || F <- InExpiredFiles],
+    %% AllFilesSet contains the list of fileids that will remain
+    %% after this merge is finished (but does not include fileids that
+    %% are created by the merge).  It is possible that a key K has an
+    %% entry in fileid F and then a later tombstone also in F.  We
+    %% do not want the merge to carry forward that tombstone.
+    AllFilesSet = sets:from_list(AllFilesIds -- (InFilesIds++InExpiredFilesIds)),
 
     %% Initialize the other keydirs we need.
     {ok, DelKeyDir} = bitcask_nifs:keydir_new(),
@@ -650,7 +657,7 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
     State = #mstate { dirname = Dirname,
                       merge_lock = Lock,
                       max_file_size = get_opt(max_file_size, Opts),
-                      all_fileids = AllFilesSet,
+                      after_fileids = AllFilesSet,
                       input_files = InFiles,
                       merge_start = MergeStart,
                       out_file = fresh,  % will be created when needed
@@ -1138,7 +1145,7 @@ merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
         true ->
             State2 = case V of
                 <<?TOMBSTONE2_STR, DeadFileId:32, _DeadOffset:64>> ->
-                    case sets:is_element(DeadFileId, State#mstate.all_fileids) of
+                    case sets:is_element(DeadFileId, State#mstate.after_fileids) of
                         true ->
                             inner_merge_write(K, V, Tstamp, FileId, Offset,
                                               false, State);
