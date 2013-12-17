@@ -207,7 +207,7 @@ prop_merge() ->
                      Validate = fun(Fname) ->
                                         {ok, S} = bitcask_fileops:open_file(Fname),
                                         try
-                                            ?assertEqual(true, bitcask_fileops:has_valid_hintfile(S))
+                                            ?assertEqual({Fname, true}, {Fname, bitcask_fileops:has_valid_hintfile(S)})
                                         after
                                             bitcask_fileops:close(S)
                                         end

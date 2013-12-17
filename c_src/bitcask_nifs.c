@@ -1110,6 +1110,19 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
 
         if (!f.found || f.is_tombstone)
         {
+            if (newest_put &&
+                (entry.file_id < keydir->biggest_file_id)) {
+                /*
+                 * Really, it doesn't exist.  But the atom 'already_exists'
+                 * is also a signal that a merge has incremented the
+                 * keydir->biggest_file_id and that we need to retry this
+                 * operation after Erlang-land has re-written the key & val
+                 * to a new location in the same-or-bigger file id.
+                 */
+                UNLOCK(keydir);
+                return ATOM_ALREADY_EXISTS;
+            }
+
             keydir->key_count++;
             keydir->key_bytes += key.size;
 

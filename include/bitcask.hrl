@@ -26,6 +26,8 @@
 -define(FMT(Str, Args), lists:flatten(io_lib:format(Str, Args))).
 
 -define(TOMBSTONE, <<"bitcask_tombstone">>).
+-define(TOMBSTONE2_STR, "bitcask_tombstone2").
+-define(TOMBSTONE2,<<?TOMBSTONE2_STR>>).
 
 -define(OFFSETFIELD,  64).
 -define(TSTAMPFIELD,  32).
