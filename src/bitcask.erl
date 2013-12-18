@@ -298,15 +298,15 @@ delete(Ref, Key) ->
                     %% Expired entry
                     ok;
                 false ->
-                    %% To avoid subtle race with a merge where merge
-                    %% copies a key that we are about to delete, we
-                    %% must delete from the keydir first.  The missing
-                    %% key from the keydir is the signal to the merge
-                    %% worker that the key should not be merged.
-                    ok = bitcask_nifs:keydir_remove((get_state(Ref))#bc_state.keydir, Key),
+                    %% To avoid races with merge activity, we must put
+                    %% the tombstone first.  If there is a race with
+                    %% a merge, do_put() will be told to wrap and open
+                    %% an new data file to retry to the tombstone put;
+                    %% in that case, this tombstone will be retried &
+                    %% rewritten to a fileid > merge's fileid.
                     Tombstone = <<?TOMBSTONE2_STR, FileId:32, Offset:64>>,
                     put(Ref, Key, Tombstone, tombstone),
-                    ok
+                    ok = bitcask_nifs:keydir_remove((get_state(Ref))#bc_state.keydir, Key)
             end
     end.
 
