@@ -139,9 +139,9 @@ delete_files(Files) ->
 -ifdef(TEST).
 
 multiple_merges_during_fold_test_() ->
-    {timeout, 60, fun multiple_merges_during_fold_test_body/0}.
+    {timeout, 60, fun multiple_merges_during_fold_body/0}.
 
-multiple_merges_during_fold_test_body() ->
+multiple_merges_during_fold_body() ->
     Dir = "/tmp/bc.multiple-merges-fold",
     B = bitcask:open(Dir, [read_write, {max_file_size, 50}]),
     PutSome = fun() ->
@@ -294,7 +294,11 @@ change_open_regression_body() ->
 new_20131217_a_test_() ->
     {timeout, 300, ?_assertEqual(ok, new_20131217_a_body())}.
 
+%% 37> io:format("~w.\n", [C76]).
+%% [[{set,{var,1},{call,bitcask_pulse,incr_clock,[]}},{set,{var,2},{call,bitcask_pulse,bc_open,[true]}},{set,{var,3},{call,bitcask_pulse,puts,[{var,2},{1,13},<<0>>]}},{set,{var,10},{call,bitcask_pulse,delete,[{var,2},13]}},{set,{var,14},{call,bitcask_pulse,puts,[{var,2},{1,21},<<0,0,0>>]}},{set,{var,18},{call,bitcask_pulse,puts,[{var,2},{1,15},<<0,0,0>>]}},{set,{var,24},{call,bitcask_pulse,fork_merge,[{var,2}]}},{set,{var,27},{call,bitcask_pulse,bc_close,[{var,2}]}},{set,{var,28},{call,bitcask_pulse,incr_clock,[]}},{set,{var,40},{call,bitcask_pulse,fork,[[{init,{state,undefined,false,false,[]}},{set,{not_var,6},{not_call,bitcask_pulse,bc_open,[false]}},{set,{not_var,17},{not_call,bitcask_pulse,fold,[{not_var,6}]}}]]}}],{99742,1075,90258},[{events,[]}]].
+
 new_20131217_a_body() ->
+    catch token:stop(),
     TestDir = token:get_name(),
     MOD = ?MODULE,
     V1 = <<"v">>,
@@ -308,6 +312,7 @@ new_20131217_a_body() ->
             {16,<<"v22">>}, {17,<<"v22">>}, {18,<<"v22">>},
             {19,<<"v22">>}, {20,<<"v22">>}, {21,<<"v22">>}],
 
+    bitcask_time:test__set_fudge(10),
     _Var1 = erlang:apply(MOD,incr_clock,[]),
     _Var2 = erlang:apply(MOD,bc_open,[TestDir]),
     _Var3 = erlang:apply(MOD,puts,[_Var2,{1,13},V1]),
@@ -318,10 +323,9 @@ new_20131217_a_body() ->
     _Var18 = erlang:apply(MOD,puts,[_Var2,{1,15},V3]),
     {ok, V3} = get(_Var2, 13),                  %not from EQC
     timer:sleep(1234),                  %not from EQC
-    {ok, V3} = get(_Var2, 13),                  %not from EQC
     _Var24 = erlang:apply(MOD,fork_merge,[_Var2, TestDir]),
-    {ok, V3} = get(_Var2, 13),                  %not from EQC
     timer:sleep(1235),                  %not from EQC
+    {ok, V3} = get(_Var2, 13),                  %not from EQC
     {ok, V3} = get(_Var2, 13),                  %not from EQC
     _Var27 = erlang:apply(MOD,bc_close,[_Var2]),
     _Var28 = erlang:apply(MOD,incr_clock,[]),
@@ -329,9 +333,43 @@ new_20131217_a_body() ->
     {ok, V3} = get(_Var106, 13),                  %not from EQC
     _Var1017 = erlang:apply(MOD,fold,[_Var106]),
     {ok, V3} = get(_Var106, 13),                  %not from EQC
+    bc_close(_Var106),
     ?assertEqual(V1017_expected, lists:sort(_Var1017)),
+    ok.
+
+new_20131217_c_test_() ->
+    {timeout, 300, ?_assertEqual(ok, new_20131217_c_body())}.
+
+new_20131217_c_body() ->
+    catch token:stop(),
+    TestDir = token:get_name(),
+    MOD = ?MODULE,
+    Val1 = <<"vv">>,
+    Val2 = <<"V">>,
+
+    bitcask_time:test__set_fudge(10),
+    _Var15 = erlang:apply(MOD,bc_open,[TestDir]),
+    _Var17 = erlang:apply(MOD,puts,[_Var15,{1,4},Val1]),
+    _Var21 = erlang:apply(MOD,bc_close,[_Var15]),
+    _Var22 = erlang:apply(MOD,incr_clock,[]),
+    _Var23 = erlang:apply(MOD,bc_open,[TestDir]),
+    _Var24 = erlang:apply(MOD,puts,[_Var23,{1,3},Val2]),
+    timer:sleep(1234),          % Sleeps necessary for 100% determinism, alas
+    _Var25 = erlang:apply(MOD,merge,[_Var23, TestDir]),
+    _Var26 = erlang:apply(MOD,delete,[_Var23,4]),
+    not_found = MOD:get(_Var23,4),
+    _Var27 = erlang:apply(MOD,bc_close,[_Var23]),
+    _Var28 = erlang:apply(MOD,bc_open,[TestDir]),
+    not_found = MOD:get(_Var28,4),
+    _Var33 = erlang:apply(MOD,fold,[_Var28]),
+    not_found = MOD:get(_Var28,4),
+    bc_close(_Var28),
+
+    Expected33 = [{1,Val2},{2,Val2},{3,Val2}],
+    ?assertEqual(Expected33, lists:sort(_Var33)),
     os:cmd("rm -rf " ++ TestDir),
     ok.
+
 
 -define(NUM_KEYS, 50).
 -define(FILE_SIZE, 1000).
@@ -360,6 +398,16 @@ puts(H, {K1, K2}, V) ->
 delete(H, K) ->
   ok = bitcask:delete(H, nice_key(K)).
 
+merge(H, TestDir) ->
+  case bitcask:needs_merge(H) of
+    {true, Files} ->
+      case catch bitcask:merge(TestDir, [], Files) of
+        {'EXIT', Err} -> Err;
+        R             -> R
+      end;
+    false -> not_needed
+  end.
+
 fork_merge(H, Dir) ->
   case bitcask:needs_merge(H) of
     {true, Files} -> catch bitcask_merge_worker:merge(Dir, [], Files);
@@ -378,7 +426,5 @@ fold_keys(H) ->
 fold(H) ->
   bitcask:fold(H, fun(KBin, V, Acc) -> [{un_nice_key(KBin),V}|Acc] end, []).
 
-%% 37> io:format("~w.\n", [C76]).
-%% [[{set,{var,1},{call,bitcask_pulse,incr_clock,[]}},{set,{var,2},{call,bitcask_pulse,bc_open,[true]}},{set,{var,3},{call,bitcask_pulse,puts,[{var,2},{1,13},<<0>>]}},{set,{var,10},{call,bitcask_pulse,delete,[{var,2},13]}},{set,{var,14},{call,bitcask_pulse,puts,[{var,2},{1,21},<<0,0,0>>]}},{set,{var,18},{call,bitcask_pulse,puts,[{var,2},{1,15},<<0,0,0>>]}},{set,{var,24},{call,bitcask_pulse,fork_merge,[{var,2}]}},{set,{var,27},{call,bitcask_pulse,bc_close,[{var,2}]}},{set,{var,28},{call,bitcask_pulse,incr_clock,[]}},{set,{var,40},{call,bitcask_pulse,fork,[[{init,{state,undefined,false,false,[]}},{set,{not_var,6},{not_call,bitcask_pulse,bc_open,[false]}},{set,{not_var,17},{not_call,bitcask_pulse,fold,[{not_var,6}]}}]]}}],{99742,1075,90258},[{events,[]}]].
 
 -endif. %% TEST
