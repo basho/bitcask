@@ -51,6 +51,7 @@
 -endif.
 
 -ifdef(TEST).
+-compile(export_all).
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
 -endif.
@@ -1746,6 +1747,15 @@ slow_worker() ->
             {owner, O, Vs} -> {O, Vs}
         end,
     SlowCollect = fun(K, V, Acc) ->
+                          if Acc == [] ->
+                                  Owner ! i_have_started_folding,
+                                  receive
+                                      go_ahead_with_fold ->
+                                          ok
+                                  end;
+                             true ->
+                                  ok
+                          end,
                           receive
                               go -> ok
                           end,
@@ -1790,14 +1800,19 @@ fold_visits_unfrozen_test(RollOver) ->
             _ ->
                 ok
         end,
-        timer:sleep(1100),
+        receive
+            i_have_started_folding ->
+                ok
+        after 10*1000 ->
+                error(timeout_should_never_happen)
+        end,
         
         %% A delete, an update and an insert
         ok = delete(B, <<"k">>),
         ok = put(B, <<"k2">>, <<"v2-2">>),
         ok = put(B, <<"k4">>, <<"v4">>),
+        Pid ! go_ahead_with_fold,
      
-        timer:sleep(1100),
         CollectAll = fun(K, V, Acc) ->
                              [{K, V} | Acc]
                      end,
