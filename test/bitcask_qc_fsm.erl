@@ -21,6 +21,9 @@
 %% -------------------------------------------------------------------
 -module(bitcask_qc_fsm).
 
+-export([create_stale_lock/0,
+         corrupt_hint/2,
+         truncate_hint/2]).
 -ifdef(EQC).
 
 -include_lib("eqc/include/eqc.hrl").
@@ -163,6 +166,8 @@ value() ->
 sync_strategy() ->
     {sync_strategy, oneof([none, o_sync])}.
 
+-endif.
+
 create_stale_lock() ->
     Fname = filename:join(?TEST_DIR, "bitcask.write.lock"),
     filelib:ensure_dir(Fname),
@@ -208,7 +213,4 @@ corrupt_hint(Seed, CorruptAt0) ->
                 file:close(Fh)
             end
     end.
-
--endif.
-
 
