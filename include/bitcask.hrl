@@ -13,7 +13,10 @@
                     fd,       % File handle
                     hintfd,   % File handle for hints
                     hintcrc=0,% CRC-32 of current hint
-                    ofs }).   % Current offset for writing
+                    ofs,      % Current offset for writing
+                    l_ofs=0,  % Last offset written to data file
+                    l_hbytes=0,% Last # bytes written to hint file
+                    l_hintcrc=0}). % CRC-32 of current hint prior to last write
 
 -record(file_status, { filename,
                        fragmented,

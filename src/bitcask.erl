@@ -306,9 +306,17 @@ delete(Ref, Key) ->
                     %% rewritten to a fileid > merge's fileid.
                     Tombstone = <<?TOMBSTONE2_STR, FileId:32, Offset:64>>,
                     put(Ref, Key, Tombstone, tombstone),
-                    ok = bitcask_nifs:keydir_remove((get_state(Ref))#bc_state.keydir, Key)
+                    case bitcask_nifs:keydir_remove((get_state(Ref))#bc_state.keydir, Key,
+                                                    TStamp, FileId, Offset) of
+                        ok ->
+                            ok;
+                        already_exists ->
+                            delete(Ref, Key)
+                    end
             end
-    end.
+    end,
+    ok.
+
 
 %% @doc Force any writes to sync to disk.
 -spec sync(reference()) -> ok.
@@ -939,6 +947,11 @@ to_lower_grace_time_bound(X) ->
 
 expiry_grace_time(Opts) -> to_lower_grace_time_bound(get_opt(expiry_grace_time, Opts)).
 
+-ifdef(TEST).
+start_app() ->
+    catch application:start(?MODULE),
+    ok.
+-else.
 start_app() ->
     case application:start(?MODULE) of
         ok ->
@@ -948,6 +961,7 @@ start_app() ->
         {error, Reason} ->
             {error, Reason}
     end.
+-endif.
 
 get_state(Ref) ->
     case erlang:get(Ref) of
@@ -1237,19 +1251,25 @@ inner_merge_write(K, V, Tstamp, OldFileId, OldOffset, UpdateKeydirP, State) ->
     {ok, Outfile, Offset, Size} =
         bitcask_fileops:write(State1#mstate.out_file,
                               K, V, Tstamp),
-    
-    if UpdateKeydirP ->
-            %% Update live keydir for the current out
-            %% file. It's possible that this is a noop, as
-            %% someone else may have written a newer value
-            %% whilst we were processing.
-            _ = bitcask_nifs:keydir_put(State#mstate.live_keydir, K,
-                                        bitcask_fileops:file_tstamp(Outfile),
-                                        Size, Offset, Tstamp, OldFileId, OldOffset);
-       true ->
-            ok
-    end,
-    State1#mstate { out_file = Outfile }.
+    Outfile2 =
+        if UpdateKeydirP ->
+                %% Update live keydir for the current out
+                %% file. It's possible that someone else may have written
+                %% a newer value whilst we were processing ... and if
+                %% they did, we need to undo our write here.
+                case bitcask_nifs:keydir_put(State#mstate.live_keydir, K,
+                                             bitcask_fileops:file_tstamp(Outfile),
+                                             Size, Offset, Tstamp, OldFileId, OldOffset) of
+                    ok ->
+                        Outfile;
+                    already_exists ->
+                        {ok, O} = bitcask_fileops:un_write(Outfile),
+                        O
+                end;
+           true ->
+                Outfile
+        end,
+    State1#mstate { out_file = Outfile2 }.
 
 
 out_of_date(_State, _Key, _Tstamp, _FileId, _Pos, _ExpiryTime,
@@ -1385,11 +1405,15 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State,
                     %% could have rewritten this Key to a file with a greater
                     %% file_id. Rather than synchronize the merge/writer processes, 
                     %% wrap to a new file with a greater file_id and rewrite
-                    %% the key there.  Limit the number of recursions in case
-                    %% there is a different issue with the keydir.
+                    %% the key there.
+                    %% We must undo the write here so a later partial merge
+                    %% does not see it.
+                    %% Limit the number of recursions in case there is
+                    %% a different issue with the keydir.
+                    {ok, WriteFile3} = bitcask_fileops:un_write(WriteFile2),
                     State3 = wrap_write_file(
-                               State2#bc_state { write_file = WriteFile2 }),
-                    do_put(Key, Value, State3, Retries - 1, 
+                               State2#bc_state { write_file = WriteFile3 }),
+                    do_put(Key, Value, State3, Retries - 1,
                            already_exists, ValueType)
             end;
         tombstone ->

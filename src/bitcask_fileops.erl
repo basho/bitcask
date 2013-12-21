@@ -38,7 +38,8 @@
          filename/1,
          hintfile_name/1,
          file_tstamp/1,
-         check_write/4]).
+         check_write/4,
+         un_write/1]).
 -export([read_file_info/1, write_file_info/2, is_file/1]).
 
 -include_lib("kernel/include/file.hrl").
@@ -120,7 +121,7 @@ open_file(Filename) ->
         {ok, FD} ->
             {ok, #filestate{mode = read_only,
                             filename = Filename, tstamp = file_tstamp(Filename),
-                            fd = FD, ofs = 0 }};
+                            fd = FD, ofs = 0}};
         {error, Reason} ->
             {error, Reason}
     end.
@@ -218,8 +219,23 @@ write(Filestate=#filestate{fd = FD, hintfd = HintFD,
     TotalSz = iolist_size(Bytes),
     HintCRC = erlang:crc32(HintCRC0, Iolist), % compute crc of hint
     {ok, Filestate#filestate{ofs = Offset + TotalSz,
-                            hintcrc = HintCRC}, Offset, TotalSz}.
+                             hintcrc = HintCRC,
+                             l_ofs = Offset,
+                             l_hbytes = iolist_size(Iolist),
+                             l_hintcrc = HintCRC0}, Offset, TotalSz}.
 
+%% WARNING: We can only undo the last write.
+un_write(Filestate=#filestate{fd = FD, hintfd = HintFD, 
+                              l_ofs = LastOffset,
+                              l_hbytes = LastHintBytes,
+                              l_hintcrc = LastHintCRC}) ->
+    {ok, _O2} = bitcask_io:file_position(FD, LastOffset),
+    ok = bitcask_io:file_truncate(FD),
+    {ok, 0} = bitcask_io:file_position(FD, 0),
+    {ok, _HO2} = bitcask_io:file_position(HintFD, {cur, -LastHintBytes}),
+    ok = bitcask_io:file_truncate(HintFD),
+    {ok, Filestate#filestate{ofs = LastOffset,
+                             hintcrc = LastHintCRC}}.
 
 %% @doc Given an Offset and Size, get the corresponding k/v from Filename.
 -spec read(Filename :: string() | #filestate{}, Offset :: integer(),

@@ -109,9 +109,9 @@
 -spec keydir_get_int(reference(), binary(), integer(), integer()) ->
         not_found | #bitcask_entry{}.
 -spec keydir_remove(reference(), binary()) ->
-        ok.
+        ok | already_exists.
 -spec keydir_remove(reference(), binary(), integer(), integer(), integer()) ->
-        ok.
+        ok | already_exists.
 -spec keydir_copy(reference()) ->
         {ok, reference()}.
 -spec keydir_itr(reference(), integer(), integer()) ->

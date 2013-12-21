@@ -1302,7 +1302,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
             {
                 UNLOCK(keydir);
                 DEBUG("+++Conditional no match\r\n");
-                return ATOM_OK;
+                return ATOM_ALREADY_EXISTS;
             }
 
             // Remove the key from the keydir stats

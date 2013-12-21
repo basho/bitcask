@@ -241,7 +241,7 @@ change_open_regression_body() ->
     K6_val1 = <<"K6aaaa">>,
     K6_val2 = <<"K6b">>,
     K7 = <<"k">>,
-    _V1 = apply(bitcask_qc_fsm,set_keys,[[K1,K2,K3,K4,K5,K6]]),
+    %% _V1 = apply(bitcask_qc_fsm,set_keys,[[K1,K2,K3,K4,K5,K6]]),
     _V2 = apply(bitcask_qc_fsm,truncate_hint,[10,-14]),
     _V3 = apply(bitcask,open,[Dir,[read_write,{open_timeout,0},{sync_strategy,none}]]),
     _V4 = apply(bitcask,delete,[_V3,K3]),
@@ -300,7 +300,9 @@ new_20131217_a_test_() ->
 new_20131217_a_body() ->
     catch token:stop(),
     TestDir = token:get_name(),
+    bitcask_time:test__set_fudge(10),
     MOD = ?MODULE,
+    MFS = 1000,
     V1 = <<"v">>,
     V2 = <<"v22">>,
     V3 = <<"v33">>,
@@ -312,9 +314,8 @@ new_20131217_a_body() ->
             {16,<<"v22">>}, {17,<<"v22">>}, {18,<<"v22">>},
             {19,<<"v22">>}, {20,<<"v22">>}, {21,<<"v22">>}],
 
-    bitcask_time:test__set_fudge(10),
     _Var1 = erlang:apply(MOD,incr_clock,[]),
-    _Var2 = erlang:apply(MOD,bc_open,[TestDir]),
+    _Var2 = erlang:apply(MOD,bc_open,[TestDir,MFS]),
     _Var3 = erlang:apply(MOD,puts,[_Var2,{1,13},V1]),
     _Var10 = erlang:apply(MOD,delete,[_Var2,13]),
     not_found = get(_Var2, 13),                 %not from EQC
@@ -329,7 +330,7 @@ new_20131217_a_body() ->
     {ok, V3} = get(_Var2, 13),                  %not from EQC
     _Var27 = erlang:apply(MOD,bc_close,[_Var2]),
     _Var28 = erlang:apply(MOD,incr_clock,[]),
-    _Var106 = erlang:apply(MOD,bc_open,[TestDir]),
+    _Var106 = erlang:apply(MOD,bc_open,[TestDir,MFS]),
     {ok, V3} = get(_Var106, 13),                  %not from EQC
     _Var1017 = erlang:apply(MOD,fold,[_Var106]),
     {ok, V3} = get(_Var106, 13),                  %not from EQC
@@ -343,23 +344,24 @@ new_20131217_c_test_() ->
 new_20131217_c_body() ->
     catch token:stop(),
     TestDir = token:get_name(),
+    bitcask_time:test__set_fudge(10),
     MOD = ?MODULE,
+    MFS = 1000,
     Val1 = <<"vv">>,
     Val2 = <<"V">>,
 
-    bitcask_time:test__set_fudge(10),
-    _Var15 = erlang:apply(MOD,bc_open,[TestDir]),
+    _Var15 = erlang:apply(MOD,bc_open,[TestDir,MFS]),
     _Var17 = erlang:apply(MOD,puts,[_Var15,{1,4},Val1]),
     _Var21 = erlang:apply(MOD,bc_close,[_Var15]),
     _Var22 = erlang:apply(MOD,incr_clock,[]),
-    _Var23 = erlang:apply(MOD,bc_open,[TestDir]),
+    _Var23 = erlang:apply(MOD,bc_open,[TestDir,MFS]),
     _Var24 = erlang:apply(MOD,puts,[_Var23,{1,3},Val2]),
     timer:sleep(1234),          % Sleeps necessary for 100% determinism, alas
     _Var25 = erlang:apply(MOD,merge,[_Var23, TestDir]),
     _Var26 = erlang:apply(MOD,delete,[_Var23,4]),
     not_found = MOD:get(_Var23,4),
     _Var27 = erlang:apply(MOD,bc_close,[_Var23]),
-    _Var28 = erlang:apply(MOD,bc_open,[TestDir]),
+    _Var28 = erlang:apply(MOD,bc_open,[TestDir,MFS]),
     not_found = MOD:get(_Var28,4),
     _Var33 = erlang:apply(MOD,fold,[_Var28]),
     not_found = MOD:get(_Var28,4),
@@ -370,12 +372,119 @@ new_20131217_c_body() ->
     os:cmd("rm -rf " ++ TestDir),
     ok.
 
+%% new_20131217_d_test_() ->
+%%     {timeout, 300, ?_assertEqual(ok, new_20131217_d_body())}.
 
--define(NUM_KEYS, 50).
--define(FILE_SIZE, 1000).
+%% new_20131217_d_body() ->
+%%     catch token:stop(),
+%%     TestDir = token:get_name(),
+%%     MOD = ?MODULE,
+%%     Val1 = <<0,0,0,0,0,0,0,0,0,0>>,%<<"v111111111">>,
+%%     Val2 = <<0,0,0,0,0,0,0,0,0,0,0,0,0>>,%<<"v222222222222">>,
+%%     Val3 = <<0,0,0,0,0>>,
+%%     Val4 = <<0,0>>,
+%%     V67_expected = [],
 
-bc_open(Dir) ->
-    bitcask:open(Dir, [read_write, {max_file_size, ?FILE_SIZE}, {open_timeout, 1234}]).
+%%     bitcask_time:test__set_fudge(10),
+%%     _Var1 = erlang:apply(MOD,bc_open,[TestDir]),
+%%     _Var26 = erlang:apply(MOD,puts,[_Var1,{1,1},Val1]),
+%%     _Var28 = erlang:apply(MOD,bc_close,[_Var1]),
+%%     _Var30 = erlang:apply(MOD,bc_open,[TestDir]),
+%%     _Var32 = erlang:apply(MOD,puts,[_Var30,{1,6},Val2]),
+%%     _Var33 = erlang:apply(MOD,bc_close,[_Var30]),
+%%     _Var36 = erlang:apply(MOD,incr_clock,[]),
+%%     _Var38 = erlang:apply(MOD,bc_open,[TestDir]),
+%%     _Var39 = erlang:apply(MOD,delete,[_Var38,1]),
+%% %% timer:sleep(1234),
+%%     _Var40 = erlang:apply(MOD,merge,[_Var38, TestDir]),
+%% %% timer:sleep(1235),
+%%     _Var41 = erlang:apply(MOD,puts,[_Var38,{1,4},Val3]),
+%%     _Var49 = erlang:apply(MOD,puts,[_Var38,{1,2},Val4]),
+%%     _Var50 = erlang:apply(MOD,delete,[_Var38,1]),
+%%     _Var51 = erlang:apply(MOD,delete,[_Var38,2]),
+%%     _Var52 = erlang:apply(MOD,delete,[_Var38,3]),
+%%     _Var53 = erlang:apply(MOD,delete,[_Var38,4]),
+%%     _Var54 = erlang:apply(MOD,delete,[_Var38,5]),
+%%     _Var55 = erlang:apply(MOD,incr_clock,[]),
+%%     _Var56 = erlang:apply(MOD,delete,[_Var38,6]),
+%% %% timer:sleep(1234),
+%%     _Var61 = erlang:apply(MOD,merge,[_Var38, TestDir]),
+%% %% timer:sleep(1235),
+%%     _Var62 = erlang:apply(MOD,bc_close,[_Var38]),
+%%     _Var64 = erlang:apply(MOD,bc_open,[TestDir]),
+%%     _Var67 = erlang:apply(MOD,fold,[_Var64]),
+
+%%     bc_close(_Var64),
+%%     ?assertEqual(V67_expected, lists:sort(_Var67)),
+%%     ok.
+
+new_20131217_e_test_() ->
+    {timeout, 300, ?_assertEqual(ok, new_20131217_e_body())}.
+
+new_20131217_e_body() ->
+    catch token:stop(),
+    TestDir = token:get_name(),
+    bitcask_time:test__set_fudge(10),
+    MOD = ?MODULE,
+    MFS = 400,
+    V1 = <<"v111111111111<">>, %<<0,0,0,0,0,0,0,0,0,0,0,0,0,0>>,
+    V2 = <<"v222222<">>, %<<0,0,0,0,0,0,0,0>>,
+    V3 = <<"v33333333333<">>, %<<0,0,0,0,0,0,0,0,0,0,0,0,0>>,
+    V4 = <<"v4444444<">>, %<<0,0,0,0,0,0,0,0,0>>,
+    V5 = <<"v5<">>, %<<0,0,0>>,
+    V63_expected = [{4,V2},
+                    {5,V2},
+                    {6,V2},
+                    {7,V2},
+                    {8,V2},
+                    {9,V2},
+                    {10,V2},
+                    {11,V1},
+                    {15,V5},
+                    {16,V4},
+                    {17,V4},
+                    {18,V3},
+                    {19,V3},
+                    {20,V3},
+                    {21,V3},
+                    {22,V3},
+                    {23,V3},
+                    {24,V3},
+                    {25,V3},
+                    {26,V3},
+                    {27,V3},
+                    {28,V3},
+                    {29,V3},
+                    {30,V3},
+                    {31,V3},
+                    {32,V3}],
+    _Var2 = erlang:apply(MOD,bc_open,[TestDir,MFS]),
+    _Var4 = erlang:apply(MOD,puts,[_Var2,{1,11},V1]),
+    _Var9 = erlang:apply(MOD,bc_close,[_Var2]),
+    _Var12 = erlang:apply(MOD,bc_open,[TestDir,MFS]),
+    _Var13 = erlang:apply(MOD,incr_clock,[]),
+    _Var16 = erlang:apply(MOD,delete,[_Var12,1]),
+    _Var19 = erlang:apply(MOD,puts,[_Var12,{1,10},V2]),
+    _Var20 = erlang:apply(MOD,delete,[_Var12,1]),
+    _Var22 = erlang:apply(MOD,delete,[_Var12,3]),
+    _Var24 = erlang:apply(MOD,merge_these,[_Var12, TestDir, [1]]),
+    %% _Var24 = erlang:apply(MOD,merge,[_Var12, TestDir]),
+    _Var27 = erlang:apply(MOD,puts,[_Var12,{14,32},V3]),
+    _Var28 = erlang:apply(MOD,delete,[_Var12,14]),
+    _Var37 = erlang:apply(MOD,puts,[_Var12,{15,17},V4]),
+    _Var38 = erlang:apply(MOD,delete,[_Var12,2]),
+    _Var39 = erlang:apply(MOD,incr_clock,[]),
+    _Var45 = erlang:apply(MOD,puts,[_Var12,{15,15},V5]),
+    _Var46 = erlang:apply(MOD,merge_these,[_Var12, TestDir, [1,2,4,5,6]]),
+    %% _Var46 = erlang:apply(MOD,merge,[_Var12, TestDir]),
+    _Var54 = erlang:apply(MOD,bc_close,[_Var12]),
+    _Var56 = erlang:apply(MOD,bc_open,[TestDir,MFS]),
+    _Var63 = erlang:apply(MOD,fold,[_Var56]),
+    ?assertEqual(V63_expected, lists:sort(_Var63)),
+    ok.
+
+bc_open(Dir, MaxFileSize) ->
+    bitcask:open(Dir, [read_write, {max_file_size, MaxFileSize}, {open_timeout, 1234}]).
 
 nice_key(K) ->
     list_to_binary(io_lib:format("kk~2.2.0w", [K])).
@@ -413,6 +522,11 @@ fork_merge(H, Dir) ->
     {true, Files} -> catch bitcask_merge_worker:merge(Dir, [], Files);
     false         -> not_needed
   end.
+
+merge_these(_H, TestDir, Ids) ->
+    Files = [lists:flatten(io_lib:format("~s/~w.bitcask.data", [TestDir,Id])) ||
+                Id <- Ids],
+    bitcask:merge(TestDir, [], Files).
 
 incr_clock() ->
     bitcask_time:test__incr_fudge(1).
