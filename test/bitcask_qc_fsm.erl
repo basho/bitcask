@@ -24,11 +24,14 @@
 -export([create_stale_lock/0,
          corrupt_hint/2,
          truncate_hint/2]).
+
+-define(TEST_DIR, "/tmp/bitcask.qc").
+-include_lib("kernel/include/file.hrl").
+
 -ifdef(EQC).
 
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_fsm.hrl").
--include_lib("kernel/include/file.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -compile(export_all).
@@ -39,8 +42,6 @@
 
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
-
--define(TEST_DIR, "/tmp/bitcask.qc").
 
 initial_state() ->
     init.
