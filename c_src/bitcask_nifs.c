@@ -159,7 +159,7 @@ typedef struct
     uint32_t      newest_folder;  // Start time for the last keyfolder
     uint64_t      iter_generation;
     uint64_t      pending_updated;
-    uint64_t      pending_start; // os:timestamp() as 64-bit integer
+    uint64_t      pending_start; // UNIX epoch seconds (since 1970)
     ErlNifPid*    pending_awaken; // processes to wake once pending merged into entries
     unsigned int  pending_awaken_count;
     unsigned int  pending_awaken_size;
@@ -296,7 +296,7 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_new", 0, bitcask_nifs_keydir_new0},
     {"keydir_new", 1, bitcask_nifs_keydir_new1},
     {"keydir_mark_ready", 1, bitcask_nifs_keydir_mark_ready},
-    {"keydir_put_int", 9, bitcask_nifs_keydir_put_int},
+    {"keydir_put_int", 10, bitcask_nifs_keydir_put_int},
     {"keydir_get_int", 4, bitcask_nifs_keydir_get_int},
     {"keydir_remove", 3, bitcask_nifs_keydir_remove},
     {"keydir_remove_int", 6, bitcask_nifs_keydir_remove},
@@ -1063,6 +1063,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
     bitcask_keydir_handle* handle;
     bitcask_keydir_entry_proxy entry;
     ErlNifBinary key;
+    uint32_t nowsec;
     uint32_t newest_put;
     uint32_t old_file_id;
     uint64_t old_offset;
@@ -1073,9 +1074,10 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
         enif_get_uint(env, argv[3], &(entry.total_sz)) &&
         enif_get_uint64_bin(env, argv[4], &(entry.offset)) &&
         enif_get_uint(env, argv[5], &(entry.tstamp)) &&
-        enif_get_uint(env, argv[6], &(newest_put)) &&
-        enif_get_uint(env, argv[7], &(old_file_id)) &&
-        enif_get_uint64_bin(env, argv[8], &(old_offset)))
+        enif_get_uint(env, argv[6], &(nowsec)) &&
+        enif_get_uint(env, argv[7], &(newest_put)) &&
+        enif_get_uint(env, argv[8], &(old_file_id)) &&
+        enif_get_uint64_bin(env, argv[9], &(old_offset)))
     {
         bitcask_keydir* keydir = handle->keydir;
         entry.key = (char*)key.data;
@@ -1104,7 +1106,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
             (keydir->pending == NULL))
         {
             keydir->pending = kh_init(entries);
-            keydir->pending_start = time(NULL);
+            keydir->pending_start = nowsec;
         }
 
         if (!f.found || f.is_tombstone)

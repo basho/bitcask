@@ -51,7 +51,6 @@
 -endif.
 
 -ifdef(TEST).
--compile(export_all).
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
 -endif.
@@ -298,25 +297,19 @@ delete(Ref, Key) ->
                     %% Expired entry
                     ok;
                 false ->
-                    %% To avoid races with merge activity, we must put
-                    %% the tombstone first.  If there is a race with
-                    %% a merge, do_put() will be told to wrap and open
-                    %% an new data file to retry to the tombstone put;
-                    %% in that case, this tombstone will be retried &
-                    %% rewritten to a fileid > merge's fileid.
+                    %% TODO: DELETE THIS COMMENT????
+                    %% To avoid subtle race with a merge where merge
+                    %% copies a key that we are about to delete, we
+                    %% must delete from the keydir first.  The missing
+                    %% key from the keydir is the signal to the merge
+                    %% worker that the key should not be merged.
+
+                    %% SLF EXPERIMENT: changing order back to put first.
                     Tombstone = <<?TOMBSTONE2_STR, FileId:32, Offset:64>>,
                     put(Ref, Key, Tombstone, tombstone),
-                    case bitcask_nifs:keydir_remove((get_state(Ref))#bc_state.keydir, Key,
-                                                    TStamp, FileId, Offset) of
-                        ok ->
-                            ok;
-                        already_exists ->
-                            delete(Ref, Key)
-                    end
+                    ok = bitcask_nifs:keydir_remove((get_state(Ref))#bc_state.keydir, Key)
             end
-    end,
-    ok.
-
+    end.
 
 %% @doc Force any writes to sync to disk.
 -spec sync(reference()) -> ok.
@@ -947,11 +940,6 @@ to_lower_grace_time_bound(X) ->
 
 expiry_grace_time(Opts) -> to_lower_grace_time_bound(get_opt(expiry_grace_time, Opts)).
 
--ifdef(TEST).
-start_app() ->
-    catch application:start(?MODULE),
-    ok.
--else.
 start_app() ->
     case application:start(?MODULE) of
         ok ->
@@ -961,7 +949,6 @@ start_app() ->
         {error, Reason} ->
             {error, Reason}
     end.
--endif.
 
 get_state(Ref) ->
     case erlang:get(Ref) of
@@ -1003,7 +990,6 @@ scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile,
                                                 TotalSz,
                                                 Offset,
                                                 Tstamp,
-                                                bitcask_time:tstamp(),
                                                 false)
                 end,
             bitcask_fileops:fold_keys(File, F, undefined, recovery),
@@ -1092,8 +1078,7 @@ init_keydir_scan_key_files(Dirname, KeyDir, KT, Count) ->
     try
         SortedFiles = readable_files(Dirname),
         _ = scan_key_files(SortedFiles, KeyDir, [], true, false, KT)
-    catch _X:_Y ->
-            io:format(user, "scan_key_files: ~p ~p @ ~p\n", [_X, _Y, erlang:get_stacktrace()]),
+    catch _:_ ->
             init_keydir_scan_key_files(Dirname, KeyDir, KT, Count - 1)
     end.
 
@@ -1180,8 +1165,7 @@ merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
         false ->
             TombFun = fun() ->
                     ok = bitcask_nifs:keydir_put(State#mstate.del_keydir, K,
-                                                 FileId, 0, Offset, Tstamp,
-                                                 bitcask_time:tstamp()),
+                                                 FileId, 0, Offset, Tstamp),
 
                     %% Use the conditional remove on the live
                     %% keydir. We only want to actually remove
@@ -1254,27 +1238,19 @@ inner_merge_write(K, V, Tstamp, OldFileId, OldOffset, UpdateKeydirP, State) ->
     {ok, Outfile, Offset, Size} =
         bitcask_fileops:write(State1#mstate.out_file,
                               K, V, Tstamp),
-    Outfile2 =
-        if UpdateKeydirP ->
-                %% Update live keydir for the current out
-                %% file. It's possible that someone else may have written
-                %% a newer value whilst we were processing ... and if
-                %% they did, we need to undo our write here.
-                case bitcask_nifs:keydir_put(State#mstate.live_keydir, K,
-                                             bitcask_fileops:file_tstamp(Outfile),
-                                             Size, Offset, Tstamp,
-                                             bitcask_time:tstamp(),
-                                             OldFileId, OldOffset) of
-                    ok ->
-                        Outfile;
-                    already_exists ->
-                        {ok, O} = bitcask_fileops:un_write(Outfile),
-                        O
-                end;
-           true ->
-                Outfile
-        end,
-    State1#mstate { out_file = Outfile2 }.
+    
+    if UpdateKeydirP ->
+            %% Update live keydir for the current out
+            %% file. It's possible that this is a noop, as
+            %% someone else may have written a newer value
+            %% whilst we were processing.
+            _ = bitcask_nifs:keydir_put(State#mstate.live_keydir, K,
+                                        bitcask_fileops:file_tstamp(Outfile),
+                                        Size, Offset, Tstamp, OldFileId, OldOffset);
+       true ->
+            ok
+    end,
+    State1#mstate { out_file = Outfile }.
 
 
 out_of_date(_State, _Key, _Tstamp, _FileId, _Pos, _ExpiryTime,
@@ -1401,8 +1377,7 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State,
         key ->
             case bitcask_nifs:keydir_put(State2#bc_state.keydir, Key,
                                          bitcask_fileops:file_tstamp(WriteFile2),
-                                         Size, Offset, Tstamp,
-                                         bitcask_time:tstamp(), true) of
+                                         Size, Offset, Tstamp, true) of
                 ok ->
                     {ok, State2#bc_state { write_file = WriteFile2 }};
                 already_exists ->
@@ -1411,15 +1386,11 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State,
                     %% could have rewritten this Key to a file with a greater
                     %% file_id. Rather than synchronize the merge/writer processes, 
                     %% wrap to a new file with a greater file_id and rewrite
-                    %% the key there.
-                    %% We must undo the write here so a later partial merge
-                    %% does not see it.
-                    %% Limit the number of recursions in case there is
-                    %% a different issue with the keydir.
-                    {ok, WriteFile3} = bitcask_fileops:un_write(WriteFile2),
+                    %% the key there.  Limit the number of recursions in case
+                    %% there is a different issue with the keydir.
                     State3 = wrap_write_file(
-                               State2#bc_state { write_file = WriteFile3 }),
-                    do_put(Key, Value, State3, Retries - 1,
+                               State2#bc_state { write_file = WriteFile2 }),
+                    do_put(Key, Value, State3, Retries - 1, 
                            already_exists, ValueType)
             end;
         tombstone ->
@@ -1674,8 +1645,7 @@ fold_corrupt_file_test() ->
     ok.
 
 put_till_frozen(R, Name) ->
-    bitcask_nifs:keydir_put(R, crypto:rand_bytes(32), 0, 1234, 0, 1,
-                            bitcask_time:tstamp()),
+    bitcask_nifs:keydir_put(R, crypto:rand_bytes(32), 0, 1234, 0, 1), 
     {ready, Ref2} = bitcask_nifs:keydir_new(Name),
     %%?debugFmt("Putting", []),
     case bitcask_nifs:keydir_itr_int(Ref2, 2000001,
@@ -1778,15 +1748,6 @@ slow_worker() ->
             {owner, O, Vs} -> {O, Vs}
         end,
     SlowCollect = fun(K, V, Acc) ->
-                          if Acc == [] ->
-                                  Owner ! i_have_started_folding,
-                                  receive
-                                      go_ahead_with_fold ->
-                                          ok
-                                  end;
-                             true ->
-                                  ok
-                          end,
                           receive
                               go -> ok
                           end,
@@ -1831,19 +1792,14 @@ fold_visits_unfrozen_test(RollOver) ->
             _ ->
                 ok
         end,
-        receive
-            i_have_started_folding ->
-                ok
-        after 10*1000 ->
-                error(timeout_should_never_happen)
-        end,
+        timer:sleep(800),
         
         %% A delete, an update and an insert
         ok = delete(B, <<"k">>),
         ok = put(B, <<"k2">>, <<"v2-2">>),
         ok = put(B, <<"k4">>, <<"v4">>),
-        Pid ! go_ahead_with_fold,
      
+        %% timer:sleep(1100),
         CollectAll = fun(K, V, Acc) ->
                              [{K, V} | Acc]
                      end,
