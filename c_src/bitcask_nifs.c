@@ -1111,8 +1111,9 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
 
         if (!f.found || f.is_tombstone)
         {
-            if (newest_put &&
-                (entry.file_id < keydir->biggest_file_id)) {
+            if ((newest_put &&
+                 (entry.file_id < keydir->biggest_file_id)) ||
+                (old_file_id != 0 && old_offset != 0)) {
                 /*
                  * Really, it doesn't exist.  But the atom 'already_exists'
                  * is also a signal that a merge has incremented the
