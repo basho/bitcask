@@ -41,6 +41,7 @@ case PulseBuild of
               , {bitcask_nifs, file_position_int, 2}
               , {bitcask_nifs, file_seekbof_int, 1}
 
+              , {bitcask_file, '_', '_'}
               , {bitcask_time, tstamp, 0}
 
               , {prim_file, '_', '_'}

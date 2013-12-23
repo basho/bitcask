@@ -261,7 +261,7 @@ keydir_itr_next_int(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_itr_release(_Ref) ->
-    ok.
+    erlang:nif_error({error, not_loaded}).
 
 
 increment_file_id(_Ref) ->
