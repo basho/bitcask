@@ -28,9 +28,9 @@
 %% bitcask. Each test uses a fresh directory!
 -define(BITCASK, token:get_name()).
 %% Number of keys used in the tests
--define(NUM_KEYS, 15).
+-define(NUM_KEYS, 50).
 %% max_file_size given to bitcask.
--define(FILE_SIZE, 250).
+-define(FILE_SIZE, 400).
 %% Signal that Bitcask is under test
 -define(BITCASK_TESTING_KEY, bitcask_testing_module).
 
@@ -546,7 +546,7 @@ check_trace(Trace) ->
       true ->
           ok;
       false ->
-          io:format(user, "Sanity check:\n", []),
+          io:format(user, "~p Sanity check:\n", [time()]),
           ?QC_FMT("  Bad1stPid:\n    ~p\n", [Bad1stPid]),
           ?QC_FMT("  Folds:\n    ~p\n", [Folds]),
           ?QC_FMT("  BadForked2:\n    ~p\n", [BadForked2]),
@@ -556,10 +556,11 @@ check_trace(Trace) ->
     ?QC_FMT("Time: ~p ~p\n", [date(), time()]),
     ?QC_FMT("Events:\n~p\n", [Events]),
     ?QC_FMT("Bad1stPid:\n~p\n", [Bad1stPid]),
-    ?QC_FMT("Folds:\n~p\n", [Folds]),
+    %% ?QC_FMT("Folds:\n~p\n", [Folds]),
     ?QC_FMT("BadForked2:\n~p\n", [BadForked2]),
     ?QC_FMT("BadForkedP:\n~p\n", [BadForkedP]) end,
     %% There shouldn't be any Bad stuff, for the 1st pid or forked pids
+    %%%%%%%%  eqc_temporal:is_false(Bad1stPid)).
     eqc_temporal:is_false(Bad1stPid) andalso BadForkedP == false).
 
 check_fold_result([{K, Vs}|Expected], [{K, V}|Actual]) ->
@@ -639,13 +640,19 @@ incr_clock() ->
     ?LOG(incr_clock,
     bitcask_time:test__incr_fudge(1)).
 
+nice_key(K) ->
+    list_to_binary(io_lib:format("kk~2.2.0w", [K])).
+
+un_nice_key(<<"kk", Num:2/binary>>) ->
+    list_to_integer(binary_to_list(Num)).
+
 get(H, K) ->
   ?LOG({get, H, K},
-  ?CHECK_HANDLE(H, not_found, bitcask:get(H, <<K:32>>))).
+  ?CHECK_HANDLE(H, not_found, bitcask:get(H, nice_key(K)))).
 
 put(H, K, V) ->
   ?LOG({put, H, K, V},
-  ?CHECK_HANDLE(H, ok, bitcask:put(H, <<K:32>>, V))).
+  ?CHECK_HANDLE(H, ok, bitcask:put(H, nice_key(K), V))).
 
 puts(H, {K1, K2}, V) ->
   case lists:usort([ put(H, K, V) || K <- lists:seq(K1, K2) ]) of
@@ -655,7 +662,7 @@ puts(H, {K1, K2}, V) ->
 
 delete(H, K) ->
   ?LOG({delete, H, K},
-  ?CHECK_HANDLE(H, ok, bitcask:delete(H, <<K:32>>))).
+  ?CHECK_HANDLE(H, ok, bitcask:delete(H, nice_key(K)))).
 
 fork_merge(H) ->
   ?LOG({fork_merge, H},
@@ -666,6 +673,7 @@ fork_merge(H) ->
   end)).
 
 merge(H) ->
+  ?LOG({merge,H},
   ?CHECK_HANDLE(H, not_needed,
   case bitcask:needs_merge(H) of
     {true, Files} ->
@@ -674,7 +682,7 @@ merge(H) ->
         R             -> R
       end;
     false -> not_needed
-  end).
+  end)).
 
 kill(Pid) ->
   ?LOG({kill, Pid}, (catch exit(Pid, kill))).
@@ -694,11 +702,11 @@ sync(H) ->
 
 fold(H) ->
   ?LOG({fold, H},
-  ?CHECK_HANDLE(H, [], bitcask:fold(H, fun(<<K:32>>, V, Acc) -> [{K,V}|Acc] end, []))).
+  ?CHECK_HANDLE(H, [], bitcask:fold(H, fun(Kb, V, Acc) -> [{un_nice_key(Kb),V}|Acc] end, []))).
 
 fold_keys(H) ->
   ?LOG({fold_keys, H},
-  ?CHECK_HANDLE(H, [], bitcask:fold_keys(H, fun(#bitcask_entry{key = <<K:32>>}, Ks) -> [K|Ks] end, []))).
+  ?CHECK_HANDLE(H, [], bitcask:fold_keys(H, fun(#bitcask_entry{key = Kb}, Ks) -> [un_nice_key(Kb)|Ks] end, []))).
 
 bc_open(Writer) ->
   erlang:put(?BITCASK_TESTING_KEY, ?MODULE),
