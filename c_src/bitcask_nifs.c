@@ -37,6 +37,16 @@
 
 #include <stdio.h>
 
+void DEBUG2(const char *fmt, ...) { }
+/* #include <stdarg.h> */
+/* void DEBUG2(const char *fmt, ...) */
+/* { */
+/*     va_list ap; */
+/*     va_start(ap, fmt); */
+/*     vfprintf(stderr, fmt, ap); */
+/*     va_end(ap); */
+/* } */
+
 #ifdef BITCASK_DEBUG
 #include <stdarg.h>
 void DEBUG(const char *fmt, ...)
@@ -1084,6 +1094,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
         entry.key_sz = key.size;
 
         LOCK(keydir);
+        DEBUG2("LINE %d put\r\n", __LINE__);
 
         DEBUG("+++ Put key = %d file_id=%d offset=%d total_sz=%d tstamp=%u old_file_id=%d\r\n",
                (int)(key.data[3]),
@@ -1097,11 +1108,21 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
         // If conditional put and not found, bail early
         if (!f.found && old_file_id != 0)
         {
+            DEBUG2("LINE %d put -> already_exists\r\n", __LINE__);
             UNLOCK(keydir);
             return ATOM_ALREADY_EXISTS;
         }
 
         // If put would resize and iterating, start pending hash
+        /* if (keydir->keyfolders != 0) { */
+        /*     if ((keydir->pending == NULL) || kh_put_will_resize(entries, keydir->entries)) { */
+        /*         DEBUG("LINE %d pending started: pending = 0x%lx, will_resize() says %d\r\n", __LINE__, keydir->pending, kh_put_will_resize(entries, keydir->entries)); */
+        /*         keydir->pending = kh_init(entries); */
+        /*         keydir->pending_start = nowsec; */
+        /*     } else { */
+        /*         fprintf(stderr, "!Rs,"); */
+        /*     } */
+        /* } */
         if (keydir->keyfolders != 0 &&
             (keydir->pending == NULL))
         {
@@ -1113,7 +1134,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
         {
             if ((newest_put &&
                  (entry.file_id < keydir->biggest_file_id)) ||
-                (old_file_id != 0 && old_offset != 0)) {
+                old_file_id != 0) {
                 /*
                  * Really, it doesn't exist.  But the atom 'already_exists'
                  * is also a signal that a merge has incremented the
@@ -1121,6 +1142,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
                  * operation after Erlang-land has re-written the key & val
                  * to a new location in the same-or-bigger file id.
                  */
+                DEBUG2("LINE %d put -> already_exists\r\n", __LINE__);
                 UNLOCK(keydir);
                 return ATOM_ALREADY_EXISTS;
             }
@@ -1137,6 +1159,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
             DEBUG("+++ Put new\r\n");
             DEBUG_KEYDIR(keydir);
 
+            DEBUG2("LINE %d put -> ok (!found || !tombstone)\r\n", __LINE__);
             UNLOCK(keydir);
             return ATOM_OK;
         }
@@ -1147,6 +1170,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
               old_offset == f.proxy.offset))
         {
             DEBUG("++ Conditional not match\r\n");
+            DEBUG2("LINE %d put -> already_exists/cond bad match\r\n", __LINE__);
             UNLOCK(keydir);
             return ATOM_ALREADY_EXISTS;
         }
@@ -1183,6 +1207,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
             }
 
             put_entry(keydir, &f, &entry);
+            DEBUG2("LINE %d put -> ok\r\n", __LINE__);
             UNLOCK(keydir);
             DEBUG("Finished put\r\n");
             DEBUG_KEYDIR(keydir);
@@ -1196,6 +1221,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
                 update_fstats(env, keydir, entry.file_id, entry.tstamp,
                               0, 1, 0, entry.total_sz);
             }
+            DEBUG2("LINE %d put -> already_exists end\r\n", __LINE__);
             UNLOCK(keydir);
             DEBUG("No update\r\n");
             return ATOM_ALREADY_EXISTS;
@@ -1319,12 +1345,14 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
             // If found an entry in the pending hash, convert it to a tombstone
             if (fr.pending_entry)
             {
+                DEBUG2("LINE %d pending put\r\n", __LINE__);
                 set_pending_tombstone(fr.pending_entry);
             }
             // If frozen, add tombstone to pending hash (iteration must have
             // started between put/remove call in bitcask:delete.
             else if (keydir->pending)
             {
+                DEBUG2("LINE %d pending put\r\n", __LINE__);
                 bitcask_keydir_entry* pending_entry =
                     add_entry(keydir, keydir->pending, &fr.proxy);
                 set_pending_tombstone(pending_entry);
@@ -1423,6 +1451,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_copy(ErlNifEnv* env, int argc, const ERL_NIF_TE
         }
         if (keydir->pending != NULL)
         {
+            DEBUG2("LINE %d pending copy\r\n", __LINE__);
             for (itr = kh_begin(keydir->pending); itr != kh_end(keydir->pending); ++itr)
             {
                 // Allocate our entry to be inserted into the new table and copy the record
@@ -1472,14 +1501,17 @@ static int can_itr_keydir(bitcask_keydir* keydir, uint64_t ts, int maxage, int m
     if (keydir->pending == NULL ||   // not frozen or caller wants to reuse
         (maxage < 0 && maxputs < 0)) // the exiting freeze
     {
+        DEBUG2("LINE %d can_itr\r\n", __LINE__);
         return 1;
     }
     else if (ts == 0 || ts < keydir->pending_start)
     {             // if clock skew (or forced wait), force key folding to wait
+        DEBUG2("LINE %d can_itr\r\n", __LINE__);
         return 0; // which will fix keydir->pending_start
     }
     else
     {
+        DEBUG2("LINE %d can_itr\r\n", __LINE__);
         uint64_t age = ts - keydir->pending_start;
         return ((maxage < 0 || age <= maxage) &&
                 (maxputs < 0 || keydir->pending_updated <= maxputs));
@@ -1522,6 +1554,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr(ErlNifEnv* env, int argc, const ERL_NIF_TER
             keydir->newest_folder = ts;
             keydir->keyfolders++;
             handle->iterator = kh_begin(keydir->entries);
+            DEBUG2("LINE %d itr started, keydir->pending = 0x%lx\r\n", __LINE__, keydir->pending);
             UNLOCK(handle->keydir);
             return ATOM_OK;
         }
@@ -1543,6 +1576,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr(ErlNifEnv* env, int argc, const ERL_NIF_TER
             }
             enif_self(env, &keydir->pending_awaken[keydir->pending_awaken_count]);
             keydir->pending_awaken_count++;
+            DEBUG2("LINE %d itr\r\n", __LINE__);
             UNLOCK(handle->keydir);
             return ATOM_OUT_OF_DATE;
         }
@@ -1575,6 +1609,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
         {
             if (kh_exist(keydir->entries, handle->iterator))
             {
+                DEBUG2("LINE %d itr_next\r\n", __LINE__);
                 bitcask_keydir_entry* entry = kh_key(keydir->entries, handle->iterator);
                 ErlNifBinary key;
                 bitcask_keydir_entry_proxy proxy;
@@ -1649,6 +1684,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_release(ErlNifEnv* env, int argc, const ERL
         // If last iterator closing, unfreeze keydir and merge pending entries.
         if (handle->keydir->keyfolders == 0 && handle->keydir->pending != NULL)
         {
+            DEBUG2("LINE %d itr_release\r\n", __LINE__);
             merge_pending_entries(env, handle->keydir);
             handle->keydir->iter_generation++;
         }
@@ -2370,6 +2406,7 @@ static void merge_pending_entries(ErlNifEnv* env, bitcask_keydir* keydir)
 
     // Free all resources for keydir folding
     kh_destroy(entries, keydir->pending);
+    DEBUG2("LINE %d keydir->pending = NULL\r\n", __LINE__);
     keydir->pending = NULL;
 
     keydir->pending_updated = 0;
