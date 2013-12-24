@@ -48,6 +48,9 @@
 -ifdef(PULSE).
 -compile({parse_transform, pulse_instrument}).
 -compile(export_all).
+-define(OPEN_FOLD_RETRIES, 100).
+-else.
+-define(OPEN_FOLD_RETRIES, 3).
 -endif.
 
 -ifdef(TEST).
@@ -406,7 +409,7 @@ fold(State, Fun, Acc0, MaxAge, MaxPut) ->
     FrozenFun = 
         fun() ->
                 FoldTime = bitcask_time:tstamp(),
-                case open_fold_files(State#bc_state.dirname, 3) of
+                case open_fold_files(State#bc_state.dirname, ?OPEN_FOLD_RETRIES) of
                     {ok, Files} ->
                         ExpiryTime = expiry_time(State#bc_state.opts),
                         SubFun = fun(K0,V,TStamp,{_FN,FTS,Offset,_Sz},Acc) ->

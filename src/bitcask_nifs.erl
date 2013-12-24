@@ -310,13 +310,19 @@ keydir_wait_pending(Ref) ->
 
 -ifdef(PULSE).
 keydir_wait_ready() ->
+    keydir_wait_ready(100).
+
+keydir_wait_ready(0) ->
+    error({bummer, ?MODULE, "keydir_wait_ready: too deep"});
+keydir_wait_ready(N) ->
     receive
         ready -> % fold no matter what on second attempt
             ok;
         error ->
             {error, shutdown}
     after 1000 ->
-            keydir_wait_ready()
+            erlang:display({?MODULE,?LINE,keydir_wait_ready,retry,N}),
+            keydir_wait_ready(N-1)
     end.
 -else.
 keydir_wait_ready() ->
