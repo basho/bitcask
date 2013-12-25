@@ -71,16 +71,24 @@ command(S) ->
   frequency(
     [ {2, {call, ?MODULE, fork, [not_commands(?MODULE, #state{ is_writer = false })]}}
       || S#state.is_writer ] ++
-    [ {8, {call, ?MODULE, incr_clock, []}}
+    [ {3, {call, ?MODULE, incr_clock, []}}
       %% Any proc can call incr_clock
     ] ++
-    [ {10, {call, ?MODULE, get, [S#state.handle, key()]}}
+    %% Move 'get' and 'put' methods to low frequency.  'fold' is the
+    %% best for catching race bugs because it checks all keys instead of
+    %% only one.  'puts' is much more effective also than 'put' because
+    %% 'puts' operates on several keys at once.
+    [ {3, {call, ?MODULE, get, [S#state.handle, key()]}}
       || S#state.handle /= undefined ] ++
-    [ {20, {call, ?MODULE, put, [S#state.handle, key(), value()]}}
+    [ {3, {call, ?MODULE, put, [S#state.handle, key(), value()]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
-    [ {20, {call, ?MODULE, puts, [S#state.handle, key_pair(), value()]}}
+    [ {10, {call, ?MODULE, puts, [S#state.handle, key_pair(), value()]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
-    [ {6, {call, ?MODULE, delete, [S#state.handle, key()]}}
+    %% Use a high rate for delete: we have a good chance of actually
+    %% deleting something that was in a prior 'puts' range of keys.
+    %% And we know that delete+merge has been a good source of
+    %% race bugs, so keep doing it.
+    [ {50, {call, ?MODULE, delete, [S#state.handle, key()]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
     [ {2, {call, ?MODULE, bc_open, [S#state.is_writer]}}
       || S#state.handle == undefined ] ++
@@ -88,19 +96,26 @@ command(S) ->
       || S#state.handle /= undefined ] ++
     [ {1, {call, ?MODULE, fold_keys, [S#state.handle]}}
       || S#state.handle /= undefined ] ++
-    [ {1, {call, ?MODULE, fold, [S#state.handle]}}
+    [ {15, {call, ?MODULE, fold, [S#state.handle]}}
       || S#state.handle /= undefined ] ++
-    [ {1, {call, ?MODULE, bc_close, [S#state.handle]}}
+    %% We want to call close quite frequently, because historically
+    %% there has been problems with delete/tombstones that only appear
+    %% after closing & opening.
+    [ {10, {call, ?MODULE, bc_close, [S#state.handle]}}
       || S#state.handle /= undefined ] ++
-    %% [ {1, {call, ?MODULE, merge, [S#state.handle]}}
-    %%   || S#state.is_writer, not S#state.did_fork_merge, S#state.handle /= undefined ] ++
+    [ {12, {call, ?MODULE, merge, [S#state.handle]}}
+      || S#state.is_writer, not S#state.did_fork_merge, S#state.handle /= undefined ] ++
     [ {12, {call, ?MODULE, fork_merge, [S#state.handle]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
+    %% Disable 'join_reader' for now.
     [ {0, {call, ?MODULE, join_reader, [elements(S#state.readers)]}}
       || S#state.is_writer, S#state.readers /= []] ++
-    [ {1, {call, ?MODULE, kill, [elements([bitcask_merge_worker|S#state.readers])]}}
+    %% Disable 'kill' for now: this model has a flaw and needs some
+    %% fixing to avoid false positives.
+    %% TODO: fix it.  :-)
+    [ {0, {call, ?MODULE, kill, [elements([bitcask_merge_worker|S#state.readers])]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
-    [ {12, {call, ?MODULE, needs_merge, [S#state.handle]}}
+    [ {2, {call, ?MODULE, needs_merge, [S#state.handle]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
     []).
 
@@ -321,7 +336,7 @@ prop_pulse(Boolean) ->
 prop_pulse(LocalOrSlave, Verbose) ->
   P = ?FORALL(Cmds, commands(?MODULE),
   ?IMPLIES(length(Cmds) > 0,
-  ?ALWAYS(3,                           % re-do this many times in normal runs
+  ?ALWAYS(1,                           % re-do this many times in normal runs
   ?FORALL(Seed, pulse:seed(),
   begin
     case run_on_node(LocalOrSlave, Verbose, ?MODULE, run_commands_on_node, [LocalOrSlave, Cmds, Seed, Verbose]) of
@@ -351,7 +366,7 @@ prop_pulse(LocalOrSlave, Verbose) ->
             , {events, check_trace(Trace)} ]))))))
     end
   end)))),
-  ?SHRINK(P, [?ALWAYS(25, P)]).          % re-do this many times during shrinking
+  ?SHRINK(P, [?ALWAYS(3, P)]).          % re-do this many times during shrinking
 
 %% A EUnit wrapper for the QuickCheck property
 prop_pulse_test_() ->
