@@ -225,7 +225,7 @@ postcondition(_S, {call, _, needs_merge, _}, V) ->
   end;
 postcondition(_S, {call, _, bc_open, _}, V) ->
   case V of
-    _ when is_reference(V)                  -> true;
+    _ when is_reference(V)                  -> check_no_tombstones(V, true);
     {'EXIT', {{badmatch,{error,enoent}},_}} -> true;
     %% If we manage to get a timeout, there's a pathological scheduling
     %% delay that is causing starvation.  Expose the starvation by
@@ -687,15 +687,16 @@ delete(H, K) ->
 fork_merge(H) ->
   ?LOG({fork_merge, H},
   ?CHECK_HANDLE(H, not_needed,
-  case bitcask:needs_merge(H) of
+  case needs_merge_wrapper(H) of
     {true, Files} -> catch bitcask_merge_worker:merge(?BITCASK, [], Files);
-    false         -> not_needed
+    false         -> not_needed;
+    Else          -> Else
   end)).
 
 merge(H) ->
   ?LOG({merge,H},
   ?CHECK_HANDLE(H, not_needed,
-  case bitcask:needs_merge(H) of
+  case needs_merge_wrapper(H) of
     {true, Files} ->
       case catch bitcask:merge(?BITCASK, [], Files) of
         {'EXIT', Err} -> Err;
@@ -709,7 +710,15 @@ kill(Pid) ->
 
 needs_merge(H) ->
   ?LOG({needs_merge, H},
-  ?CHECK_HANDLE(H, false, bitcask:needs_merge(H))).
+  ?CHECK_HANDLE(H, false, needs_merge_wrapper(H))).
+
+needs_merge_wrapper(H) ->
+    case check_no_tombstones(H, ok) of
+        ok ->
+            bitcask:needs_merge(H);
+        Else ->
+            {needs_merge_wrapper_error, Else}
+    end.
 
 join_reader(ReaderPid) ->
   receive
@@ -1023,5 +1032,15 @@ mangle_temporal_relation_with_finite_time([{Start, infinity, [_|_]=L}]) ->
     [{Start, Start+1, L}, {Start+1, infinity, []}];
 mangle_temporal_relation_with_finite_time([H|T]) ->
     [H|mangle_temporal_relation_with_finite_time(T)].
+
+check_no_tombstones(Ref, Good) ->
+    Res = bitcask:fold_keys(Ref, fun(K, Acc0) -> [K|Acc0] end,
+                            [], -1, -1, true),
+    case [X || {tombstone, _} = X <- Res] of
+        [] ->
+            Good;
+        Else ->
+            {check_no_tombstones, Else}
+    end.
 
 -endif.
