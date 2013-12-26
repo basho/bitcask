@@ -2380,4 +2380,28 @@ leak_t1() ->
 
     ok.
 
+no_tombstones_after_reopen_test() ->
+    Dir = "/tmp/bc.test.truncmerge",
+    MaxFileSize = 100,
+    os:cmd("rm -rf " ++ Dir),
+    os:cmd("mkdir " ++ Dir),
+
+    %% Initialize dataset with max_file_size set to 1 so that each file will
+    %% only contain a single key.
+    %% If anyone ever modifies default_dataset() to return fewer than 3
+    %% elements, this test will break.
+    KVs = [{<<X:32>>, <<X:32>>} || X <- lists:seq(33, 52)],
+    DataSet = default_dataset() ++ KVs,
+    B = init_dataset(Dir, [{max_file_size, MaxFileSize}], DataSet),
+    [bitcask:delete(B, <<X:32>>) || X <- lists:seq(40, 41)],
+    close(B),
+
+    B2 = bitcask:open(Dir, [read_write, {max_file_size, MaxFileSize}]),
+
+    Res1 = bitcask:fold(B2, fun(K, _V, Acc0) -> [K|Acc0] end, [], -1, -1, true),
+    ?assertNotEqual([], [X || {tombstone, _} = X <- Res1]),
+
+    Res2 = bitcask:fold_keys(B2, fun(K, Acc0) -> [K|Acc0] end, [], -1, -1, true),
+    ?assertEqual([], [X || {tombstone, _} = X <- Res2]).
+
 -endif.
