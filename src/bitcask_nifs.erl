@@ -41,6 +41,7 @@
          keydir_info/1,
          keydir_release/1,
          increment_file_id/1,
+         increment_file_id/2,
          keydir_trim_fstats/2,
          lock_acquire/2,
          lock_release/1,
@@ -121,6 +122,10 @@
         {error, iteration_not_started} | allocation_error | not_found.
 -spec keydir_itr_release(reference()) ->
         ok.
+-spec increment_file_id(reference()) ->
+        {ok, non_neg_integer()}.
+-spec increment_file_id(reference(), non_neg_integer()) ->
+        {ok, non_neg_integer()}.
 -spec keydir_fold(reference(), fun((any(), any()) -> any()), any(),
                   integer(), integer()) ->
         any() | {error, any()}.
@@ -263,8 +268,10 @@ keydir_itr_next_int(_Ref) ->
 keydir_itr_release(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
-
 increment_file_id(_Ref) ->
+    erlang:nif_error({error, not_loaded}).
+
+increment_file_id(_Ref, _ConditionalFileId) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_fold(Ref, Fun, Acc0, MaxAge, MaxPuts) ->

@@ -25,6 +25,7 @@ case PulseBuild of
               , {bitcask_nifs, keydir_trim_fstats, 2}
 
               , {bitcask_nifs, increment_file_id, 1}
+              , {bitcask_nifs, increment_file_id, 2}
 
               , {bitcask_nifs, lock_acquire_int,   2}
               , {bitcask_nifs, lock_release_int,   1}

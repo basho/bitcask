@@ -28,7 +28,7 @@
          close/1,
          close_for_writing/1,
          data_file_tstamps/1,
-         write/4,
+         write/5,
          read/3,
          sync/1,
          delete/1,
@@ -151,7 +151,7 @@ close_hintfile(State = #filestate { hintfd = HintFd, hintcrc = HintCRC }) ->
     %% timestamp and offset as large as the file format supports so opening with
     %% an older version of bitcask will just reject the record at the end of the
     %% hintfile and otherwise work normally.
-    Iolist = hintfile_entry(<<>>, 0, {?MAXOFFSET, HintCRC}),
+    Iolist = hintfile_entry(<<>>, 0, 0, ?MAXOFFSET_V2, HintCRC),
     ok = bitcask_io:file_write(HintFd, Iolist),
     bitcask_io:file_sync(HintFd),
     bitcask_io:file_close(HintFd),
@@ -192,14 +192,14 @@ delete(#filestate{ filename = FN } = State) ->
 
 %% @doc Write a Key-named binary data field ("Value") to the Filestate.
 -spec write(#filestate{}, 
-            Key :: binary(), Value :: binary(), Tstamp :: integer()) ->
+            Key :: binary(), Value :: binary(), Tstamp :: integer(), TombstoneP :: boolean()) ->
         {ok, #filestate{}, Offset :: integer(), Size :: integer()} |
         {error, read_only}.
-write(#filestate { mode = read_only }, _K, _V, _Tstamp) ->
+write(#filestate { mode = read_only }, _K, _V, _Tstamp, _TombstoneP) ->
     {error, read_only};
 write(Filestate=#filestate{fd = FD, hintfd = HintFD, 
                            hintcrc = HintCRC0, ofs = Offset},
-      Key, Value, Tstamp) ->
+      Key, Value, Tstamp, TombstoneP) ->
     KeySz = size(Key),
     true = (KeySz =< ?MAXKEYSIZE),
     ValueSz = size(Value),
@@ -213,7 +213,10 @@ write(Filestate=#filestate{fd = FD, hintfd = HintFD,
     ok = bitcask_io:file_pwrite(FD, Offset, Bytes),
     %% Create and store the corresponding hint entry
     TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
-    Iolist = hintfile_entry(Key, Tstamp, {Offset, TotalSz}),
+    TombInt = if TombstoneP -> 1;
+                 true       -> 0
+              end,
+    Iolist = hintfile_entry(Key, Tstamp, TombInt, Offset, TotalSz),
     ok = bitcask_io:file_write(HintFD, Iolist),
     %% Record our final offset
     TotalSz = iolist_size(Bytes),
@@ -422,7 +425,8 @@ read_crc(Fd) ->
         {ok, <<0:?TSTAMPFIELD, 
                0:?KEYSIZEFIELD,
                ExpectCRC:?TOTALSIZEFIELD, 
-               (?MAXOFFSET):?OFFSETFIELD>>} ->
+               _TombInt:?TOMBSTONEFIELD_V2,
+               (?MAXOFFSET_V2):?OFFSETFIELD_V2>>} ->
             ExpectCRC;
         _ -> error
     end.
@@ -543,21 +547,26 @@ fold_hintfile(State, Fun, Acc0) ->
 %% hint record, three-tuple done indicates that we've exhausted all bytes, or
 %% it's an error
 fold_hintfile_loop(<<0:?TSTAMPFIELD, 0:?KEYSIZEFIELD,
-                     _ExpectCRC:?TOTALSIZEFIELD, (?MAXOFFSET):?OFFSETFIELD>>,
+                     _ExpectCRC:?TOTALSIZEFIELD,
+                     _TombInt:?TOMBSTONEFIELD_V2, (?MAXOFFSET_V2):?OFFSETFIELD_V2>>,
                    _Fun, Acc, Consumed, _Args, EOI) when EOI =:= true ->
     {done, Acc, Consumed + ?HINT_RECORD_SZ};
 %% main work loop here, containing the full match of hint record and key.
 %% if it gets a match, it proceeds to recurse over the rest of the big
 %% binary
 fold_hintfile_loop(<<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
-                     TotalSz:?TOTALSIZEFIELD, Offset:?OFFSETFIELD,
+                     TotalSz:?TOTALSIZEFIELD,
+                     TombInt:?TOMBSTONEFIELD_V2, Offset:?OFFSETFIELD_V2,
                      Key:KeySz/bytes, Rest/binary>>, 
                    Fun, Acc0, Consumed0, {DataSize, HintFile} = Args,
                    EOI) ->
     case Offset + TotalSz =< DataSize + 1 of 
         true ->
             PosInfo = {Offset, TotalSz},
-            Acc = Fun(Key, Tstamp, PosInfo, Acc0),
+            KeyPlus = if TombInt == 1 -> {tombstone, Key};
+                         true         -> Key
+                      end,
+            Acc = Fun(KeyPlus, Tstamp, PosInfo, Acc0),
             Consumed = KeySz + ?HINT_RECORD_SZ + Consumed0,
             fold_hintfile_loop(Rest, Fun, Acc, 
                                Consumed, Args, EOI);
@@ -693,10 +702,10 @@ open_hint_file(Filename, FinalOpts, Count) ->
             open_hint_file(Filename, FinalOpts, Count - 1)
     end.
 
-hintfile_entry(Key, Tstamp, {Offset, TotalSz}) ->
+hintfile_entry(Key, Tstamp, TombInt, Offset, TotalSz) ->
     KeySz = size(Key),
-    [<<Tstamp:?TSTAMPFIELD>>, <<KeySz:?KEYSIZEFIELD>>,
-     <<TotalSz:?TOTALSIZEFIELD>>, <<Offset:?OFFSETFIELD>>, Key].
+    [<<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD, TotalSz:?TOTALSIZEFIELD,
+       TombInt:?TOMBSTONEFIELD_V2, Offset:?OFFSETFIELD_V2>>, Key].
 
 %% ===================================================================
 %% file/filelib avoidance code.

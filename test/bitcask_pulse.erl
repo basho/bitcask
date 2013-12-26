@@ -33,6 +33,9 @@
 -define(FILE_SIZE, 400).
 %% Signal that Bitcask is under test
 -define(BITCASK_TESTING_KEY, bitcask_testing_module).
+%% Max number of forks to run simultaneously.  Too many means huge pauses
+%% while PULSE & postcondition checking operates.
+-define(FORK_CONC_LIMIT, 2).
 
 %% Used for output within EUnit...
 -define(QC_FMT(Fmt, Args),
@@ -70,7 +73,8 @@ not_commands(Module, State) ->
 command(S) ->
   frequency(
     [ {2, {call, ?MODULE, fork, [not_commands(?MODULE, #state{ is_writer = false })]}}
-      || S#state.is_writer ] ++
+      || S#state.is_writer andalso length(S#state.readers) < ?FORK_CONC_LIMIT] ++
+      %% || S#state.is_writer ] ++
     [ {3, {call, ?MODULE, incr_clock, []}}
       %% Any proc can call incr_clock
     ] ++
@@ -121,6 +125,7 @@ command(S) ->
 
 %% Precondition, checked before a command is added to the command sequence.
 precondition(S, {call, _, fork, _}) ->
+length(S#state.readers) < ?FORK_CONC_LIMIT andalso
   S#state.is_writer;
 precondition(_S, {call, _, incr_clock, _}) ->
   true;
@@ -274,10 +279,10 @@ stop_node() ->
   slave:stop(node_name()).
 
 run_on_node(local, _Verbose, M, F, A) ->
-  rpc:call(node(), M, F, A, 120*1000);
+  rpc:call(node(), M, F, A, 180*1000);
 run_on_node(slave, Verbose, M, F, A) ->
   start_node(Verbose),
-  rpc:call(node_name(), M, F, A, 120*1000).
+  rpc:call(node_name(), M, F, A, 180*1000).
 
 %% Muting the QuickCheck license printout from the slave node
 mute(true,  Fun) -> Fun();

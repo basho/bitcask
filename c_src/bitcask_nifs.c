@@ -319,6 +319,7 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_trim_fstats", 2, bitcask_nifs_keydir_trim_fstats},
 
     {"increment_file_id", 1, bitcask_nifs_increment_file_id},
+    {"increment_file_id", 2, bitcask_nifs_increment_file_id},
 
     {"lock_acquire_int",   2, bitcask_nifs_lock_acquire},
     {"lock_release_int",   1, bitcask_nifs_lock_release},
@@ -1113,16 +1114,6 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
             return ATOM_ALREADY_EXISTS;
         }
 
-        // If put would resize and iterating, start pending hash
-        /* if (keydir->keyfolders != 0) { */
-        /*     if ((keydir->pending == NULL) || kh_put_will_resize(entries, keydir->entries)) { */
-        /*         DEBUG("LINE %d pending started: pending = 0x%lx, will_resize() says %d\r\n", __LINE__, keydir->pending, kh_put_will_resize(entries, keydir->entries)); */
-        /*         keydir->pending = kh_init(entries); */
-        /*         keydir->pending_start = nowsec; */
-        /*     } else { */
-        /*         fprintf(stderr, "!Rs,"); */
-        /*     } */
-        /* } */
         if (keydir->keyfolders != 0 &&
             (keydir->pending == NULL))
         {
@@ -1774,12 +1765,22 @@ ERL_NIF_TERM bitcask_nifs_keydir_release(ErlNifEnv* env, int argc, const ERL_NIF
 ERL_NIF_TERM bitcask_nifs_increment_file_id(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     bitcask_keydir_handle* handle;
+    uint32_t conditional_file_id = 0;
 
     if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle))
     {
 
+        if (argv[1] != 0) {
+            enif_get_uint(env, argv[1], &(conditional_file_id));
+        }
         LOCK(handle->keydir);
-        (handle->keydir->biggest_file_id)++;
+        if (conditional_file_id == 0) {
+            (handle->keydir->biggest_file_id)++;
+        } else {
+            if (conditional_file_id > handle->keydir->biggest_file_id) {
+                handle->keydir->biggest_file_id = conditional_file_id;
+            }
+        }
         uint32_t id = handle->keydir->biggest_file_id;
         UNLOCK(handle->keydir);
         return enif_make_tuple2(env, ATOM_OK, enif_make_uint(env, id));

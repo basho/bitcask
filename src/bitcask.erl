@@ -29,8 +29,8 @@
          delete/2,
          sync/1,
          list_keys/1,
-         fold_keys/3, fold_keys/5,
-         fold/3, fold/5,
+         fold_keys/3, fold_keys/6,
+         fold/3, fold/6,
          iterator/3, iterator_next/1, iterator_release/1,
          merge/1, merge/2, merge/3,
          needs_merge/1,
@@ -237,12 +237,13 @@ get(Ref, Key, TryNum) ->
                             case bitcask_fileops:read(Filestate,
                                                     E#bitcask_entry.offset,
                                                     E#bitcask_entry.total_sz) of
-                                {ok, _Key, ?TOMBSTONE} ->
-                                    not_found;
-                                {ok, _Key, <<?TOMBSTONE2_STR, _/binary>>} ->
-                                    not_found;
                                 {ok, _Key, Value} ->
-                                    {ok, Value};
+                                    case is_tombstone(Value) of
+                                        true ->
+                                            not_found;
+                                        false ->
+                                            {ok, Value}
+                                    end;
                                 {error, eof} ->
                                     not_found;
                                 {error, _} = Err ->
@@ -348,15 +349,15 @@ fold_keys(Ref, Fun, Acc0) ->
     State = get_state(Ref),
     MaxAge = get_opt(max_fold_age, State#bc_state.opts) * 1000, % convert from ms to us
     MaxPuts = get_opt(max_fold_puts, State#bc_state.opts),
-    fold_keys(Ref, Fun, Acc0, MaxAge, MaxPuts).
+    fold_keys(Ref, Fun, Acc0, MaxAge, MaxPuts, false).
 
 %% @doc Fold over all keys in a bitcask datastore with limits on how out of date
 %%      the keydir is allowed to be.
 %% Must be able to understand the bitcask_entry record form.
 -spec fold_keys(reference(), Fun::fun(), Acc::term(), non_neg_integer() | undefined,
-                non_neg_integer() | undefined) ->
+                non_neg_integer() | undefined, boolean()) ->
                                                 term() | {error, any()}.
-fold_keys(Ref, Fun, Acc0, MaxAge, MaxPut) ->
+fold_keys(Ref, Fun, Acc0, MaxAge, MaxPut, SeeTombstonesP) ->
     %% Fun should be of the form F(#bitcask_entry, A) -> A
     ExpiryTime = expiry_time((get_state(Ref))#bc_state.opts),
     RealFun = fun(BCEntry, Acc) ->
@@ -372,7 +373,10 @@ fold_keys(Ref, Fun, Acc0, MaxAge, MaxPut) ->
                     Ss when Ss == TSize1; Ss == TSize2 ->
                         %% might be a deleted record, so check
                         case ?MODULE:get(Ref, Key) of
-                            not_found -> Acc;
+                            not_found when not SeeTombstonesP ->
+                                Acc;
+                            not_found when SeeTombstonesP ->
+                                Fun({tombstone, BCEntry}, Acc);
                             _ -> Fun(BCEntry, Acc)
                         end;
                     _ ->
@@ -393,18 +397,19 @@ fold(Ref, Fun, Acc0) when is_reference(Ref)->
 fold(State, Fun, Acc0) ->
     MaxAge = get_opt(max_fold_age, State#bc_state.opts) * 1000, % convert from ms to us
     MaxPuts = get_opt(max_fold_puts, State#bc_state.opts),
-    fold(State, Fun, Acc0, MaxAge, MaxPuts).
+    SeeTombstonesP = get_opt(fold_tombstones, State#bc_state.opts) /= undefined,
+    fold(State, Fun, Acc0, MaxAge, MaxPuts, SeeTombstonesP).
 
 %% @doc fold over all K/V pairs in a bitcask datastore specifying max age/updates of
 %% the frozen keystore.
 %% Fun is expected to take F(K,V,Acc0) -> Acc
 -spec fold(reference() | tuple(), fun((binary(), binary(), any()) -> any()), any(),
-           non_neg_integer() | undefined, non_neg_integer() | undefined) -> 
+           non_neg_integer() | undefined, non_neg_integer() | undefined, boolean()) -> 
                   any() | {error, any()}.
-fold(Ref, Fun, Acc0, MaxAge, MaxPut) when is_reference(Ref)->
+fold(Ref, Fun, Acc0, MaxAge, MaxPut, SeeTombstonesP) when is_reference(Ref)->
     State = get_state(Ref),
-    fold(State, Fun, Acc0, MaxAge, MaxPut);
-fold(State, Fun, Acc0, MaxAge, MaxPut) ->
+    fold(State, Fun, Acc0, MaxAge, MaxPut, SeeTombstonesP);
+fold(State, Fun, Acc0, MaxAge, MaxPut, SeeTombstonesP) ->
     KT = State#bc_state.key_transform,
     FrozenFun = 
         fun() ->
@@ -432,13 +437,13 @@ fold(State, Fun, Acc0, MaxAge, MaxPut) ->
                                                              FTS =:= E#bitcask_entry.file_id of
                                                              false ->
                                                                  Acc;
-                                                             true ->
-                                                                 case V of
-                                                                     ?TOMBSTONE ->
+                                                             true when SeeTombstonesP ->
+                                                                 Fun({tombstone, K},V,Acc);
+                                                             true when not SeeTombstonesP ->
+                                                                 case is_tombstone(V) of
+                                                                     true ->
                                                                          Acc;
-                                                                     <<?TOMBSTONE2_STR, _/binary>> ->
-                                                                         Acc;
-                                                                     _ ->
+                                                                     false ->
                                                                          Fun(K,V,Acc)
                                                                  end
                                                          end
@@ -950,6 +955,13 @@ to_lower_grace_time_bound(X) ->
 
 expiry_grace_time(Opts) -> to_lower_grace_time_bound(get_opt(expiry_grace_time, Opts)).
 
+is_tombstone(?TOMBSTONE) ->
+    true;
+is_tombstone(<<?TOMBSTONE2_STR, _FileId:32, _Offset:64>>) ->
+    true;
+is_tombstone(_) ->
+    false.
+
 -ifdef(TEST).
 start_app() ->
     catch application:start(?MODULE),
@@ -999,7 +1011,17 @@ scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile,
     case bitcask_fileops:open_file(Filename) of
         {ok, File} ->
             FileTstamp = bitcask_fileops:file_tstamp(File),
-            F = fun(K, Tstamp, {Offset, TotalSz}, _) ->
+            %% Signal to the keydir that this file exists via
+            %% increment_file_id() with optional 2nd arg.  The NIF
+            %% needs to know the file exists, even if it contains only
+            %% tombstones or data errors.  Otherwise we risk of
+            %% reusing the file id for new data.
+            _ = bitcask_nifs:increment_file_id(KeyDir, FileTstamp),
+            F = fun({tombstone, K}, Tstamp, {_Offset, _TotalSz}, _) ->
+                        _ = bitcask_nifs:keydir_remove(KeyDir,
+                                                       KT(K),
+                                                       Tstamp);
+                   (K, Tstamp, {Offset, TotalSz}, _) ->
                         bitcask_nifs:keydir_put(KeyDir,
                                                 KT(K),
                                                 FileTstamp,
@@ -1096,7 +1118,8 @@ init_keydir_scan_key_files(Dirname, KeyDir, KT, Count) ->
         SortedFiles = readable_files(Dirname),
         _ = scan_key_files(SortedFiles, KeyDir, [], true, false, KT)
     catch _X:_Y ->
-            io:format(user, "scan_key_files: ~p ~p @ ~p\n", [_X, _Y, erlang:get_stacktrace()]),
+            error_logger:error_msg("scan_key_files: ~p ~p @ ~p\n",
+                                   [_X, _Y, erlang:get_stacktrace()]),
             init_keydir_scan_key_files(Dirname, KeyDir, KT, Count - 1)
     end.
 
@@ -1181,7 +1204,8 @@ merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
                                        Tstamp, FileId, Offset),
             State2;
         false ->
-            TombFun = fun() ->
+            case is_tombstone(V) of
+                true ->
                     ok = bitcask_nifs:keydir_put(State#mstate.del_keydir, K,
                                                  FileId, 0, Offset, Tstamp,
                                                  bitcask_time:tstamp()),
@@ -1198,14 +1222,8 @@ merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
                         true -> inner_merge_write(K, V, Tstamp, FileId, Offset,
                                                   false, State);
                         false -> State
-                    end
-                end,
-            case V of
-                ?TOMBSTONE ->
-                    TombFun();
-                <<?TOMBSTONE2_STR, _DeadFileId:32, _DeadOffset:64>> ->
-                    TombFun();
-                _ ->
+                    end;
+                false ->
                     ok = bitcask_nifs:keydir_remove(State#mstate.del_keydir, K),
                     inner_merge_write(K, V, Tstamp, FileId, Offset, State)
             end
@@ -1256,7 +1274,14 @@ inner_merge_write(K, V, Tstamp, OldFileId, OldOffset, UpdateKeydirP, State) ->
     
     {ok, Outfile, Offset, Size} =
         bitcask_fileops:write(State1#mstate.out_file,
-                              K, V, Tstamp),
+                              K, V, Tstamp, is_tombstone(V)),
+    case bitcask_fileops:file_tstamp(Outfile) =< OldFileId of
+        true ->
+            exit({invariant_violation, K, V, OldFileId, OldOffset, "->",
+                  bitcask_fileops:file_tstamp(Outfile), Offset});
+        false ->
+            ok
+    end,
     Outfile2 =
         if UpdateKeydirP ->
                 %% Update live keydir for the current out
@@ -1397,9 +1422,12 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State,
     end,
 
     Tstamp = bitcask_time:tstamp(),
+    ValueIsTombstone = if ValueType == key       -> false;
+                          ValueType == tombstone -> true
+                       end,
     {ok, WriteFile2, Offset, Size} = bitcask_fileops:write(
                                        State2#bc_state.write_file,
-                                       Key, Value, Tstamp),
+                                       Key, Value, Tstamp, ValueIsTombstone),
     case ValueType of
         key ->
             case bitcask_nifs:keydir_put(State2#bc_state.keydir, Key,
@@ -1508,8 +1536,7 @@ poll_for_merge_lock(_Dirname, 0) ->
     case erlang:get(bitcask_testing_module) of
         undefined ->
             {error, {poll_for_merge_lock, not_testing, max_limit}};
-        TestMod ->
-            erlang:display({poll_for_merge_lock, testing, TestMod}),
+        _TestMod ->
             ?POLL_FOR_MERGE_LOCK_PSEUDOFAILURE
     end;
 poll_for_merge_lock(Dirname, N) ->
@@ -1754,7 +1781,7 @@ fold_visits_frozen_test(RollOver) ->
         CollectAll = fun(K, V, Acc) ->
                              [{K, V} | Acc]
                      end,
-        L = fold(B, CollectAll, [], -1, -1),
+        L = fold(B, CollectAll, [], -1, -1, false),
         ?assertEqual(default_dataset(), lists:sort(L)),
 
         %% Unfreeze the keydir, waiting until complete
@@ -1763,7 +1790,7 @@ fold_visits_frozen_test(RollOver) ->
         timer:sleep(1100),
 
         %% Check we see the updated fold
-        L2 = fold(B, CollectAll, [], -1, -1),
+        L2 = fold(B, CollectAll, [], -1, -1, false),
         ?assertEqual([{<<"k2">>,<<"v2-2">>},
                       {<<"k3">>,<<"v3">>},
                       {<<"k4">>,<<"v4">>}], lists:sort(L2))
@@ -1796,7 +1823,7 @@ slow_worker() ->
                           [{K, V} | Acc]
                   end,
     B = bitcask:open("/tmp/bc.test.unfrozenfold"),
-    L = fold(B, SlowCollect, [], -1, -1), 
+    L = fold(B, SlowCollect, [], -1, -1, false),
     case Values =:= lists:sort(L) of 
         true ->
             Owner ! done;
@@ -1859,7 +1886,7 @@ fold_visits_unfrozen_test(RollOver) ->
         end,
 
         %% Check we see the updated fold
-        L2 = fold(B, CollectAll, [], -1, -1),
+        L2 = fold(B, CollectAll, [], -1, -1, false),
         ?assertEqual([{<<"k2">>,<<"v2-2">>},
                       {<<"k3">>,<<"v3">>},
                       {<<"k4">>,<<"v4">>}], lists:sort(L2))
@@ -2043,11 +2070,12 @@ open_reset_open_test() ->
 delete_merge_test() ->
     %% Initialize dataset with max_file_size set to 1 so that each file will
     %% only contain a single key.
-    close(init_dataset("/tmp/bc.test.delmerge", [{max_file_size, 1}],
+    Dir = "/tmp/bc.test.delmerge",
+    close(init_dataset(Dir, [{max_file_size, 1}],
                        default_dataset())),
 
     %% perform some deletes, tombstones should go in their own files
-    B1 = bitcask:open("/tmp/bc.test.delmerge", [read_write,{max_file_size, 1}]),
+    B1 = bitcask:open(Dir, [read_write,{max_file_size, 1}]),
     ok = bitcask:delete(B1,<<"k2">>),
     ok = bitcask:delete(B1,<<"k3">>),
     A1 = [<<"k">>],
@@ -2055,10 +2083,10 @@ delete_merge_test() ->
     close(B1),
 
     timer:sleep(1100),
-    ok = merge("/tmp/bc.test.delmerge",[]),
+    ok = merge(Dir,[]),
 
     %% Verify we've now only got one item left
-    B2 = bitcask:open("/tmp/bc.test.delmerge"),
+    B2 = bitcask:open(Dir),
     A = [<<"k">>],
     A = bitcask:list_keys(B2),
     close(B2),
