@@ -770,7 +770,7 @@ get_efile_port() ->
     Key = bitcask_efile_port,
     case get(Key) of
         undefined ->
-            case prim_file_drv_open(efile, [binary]) of
+            case prim_file_drv_open("efile", [binary]) of
                 {ok, Port} ->
                     put(Key, Port),
                     get_efile_port();

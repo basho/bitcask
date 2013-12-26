@@ -1017,10 +1017,8 @@ scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile,
             %% tombstones or data errors.  Otherwise we risk of
             %% reusing the file id for new data.
             _ = bitcask_nifs:increment_file_id(KeyDir, FileTstamp),
-            F = fun({tombstone, K}, Tstamp, {_Offset, _TotalSz}, _) ->
-                        _ = bitcask_nifs:keydir_remove(KeyDir,
-                                                       KT(K),
-                                                       Tstamp);
+            F = fun({tombstone, K}, _Tstamp, {_Offset, _TotalSz}, _) ->
+                        _ = bitcask_nifs:keydir_remove(KeyDir, KT(K));
                    (K, Tstamp, {Offset, TotalSz}, _) ->
                         bitcask_nifs:keydir_put(KeyDir,
                                                 KT(K),
