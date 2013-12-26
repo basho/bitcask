@@ -279,10 +279,10 @@ stop_node() ->
   slave:stop(node_name()).
 
 run_on_node(local, _Verbose, M, F, A) ->
-  rpc:call(node(), M, F, A, 180*1000);
+  rpc:call(node(), M, F, A, 10*60*1000);
 run_on_node(slave, Verbose, M, F, A) ->
   start_node(Verbose),
-  rpc:call(node_name(), M, F, A, 180*1000).
+  rpc:call(node_name(), M, F, A, 10*60*1000).
 
 %% Muting the QuickCheck license printout from the slave node
 mute(true,  Fun) -> Fun();

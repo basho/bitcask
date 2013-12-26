@@ -486,7 +486,7 @@ fold_keys_loop(Fd, Offset, Fun, Acc0) ->
 
 fold_keys_int_loop(<<_Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD, 
                      KeySz:?KEYSIZEFIELD, ValueSz:?VALSIZEFIELD, 
-                     Key:KeySz/bytes, _:ValueSz/bytes,
+                     Key:KeySz/bytes, Value:ValueSz/bytes,
                      Rest/binary>>, 
                    Fun, Acc0, Consumed0, 
                    {Offset, AvgValSz0}, 
@@ -495,24 +495,13 @@ fold_keys_int_loop(<<_Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD,
     PosInfo = {Offset, TotalSz},
     Consumed = Consumed0 + TotalSz,
     AvgValSz = (AvgValSz0 + ValueSz) div 2,
-    Acc = Fun(Key, Tstamp, PosInfo, Acc0),
+    KeyPlus = case bitcask:is_tombstone(Value) of
+                  true  -> {tombstone, Key};
+                  false -> Key
+              end,
+    Acc = Fun(KeyPlus, Tstamp, PosInfo, Acc0),
     fold_keys_int_loop(Rest, Fun, Acc, Consumed, 
                        {Offset + TotalSz, AvgValSz}, EOI);
-%% in the case where values are very large, we don't actually want to 
-%% get a larger binary if we don't have to, so just issue a skip.
-fold_keys_int_loop(<<_Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD, 
-                     KeySz:?KEYSIZEFIELD, ValueSz:?VALSIZEFIELD, 
-                     Key:KeySz/bytes, 
-                     _Rest/binary>>, 
-                   Fun, Acc0, _Consumed0, 
-                   {Offset, AvgValSz0}, 
-                   _EOI) when AvgValSz0 > ?CHUNK_SIZE ->
-    TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
-    PosInfo = {Offset, TotalSz},
-    Acc = Fun(Key, Tstamp, PosInfo, Acc0),
-    AvgValSz = (AvgValSz0 + ValueSz) div 2,
-    NewPos = Offset + TotalSz,
-    {skip, Acc, NewPos, {NewPos, AvgValSz}};
 fold_keys_int_loop(<<>>, _Fun, Acc, Consumed, _Args, EOI) when EOI =:= true ->
     {done, Acc, Consumed};
 fold_keys_int_loop(_Bytes, _Fun, Acc, Consumed, Args, EOI) when EOI =:= false ->
