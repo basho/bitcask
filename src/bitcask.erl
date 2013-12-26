@@ -38,7 +38,8 @@
          status/1]).
 
 -export([get_opt/2,
-         get_filestate/2]).
+         get_filestate/2,
+         is_tombstone/1]).
 -export([has_setuid_bit/1]).                    % For EUnit tests
 
 -include_lib("kernel/include/file.hrl").
@@ -2407,6 +2408,12 @@ leak_t1() ->
     ok.
 
 no_tombstones_after_reopen_test() ->
+    no_tombstones_after_reopen_test2(false).
+
+zap_hints_no_tombstones_after_reopen_test() ->
+    no_tombstones_after_reopen_test2(true).
+
+no_tombstones_after_reopen_test2(DeleteHintFilesP) ->
     Dir = "/tmp/bc.test.truncmerge",
     MaxFileSize = 100,
     os:cmd("rm -rf " ++ Dir),
@@ -2421,6 +2428,12 @@ no_tombstones_after_reopen_test() ->
     B = init_dataset(Dir, [{max_file_size, MaxFileSize}], DataSet),
     [bitcask:delete(B, <<X:32>>) || X <- lists:seq(40, 41)],
     close(B),
+
+    if DeleteHintFilesP ->
+            os:cmd("rm " ++ Dir ++ "/*.hint");
+       true ->
+            ok
+    end,
 
     B2 = bitcask:open(Dir, [read_write, {max_file_size, MaxFileSize}]),
 
