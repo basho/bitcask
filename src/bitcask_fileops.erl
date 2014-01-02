@@ -65,7 +65,9 @@
 -spec create_file(Dirname :: string(), Opts :: [any()],
                   reference()) -> 
                          {ok, #filestate{}}.
-create_file(DirName, Opts, Keydir) ->
+
+create_file(DirName, Opts0, Keydir) ->
+    Opts = [create|Opts0],
     {ok, Lock} = get_create_lock(DirName),
     try 
         {ok, Newest} = bitcask_nifs:increment_file_id(Keydir),
