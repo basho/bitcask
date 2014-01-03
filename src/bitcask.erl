@@ -1386,17 +1386,11 @@ default_dataset() ->
 %% HACK: Terrible hack to ensure that the .app file for
 %% bitcask is available on the code path. Assumption here
 %% is that we're running in .eunit/ as part of rebar.
-%% MORE HACK: init the io mode (nif or erlang) here.
 a0_test() ->
     code:add_pathz("../ebin"),
     application:start(erlang),
-    Mode0 = case os:getenv("IOMODE") of
-                false -> "erlang";
-                Else -> Else
-            end,
-    Mode = list_to_atom(Mode0),
-    application:set_env(bitcask, io_mode, Mode),
-    error_logger:info_msg("Set IO mode to: ~p", [Mode]).
+    Mode = bitcask_io:determine_file_module(),
+    error_logger:info_msg("Bitcask IO mode is: ~p\n", [Mode]).
 
 roundtrip_test() ->
     os:cmd("rm -rf /tmp/bc.test.roundtrip"),
