@@ -92,6 +92,12 @@ determine_file_module() ->
         {ok, nif} ->
             bitcask_nifs;
         _ ->
-            bitcask_file
+            Mode = case os:getenv("BITCASK_IO_MODE") of
+                       false    -> 'erlang';
+                       "erlang" -> 'erlang';
+                       "nif"    -> 'nif'
+                    end,
+            application:set_env(bitcask, io_mode, Mode),
+            determine_file_module()
     end.
 -endif.

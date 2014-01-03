@@ -356,7 +356,19 @@ lock_writedata_int(_Ref, _Data) ->
 
 file_open(Filename, Opts) ->
     bitcask_bump:big(),
-    file_open_int(Filename, Opts).
+    %% Opts is bitcask-module style, not file-module style.  Convert.
+    IsCreate = proplists:get_bool(create, Opts) orelse
+               proplists:get_bool(read_write, Opts),
+    IsReadOnly = proplists:get_bool(readonly, Opts),
+    Mode = case {IsReadOnly, IsCreate} of
+               {true, _} ->
+                   [readonly, read, raw, binary];
+               {_, false} ->
+                   [create, read, write, raw, binary];
+               {_, true} ->
+                   [create, read, write, exclusive, raw, binary]
+           end,
+    file_open_int(Filename, Mode).
 
 file_open_int(_Filename, _Opts) ->
     erlang:nif_error({error, not_loaded}).
