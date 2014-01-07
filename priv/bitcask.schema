@@ -436,7 +436,7 @@
 {mapping, "multi_backend.$name.bitcask.expiry", "riak_kv.multi_backend", [
   {datatype, [{atom, off}, {duration, s}]},
   {level, advanced},
-  {default, -1}
+  {default, off}
 ]}.
 
 
