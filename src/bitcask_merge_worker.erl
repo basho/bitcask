@@ -253,8 +253,9 @@ prop_in_window() ->
                 true
             end).
 
-prop_in_window_test() ->
-    ?assert(eqc:quickcheck(prop_in_window())).
+prop_in_window_test_() ->
+    {timeout, 30,
+     [fun() -> ?assert(eqc:quickcheck(prop_in_window())) end]}.
 
 
 -endif.
