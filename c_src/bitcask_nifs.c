@@ -1770,7 +1770,7 @@ ERL_NIF_TERM bitcask_nifs_increment_file_id(ErlNifEnv* env, int argc, const ERL_
     if (enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE, (void**)&handle))
     {
 
-        if (argv[1] != 0) {
+        if (argc == 2) {
             enif_get_uint(env, argv[1], &(conditional_file_id));
         }
         LOCK(handle->keydir);
