@@ -28,11 +28,11 @@ endif
 
 dialyzer: ${PLT} ${LOCAL_PLT}
 	@echo "==> $(shell basename $(shell pwd)) (dialyzer)"
-ifeq (,$(wildcard $(LOCAL_PLT)))
-	dialyzer $(DIALYZER_FLAGS) --plts $(PLT) -c ebin
-else
-	dialyzer $(DIALYZER_FLAGS) --plts $(PLT) $(LOCAL_PLT) -c ebin
-endif
+	@if [ -f $(LOCAL_PLT) ]; then \
+		dialyzer $(DIALYZER_FLAGS) --plts $(PLT) $(LOCAL_PLT) -c ebin; \
+	else \
+		dialyzer $(DIALYZER_FLAGS) --plts $(PLT) -c ebin; \
+	fi
 
 cleanplt:
 	@echo 
