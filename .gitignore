@@ -5,4 +5,4 @@ priv/*.so
 *.o
 *.beam
 *~
-#*#
+.local_dialyzer_plt
