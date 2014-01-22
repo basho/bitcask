@@ -42,7 +42,10 @@ qc(P, TestTime) ->
     ?assert(eqc:quickcheck(?QC_OUT(eqc:testing_time(TestTime, P)))).
 
 keys() ->
-    eqc_gen:non_empty(list(eqc_gen:non_empty(binary()))).
+    oneof([
+           [eqc_gen:non_empty(binary())],
+           eqc_gen:non_empty(list(eqc_gen:non_empty(binary())))
+          ]).
 
 values() ->
     eqc_gen:non_empty(list(binary())).
@@ -154,7 +157,7 @@ prop_merge() ->
          ?FORALL({Ops, M1, M2}, {eqc_gen:non_empty(list(ops(Keys, Values))),
                                  choose(1,128), choose(1,128)},
                  begin
-                     ?cmd("rm -rf /tmp/bc.prop.merge"),
+                     delete_bitcask_dir("/tmp/bc.prop.merge"),
 
                      %% Open a bitcask, dump the ops into it and build
                      %% a model of what SHOULD be in the data.
@@ -223,7 +226,7 @@ prop_fold() ->
          ?FORALL({Ops, M1}, {eqc_gen:non_empty(list(ops(Keys, Values))),
                              choose(1,128)},
                  begin
-                     ?cmd("rm -rf /tmp/bc.prop.fold"),
+                     delete_bitcask_dir("/tmp/bc.prop.fold"),
 
                      %% Open a bitcask, dump the ops into it and build
                      %% a model of what SHOULD be in the data.
@@ -324,6 +327,17 @@ prop_fold_test_() ->
 
 get_keydir(Ref) ->
     element(9, erlang:get(Ref)).    
+
+delete_bitcask_dir(Dir) ->
+  [file:delete(X) || X <- filelib:wildcard(Dir ++ "/*")],
+  file:del_dir(Dir),
+  case file:read_file_info(Dir) of
+    {error, enoent} -> ok;
+    {ok, _} ->
+      timer:sleep(10),
+          delete_bitcask_dir(Dir)
+  end.
+    
 
 -endif.
 

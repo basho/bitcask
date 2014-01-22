@@ -223,9 +223,10 @@ postcondition(_S, {call, _, needs_merge, _}, V) ->
     false          -> true;
     _              -> {needs_merge, V}
   end;
-postcondition(_S, {call, _, bc_open, _}, V) ->
+postcondition(_S, {call, _, bc_open, [IsWriter]}, V) ->
   case V of
-    _ when is_reference(V)                  -> check_no_tombstones(V, true);
+    _ when is_reference(V) andalso IsWriter -> check_no_tombstones(V, true);
+    _ when is_reference(V)                  -> true;
     {'EXIT', {{badmatch,{error,enoent}},_}} -> true;
     %% If we manage to get a timeout, there's a pathological scheduling
     %% delay that is causing starvation.  Expose the starvation by
@@ -271,7 +272,7 @@ start_node(Verbose) ->
     _ -> ok
   end,
   stop_node(),
-  {ok, _} = slave:start(host(), slave_name(), "-pa ../ebin " ++
+  {ok, _} = slave:start(host(), slave_name(), "-pa ./.eunit -pz ./ebin ./deps/*/ebin" ++
                           lists:append(["-detached" || not Verbose ])),
   ok.
 
@@ -323,7 +324,7 @@ run_commands_on_node(LocalOrSlave, Cmds, Seed, Verbose) ->
         end, [{seed, Seed},
               {strategy, unfair}]),
       Schedule = pulse:get_schedule(),
-      Errors = gen_event:call(error_logger, handle_errors, get_errors),
+      Errors = gen_event:call(error_logger, handle_errors, get_errors, 60*1000),
       {H, S, Res, PidRs, Trace, Schedule, Errors}
     catch
       _:Err ->
@@ -347,7 +348,10 @@ prop_pulse(LocalOrSlave, Verbose) ->
     case run_on_node(LocalOrSlave, Verbose, ?MODULE, run_commands_on_node, [LocalOrSlave, Cmds, Seed, Verbose]) of
       {'EXIT', Err} ->
         equals({'EXIT', Err}, ok);
-      {H, S, Res, PidRs, Trace, Schedule, Errors} ->
+      {H, S, Res, PidRs, Trace, Schedule, Errors0} ->
+        %% Filter out error_message stuff about time_travel_backward:
+        %% they aren't sufficient by themselves to signal an error.
+        Errors = [X || X <- Errors0, is_list(element(3, X)) andalso lists:nth(2, element(3, X)) /= time_travel_backward],
         ?WHENFAIL(
           ?QC_FMT("\nState: ~p\n", [S]),
           aggregate(zipwith(fun command_data/2, Cmds, H),
@@ -385,7 +389,7 @@ prop_pulse_test_() ->
             end,
   io:format(user, "prop_pulse_test time: ~p + ~p seconds\n",
             [Timeout, ExtraTO]),
-  {timeout, (Timeout*1000) + 30,
+  {timeout, (Timeout+ExtraTO) + 60,
    fun() ->
        copy_bitcask_app(),
        ?assert(eqc:quickcheck(eqc:testing_time(Timeout,?QC_OUT(prop_pulse()))))
