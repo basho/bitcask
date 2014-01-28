@@ -320,7 +320,7 @@ delete(Ref, Key) ->
                         ok ->
                             ok;
                         already_exists ->
-                            erlang:display({delete, Key, race_and_lost_with, FileId, Offset}),
+                            display_if_pulse({delete, Key, race_and_lost_with, FileId, Offset}),
                             delete(Ref, Key)
                     end
             end
@@ -1315,7 +1315,7 @@ inner_merge_write(K, V, Tstamp, OldFileId, OldOffset, UpdateKeydirP, State) ->
                     ok ->
                         Outfile;
                     A when A == already_exists; A == time_travel_backward ->
-                        erlang:display({?MODULE,?LINE,un_write,A}),
+                        display_if_pulse({?MODULE,?LINE,un_write,A}),
                         {ok, O} = bitcask_fileops:un_write(Outfile),
                         O
                 end;
@@ -1464,7 +1464,7 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State,
                     %% does not see it.
                     %% Limit the number of recursions in case there is
                     %% a different issue with the keydir.
-                    erlang:display({?MODULE,?LINE,un_write,A}),
+                    display_if_pulse({?MODULE,?LINE,un_write,A}),
                     {ok, WriteFile3} = bitcask_fileops:un_write(WriteFile2),
                     State3 = wrap_write_file(
                                State2#bc_state { write_file = WriteFile3 }),
@@ -1647,10 +1647,10 @@ time_travel_loop(Fun) ->
     time_travel_loop(Fun, 20).
 
 time_travel_loop(_Fun, 0) ->
-    erlang:display({time_travel_loop, 0}),
+    display_if_pulse({time_travel_loop, 0}),
     time_travel_backward;
 time_travel_loop(Fun, Retries) ->
-    if Retries < 20, Retries /= 1 -> erlang:display({time_travel_loop, Retries}); true -> ok end,
+    if Retries < 20, Retries /= 1 -> display_if_pulse({time_travel_loop, Retries}); true -> ok end,
     case Fun(bitcask_time:tstamp()) of
         time_travel_backward = X ->
             %% If we hopped back more than 1 second, well,
@@ -2473,11 +2473,11 @@ fold_snapshotX_test_() ->
 fold_snapshotX() ->
     [begin
          io:format(user, "~p,", [X]),
-         ok = fold_snapshot_test(TimeGames),
+         ok = fold_snapshotX(TimeGames),
          ok
      end || TimeGames <- [true,false], X <- lists:seq(1,10)].
 
-fold_snapshot_test(TimeGame) ->
+fold_snapshotX(TimeGame) ->
     Cask = "/tmp/bc.test.fold-snapshot." ++ os:getpid(),
     Keys = 5,
     Data = [{<<K:32>>, <<K:32>>} || K <- lists:seq(1, Keys)],
@@ -2573,4 +2573,106 @@ fold_snapshot_test(TimeGame) ->
         os:cmd("rm -rf " ++ Cask)
     end.
 
+freeze_close_reopen_test_() ->
+    {timeout, 120, fun() -> freeze_close_reopen() end}.
+
+freeze_close_reopen() ->
+    Cask = "/tmp/bc.test.freeze_close_reopen_test" ++ os:getpid(),
+    %% khash.h has an __ac_prime_list[] entry at 11, and 70% of 11 is
+    %% approximately 8.  So choose # of keys for Data to be a bit
+    %% below 8, and then # of keys for Data2 will definitely be
+    %% beyond the khash resizing point, e.g. 5x.
+    Keys = 7,
+    Data = [{<<K:32>>, <<K:32>>} || K <- lists:seq(1, Keys)],
+    DelKey = 2,
+    Data2 = [{<<K:32>>, <<(K+1):32>>} ||
+                K <- lists:seq(1, Keys*5),
+                K /= DelKey],
+    B = init_dataset(Cask, Data),
+    try
+        CollectAll = fun(K, V, Acc) -> [{K, V} | Acc] end,
+        PutData = fun(DataList) -> [begin ok = put(B, K, V) end ||
+                                       {K, V} <- DataList]
+                  end,
+
+        ?assertEqual(Data, lists:sort(fold(B, CollectAll, [], -1, -1, false))),
+        if true ->
+                State = get_state(B),
+                put_state(B, State#bc_state{max_file_size = 0})
+        end,
+
+        Pid = spawn(fun() -> slow_folder(Cask) end),
+        Pid ! {owner, self()},
+        receive
+            i_have_started_folding ->
+                ok
+        after 10*1000 ->
+                error(timeout_should_never_happen)
+        end,
+
+        %% The difference between the fold_visits_frozen_test test and
+        %% this test is that fold_visits_frozen_test will put
+        %% random-and-expired-and-thus-invisible keys into the keydir
+        %% to freeze it before it modifies any keys that are in the k*
+        %% range.  This test modifies keys in the k* range
+        %% immediately.
+        PutData(Data2),
+        %% We must be able to check that both kinds of mutation are
+        %% tested .... delete a key also!
+        ok = delete(B, <<DelKey:32>>),
+        not_found = get(B, <<DelKey:32>>),
+
+        %% Sanity check
+        [{ok, V} = get(B, K) || {K, V} <- Data2],
+        not_found = get(B, <<DelKey:32>>),
+
+        ok = close(B),
+        B2 = open(Cask, [read_write]),
+        [{ok, V} = get(B2, K) || {K, V} <- Data2],
+        not_found = get(B2, <<DelKey:32>>),
+        %% It is too difficult here to figure out what fold would tell
+        %% us. The multi-folder stuff will allow additions to be made
+        %% as long as the khash doesn't resize.
+
+        %% Unfreeze the keydir, waiting until complete
+        Pid ! go_ahead_with_fold,
+        L1a = finish_worker_loop(Pid),
+        %% Checking here is a bit crazy.
+        %% 1. The first item that the worker's fold found was *prior*
+        %%    to our first mutation by PutData().  But the hash table
+        %%    scrambles key order, so we have to cheat by assuming that
+        %%    the last item in the folder's accumulator is the first
+        %%    key visited by the fold.
+        %% 2. All of the other keys that were visited by the folder
+        %%    should appear frozen, so we compare them to *Data*.
+        {FirstItemKey, _FirstItemValue} = FirstItemFound = lists:last(L1a),
+        [ExpectedFirstItemFound] = [KV || KV = {K, _} <- Data,
+                                          K == FirstItemKey],
+        ?assertEqual(ExpectedFirstItemFound, FirstItemFound),
+        ?assertEqual([KV || KV = {K, _} <- Data,
+                            K /= FirstItemKey],
+                     lists:sort(L1a) -- [FirstItemFound]),
+
+        %% Check that we see the updated data yet again
+        L3 = fold(B2, CollectAll, [], -1, -1, false),
+        ?assertEqual(Data2, lists:sort(L3)),
+        [{ok, V} = get(B2, K) || {K, V} <- Data2],
+        not_found = get(B2, <<DelKey:32>>),
+
+        bitcask:close(B2),
+        ok
+    after
+        bitcask_time:test__clear_fudge(),
+        catch bitcask:close(B),
+        os:cmd("rm -rf " ++ Cask)
+    end.
+
+-endif.
+
+-ifdef(PULSE).
+display_if_pulse(T) ->
+    erlang:display(T).
+-else.
+display_if_pulse(_T) ->
+    ok.
 -endif.

@@ -351,7 +351,9 @@ prop_pulse(LocalOrSlave, Verbose) ->
       {H, S, Res, PidRs, Trace, Schedule, Errors0} ->
         %% Filter out error_message stuff about time_travel_backward:
         %% they aren't sufficient by themselves to signal an error.
-        Errors = [X || X <- Errors0, is_list(element(3, X)) andalso lists:nth(2, element(3, X)) /= time_travel_backward],
+        %% e.g. {<0.2726.0>,"Fun ~p returned ~p, sleeping & retrying\n",  [#Fun<bitcask.42.78934414>,time_travel_backward]}
+        Errors = [X || X <- Errors0, element(2, X) /= "Fun ~p returned ~p, sleeping & retrying\n"],
+
         ?WHENFAIL(
           ?QC_FMT("\nState: ~p\n", [S]),
           aggregate(zipwith(fun command_data/2, Cmds, H),
@@ -372,7 +374,7 @@ prop_pulse(LocalOrSlave, Verbose) ->
             [ {0, equals(Res, ok)}
             | [ {Pid, equals(R, ok)} || {Pid, R} <- PidRs ] ] ++
             [ {errors, equals(Errors, [])}
-            , {events, check_trace(Trace)} ]))))))
+            , {events, check_trace(Trace, Cmds, Seed)} ]))))))
     end
   end)))),
   ?SHRINK(P, [?ALWAYS(3, P)]).          % re-do this many times during shrinking
@@ -410,7 +412,7 @@ copy_bitcask_app() ->
 %% or the new value until the operation has finished. Likewise, a get
 %% (or a fold/fold_keys) may see any of the potential values if the
 %% operation overlaps with a put/delete.
-check_trace(Trace) ->
+check_trace(Trace, Cmds, Seed) ->
   %% Turn the trace into a temporal relation
   Events = eqc_temporal:from_timed_list(Trace),
 
@@ -458,10 +460,80 @@ check_trace(Trace) ->
       end,
       eqc_temporal:set(Values)),
 
+  %% There must be an easier way ... but we use brute force below.
+  %% Calculate if there were any open calls made by the FirstPid
+  %% while a forked fold was also happening.  If that's true, then
+  %% the model may be wrong about the correct values of fold & fold_keys
+  %% operations.
+
+  [{_Time1, {call, FirstPid, _}} | _] = Trace,
+  Opens = eqc_temporal:stateful(
+            fun({call, Pid, {open, _}}) when Pid == FirstPid ->
+                    [{opening, Pid}]
+            end,
+            fun({opening, Pid}, {result, Pid, _}) -> [] end,
+            Events),
+  OpenAndFolding = eqc_temporal:union(Opens, Folds),
+  OpenAndFolding2 = eqc_temporal:map(fun({opening, _}) -> opening;
+                                        ({folding, _}) -> folding
+                                     end, OpenAndFolding),
+  BothOpeningAndFolding =
+        lists:map(
+          fun({Ta, Tb, L}) ->
+                  case lists:member(opening, L) andalso
+                      lists:member(folding, L) of
+                      true ->
+                          {Ta, Tb, [opening_and_folding]};
+                      false ->
+                          {Ta, Tb, []}
+                  end
+          end, OpenAndFolding2),
+  %% Here we decide if there were any simultaneous open calls by FirstPid
+  %% and a forked fold.
+  BothOpeningAndFoldingP =
+        lists:any(fun({_Ta, _Tb, [opening_and_folding]}) -> true;
+                     (_)                                 -> false
+                  end, BothOpeningAndFolding),
+
   %% The Reads relation keeps track of get, fold_keys and fold calls with the
   %% purpose of checking that they return something sensible. For a get call we
   %% check that the result was a possible value at some point during the
   %% evaluation of the call. The fold and fold_keys are checked analogously.
+  %%
+  %% The fold and fold_keys calls are subject to the weirdness of Bitcask
+  %% keydir freeze behavior.  And since we can't get the model to figure
+  %% out what that behavior is 100% of the time, we will do the next best
+  %% thing: if BothOpeningAndFoldingP is true, then ignore problems with
+  %% fold and fold_keys.  {sigh}  TODO: Find a 100% correct way.
+  %%
+  %% For example, it's possible that this crazy sequence of events has
+  %% happened:
+  %%
+  %%   1. Proc A opens cask in read-write mode
+  %%   2. Proc B opens cask in read-only mode
+  %%   3. Proc B starts a fold
+  %%   4. Proc A causes enough mutations to freeze the keydir.
+  %%   4b. Proc A deletes key K.
+  %%   5. Proc A closes the cask.
+  %%   6. Proc A re-opens the cask in read-write mode.
+  %%   7. Proc A starts a fold.
+  %%   8. Proc B finishes its fold, releases itr, and closes.
+  %%   9. Proc A visits key K but doesn't see the delete
+  %%      from step 4b because the keydir was originally
+  %%      frozen way back early in step 4 and has since
+  %%      never been unfrozen.
+  %%
+  %% Our model cannot (???) keep enough state about step #4 & #45 to
+  %% reason about a problem at step #9.
+  %%
+  %% TODO: Consider an Bitcask change: invalidate all iterators
+  %%       when the read-write owner of the cask closes its handle.
+  %%       Then Proc A at step #7 would not have to worry about a
+  %%       frozen keydir.
+  %%       It would also cause Proc B at step #8 to abort its fold,
+  %%       though what data/error/exception to return to B is an
+  %%       open question.
+
   Reads = eqc_temporal:stateful(
       %% Starting a read call. For get we aggregate the list of possible values
       %% for the corresponding key seen during the call. For fold we keep a
@@ -528,6 +600,7 @@ check_trace(Trace) ->
             %%  K not in Keys ==> not_found in Vals[K]
             case check_fold_keys_result(orddict:to_list(Vals), lists:sort(Keys)) of
               true  -> [];
+              false when Pid == FirstPid, BothOpeningAndFoldingP -> erlang:display({open_during_fold, fold_keys, cmds, Cmds, seed, Seed}), [];
               false -> [{bad, Pid, {fold_keys, orddict:to_list(Vals), lists:sort(Keys)}}]
             end;
         %% Check a call to fold
@@ -537,6 +610,7 @@ check_trace(Trace) ->
             %%  K not in KVs  ==> not_found in Vals[K]
             case check_fold_result(orddict:to_list(Vals), lists:sort(KVs)) of
               true  -> [];
+              false when Pid == FirstPid, BothOpeningAndFoldingP -> erlang:display({open_during_fold, fold, cmds, Cmds, seed, Seed}), [];
               false -> [{bad, Pid, {fold, orddict:to_list(Vals), lists:sort(KVs)}}]
             end
         end,
@@ -544,7 +618,7 @@ check_trace(Trace) ->
 
   %% Filter out the bad stuff from the Reads relation.
   Bad0 = eqc_temporal:map(fun(X={bad, _, _}) -> X end, Reads),
-  [{_Time1, {call, FirstPid, _}} | _] = Trace,
+
   %% SLF: Any bad gets that happen during an active fold may be the result
   %% of Bitcask snapshotting.  I'm not good enough at the temporal logic to
   %% avoid putting 'bad' markers into Reads, but I can try to remove the
@@ -572,9 +646,9 @@ check_trace(Trace) ->
       false ->
           io:format(user, "~p Sanity check:\n", [time()]),
           ?QC_FMT("  Bad1stPid:\n    ~p\n", [Bad1stPid]),
-          ?QC_FMT("  Folds:\n    ~p\n", [Folds]),
           ?QC_FMT("  BadForked2:\n    ~p\n", [BadForked2]),
-          ?QC_FMT("  BadForkedP:\n    ~p\n", [BadForkedP])
+          ?QC_FMT("  BothOpeningAndFolding = ~p\n", [BothOpeningAndFolding]),
+          ?QC_FMT("  BothOpeningAndFoldingP = ~p\n", [BothOpeningAndFoldingP])
   end,
   ?WHENFAIL(begin
     ?QC_FMT("Time: ~p ~p\n", [date(), time()]),
@@ -582,9 +656,11 @@ check_trace(Trace) ->
     ?QC_FMT("Bad1stPid:\n~p\n", [Bad1stPid]),
     %% ?QC_FMT("Folds:\n~p\n", [Folds]),
     ?QC_FMT("BadForked2:\n~p\n", [BadForked2]),
+    ?QC_FMT(" Open&Folding = ~p\n", [OpenAndFolding]),
+    ?QC_FMT("BothOpeningAndFolding = ~p\n", [BothOpeningAndFolding]),
+    ?QC_FMT("BothOpeningAndFoldingP = ~p\n", [BothOpeningAndFoldingP]),
     ?QC_FMT("BadForkedP:\n~p\n", [BadForkedP]) end,
     %% There shouldn't be any Bad stuff, for the 1st pid or forked pids
-    %%%%%%%%  eqc_temporal:is_false(Bad1stPid)).
     eqc_temporal:is_false(Bad1stPid) andalso BadForkedP == false).
 
 check_fold_result([{K, Vs}|Expected], [{K, V}|Actual]) ->
