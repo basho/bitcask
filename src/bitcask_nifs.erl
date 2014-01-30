@@ -45,6 +45,7 @@
          increment_file_id/1,
          increment_file_id/2,
          keydir_trim_fstats/2,
+         keydir_global_pending_frozen/0,
          lock_acquire/2,
          lock_release/1,
          lock_readdata/1,
@@ -149,6 +150,8 @@
         ok.
 -spec keydir_trim_fstats(reference(), [integer()]) ->
         {ok, integer()} | {error, atom()}.
+-spec keydir_global_pending_frozen() ->
+        non_neg_integer().
 -spec lock_acquire(string(), integer()) ->
         {ok, reference()} | {error, atom()}.
 -spec lock_release(reference()) ->
@@ -368,6 +371,9 @@ keydir_release(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_trim_fstats(_Ref, _IDList) ->
+    erlang:nif_error({error, not_loaded}).
+
+keydir_global_pending_frozen() ->
     erlang:nif_error({error, not_loaded}).
 
 
@@ -773,7 +779,10 @@ keydir_wait_pending_test() ->
 
     %% Begin iterating
     ok = bitcask_nifs:keydir_itr(Ref1, 0, 0),
+    NumFrozen = bitcask_nifs:keydir_global_pending_frozen(),
     put_till_frozen(Ref1, Name),
+    NumFrozen2 = bitcask_nifs:keydir_global_pending_frozen(),
+    ?assertEqual(NumFrozen2, NumFrozen + 1),
     %% Spawn a process to wait on pending
     Me = self(),
     F = fun() ->

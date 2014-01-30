@@ -349,11 +349,13 @@ prop_pulse(LocalOrSlave, Verbose) ->
   ?ALWAYS(1,                           % re-do this many times in normal runs
   ?FORALL(Seed, pulse:seed(),
   begin
+    NumFrozen1 = bitcask_nifs:keydir_global_pending_frozen(),
     case run_on_node(LocalOrSlave, Verbose, ?MODULE, run_commands_on_node, [LocalOrSlave, Cmds, Seed, Verbose]) of
       {'EXIT', Err} ->
         equals({'EXIT', Err}, ok);
       {H, S, Res, PidRs, Trace, Schedule, Errors0} ->
-        CheckTrace = check_trace(Trace, Cmds, Seed),
+        NumFrozen2 = bitcask_nifs:keydir_global_pending_frozen(),
+        CheckTrace = check_trace(Trace, Cmds, Seed, NumFrozen2 - NumFrozen1),
         %% Filter out error_message stuff about time_travel_backward:
         %% they aren't sufficient by themselves to signal an error.
         %% e.g. {<0.2726.0>,"Fun ~p returned ~p, sleeping & retrying\n",  [#Fun<bitcask.42.78934414>,time_travel_backward]}
@@ -427,7 +429,7 @@ copy_bitcask_app() ->
 %% or the new value until the operation has finished. Likewise, a get
 %% (or a fold/fold_keys) may see any of the potential values if the
 %% operation overlaps with a put/delete.
-check_trace(Trace, Cmds, Seed) ->
+check_trace(Trace, Cmds, Seed, NumFrozen) ->
   %% Turn the trace into a temporal relation
   Events = eqc_temporal:from_timed_list(Trace),
 
@@ -541,13 +543,14 @@ check_trace(Trace, Cmds, Seed) ->
   %% Our model cannot (???) keep enough state about step #4 & #45 to
   %% reason about a problem at step #9.
   %%
-  %% TODO: Consider an Bitcask change: invalidate all iterators
-  %%       when the read-write owner of the cask closes its handle.
-  %%       Then Proc A at step #7 would not have to worry about a
-  %%       frozen keydir.
-  %%       It would also cause Proc B at step #8 to abort its fold,
-  %%       though what data/error/exception to return to B is an
-  %%       open question.
+
+  %% Another model change: if the keydir was frozen at any time during
+  %% the test case, then if we detect a fold/fold_keys problem, we're
+  %% going to assume that it was the model that was stupid ... because
+  %% we haven't yet created a model that can accurately predict what a
+  %% fold will see when the keydir is frozen across multiple folders.
+  WasFrozenP = (NumFrozen > 0),
+  if WasFrozenP -> erlang:display({num_frozen, NumFrozen}); true -> ok end,
 
   Reads = eqc_temporal:stateful(
       %% Starting a read call. For get we aggregate the list of possible values
@@ -614,9 +617,20 @@ check_trace(Trace, Cmds, Seed) ->
             %%  K in Keys     ==> found     in Vals[K] and
             %%  K not in Keys ==> not_found in Vals[K]
             case check_fold_keys_result(orddict:to_list(Vals), lists:sort(Keys)) of
-              true  -> [];
-              false when Pid == FirstPid, BothOpeningAndFoldingP -> erlang:display({open_during_fold, fold_keys, cmds, Cmds, seed, Seed}), [];
-              false -> [{bad, Pid, {fold_keys, orddict:to_list(Vals), lists:sort(Keys)}}]
+              true  ->
+                    [];
+              false when Pid == FirstPid, BothOpeningAndFoldingP ->
+                    %% Exception because of model inadequacy (we hope)
+                    erlang:display({advise, open_during_fold, fold_keys,
+                                    cmds, Cmds, seed, Seed}),
+                    [];
+              false when WasFrozenP ->
+                    %% Exception because of model inadequacy (we hope)
+                    erlang:display({advise, was_frozen, NumFrozen, fold_keys,
+                                    cmds, Cmds, seed, Seed}),
+                    [];
+              false ->
+                    [{bad, Pid, {fold_keys, orddict:to_list(Vals), lists:sort(Keys)}}]
             end;
         %% Check a call to fold
          ({fold, Pid, Vals}, {result, Pid, KVs}) ->
@@ -624,9 +638,19 @@ check_trace(Trace, Cmds, Seed) ->
             %%  {K, V} in KVs ==> V         in Vals[K] and
             %%  K not in KVs  ==> not_found in Vals[K]
             case check_fold_result(orddict:to_list(Vals), lists:sort(KVs)) of
-              true  -> [];
-              false when Pid == FirstPid, BothOpeningAndFoldingP -> erlang:display({open_during_fold, fold, cmds, Cmds, seed, Seed}), [];
-              false -> [{bad, Pid, {fold, orddict:to_list(Vals), lists:sort(KVs)}}]
+              true  ->
+                    [];
+              false when Pid == FirstPid, BothOpeningAndFoldingP ->
+                    %% Exception because of model inadequacy (we hope)
+                    erlang:display({advise, open_during_fold, fold,
+                                    cmds, Cmds, seed, Seed}), [];
+              false when WasFrozenP ->
+                    %% Exception because of model inadequacy (we hope)
+                    erlang:display({advise, was_frozen, NumFrozen, fold,
+                                    cmds, Cmds, seed, Seed}),
+                    [];
+              false ->
+                    [{bad, Pid, {fold, orddict:to_list(Vals), lists:sort(KVs)}}]
             end
         end,
       eqc_temporal:union(Events, eqc_temporal:map(fun(D) -> {values, D} end, ValueDict))),

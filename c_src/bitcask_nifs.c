@@ -79,6 +79,8 @@ void DEBUG(const char *fmt, ...)
 #include "pulse_c_send.h"
 #endif
 
+static uint32_t keydir_pending_frozen;
+
 static ErlNifResourceType* bitcask_keydir_RESOURCE;
 
 static ErlNifResourceType* bitcask_lock_RESOURCE;
@@ -302,6 +304,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_fold_is_starting(ErlNifEnv* env, int argc, cons
 ERL_NIF_TERM bitcask_nifs_keydir_info(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_release(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_keydir_trim_fstats(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM bitcask_nifs_keydir_global_pending_frozen(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
 ERL_NIF_TERM bitcask_nifs_increment_file_id(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
@@ -351,6 +354,7 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_info", 1, bitcask_nifs_keydir_info},
     {"keydir_release", 1, bitcask_nifs_keydir_release},
     {"keydir_trim_fstats", 2, bitcask_nifs_keydir_trim_fstats},
+    {"keydir_global_pending_frozen", 0, bitcask_nifs_keydir_global_pending_frozen},
 
     {"increment_file_id", 1, bitcask_nifs_increment_file_id},
     {"increment_file_id", 2, bitcask_nifs_increment_file_id},
@@ -1298,6 +1302,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
         {
             keydir->pending = kh_init(entries);
             keydir->pending_start = nowsec;
+            keydir_pending_frozen++;
         }
 
         if (!f.found || f.is_tombstone)
@@ -2097,6 +2102,11 @@ ERL_NIF_TERM bitcask_nifs_keydir_trim_fstats(ErlNifEnv* env, int argc, const ERL
     {
         return enif_make_badarg(env);
     }
+}
+
+ERL_NIF_TERM bitcask_nifs_keydir_global_pending_frozen(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    return enif_make_uint(env, keydir_pending_frozen);
 }
 
 ERL_NIF_TERM bitcask_nifs_lock_acquire(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])

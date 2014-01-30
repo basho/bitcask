@@ -7,7 +7,9 @@ PulseBuild = case os:getenv("BITCASK_PULSE") of
 case PulseBuild of
     true ->
         PulseOpts =
-            [{pulse_no_side_effect,[{erlang,display,1}]},
+            [{pulse_no_side_effect,
+              [{erlang,display,1},
+               {bitcask_nifs, keydir_global_pending_frozen, 0}]},
              {pulse_side_effect,
               [ {bitcask_nifs, keydir_new, 0}
               , {bitcask_nifs, keydir_new, 1}
@@ -23,6 +25,8 @@ case PulseBuild of
               , {bitcask_nifs, keydir_info, 1}
               , {bitcask_nifs, keydir_release, 1}
               , {bitcask_nifs, keydir_trim_fstats, 2}
+              %% For PULSE purposes, this func is side-effect free (see above)
+              %% bitcask_nifs:keydir_global_pending_frozen/0 
 
               , {bitcask_nifs, increment_file_id, 1}
               , {bitcask_nifs, increment_file_id, 2}
