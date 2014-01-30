@@ -10,8 +10,10 @@
 ## Reminder reminder reminder: never use single quotes
 ## Reminder reminder reminder: never use single quotes
 
-set default_timeout 120
+set default_timeout 600
 set timeout $default_timeout
+# My bash shell prompt looks like this: "bash-3.2$ "
+set bash_prompt_string "bash"
 match_max -d 200100100
 
 set eunit_command [lindex $argv 0]
@@ -34,19 +36,34 @@ proc echo_and_say {msg} {
 }
 
 proc wait_for_shell_prompt {} {
-    # My bash shell prompt looks like this: "bash-3.2$ "
-    set bash_prompt_string "bash"
+    global bash_prompt_string
     expect $bash_prompt_string
 }
 
 msg_to_user "Now starting"
 set count 0
 while {1} {
+    global bash_prompt_string
     send "$eunit_command\r"
     incr count
     msg_to_user "Running number $count"
     while {1} {
         expect {
+#            "$bash_prompt_string" {
+#                wait_for_shell_prompt ; echo_and_say "Hey, found BASH prompt"
+#                exit 0
+#            }
+            -re {EXIT.*case_clause.*badrpc,timeout} {
+                echo_and_say "Bad RPC with timeout"
+                send "\003" ; sleep 1; send "\003" ; sleep 1;
+                wait_for_shell_prompt ; echo_and_say "Got prompt"
+                break
+            }
+            -re {OK, passed [0-9]* tests} {
+                echo_and_say "Hooray, test passed"
+                wait_for_shell_prompt ; echo_and_say "QuickCheck is done"
+                exit 0
+            }
             {Segmentation} {
                 echo_and_say "Segmentation violation"
                 #puts "cp /tmp/slf-stuff-just-in-case ./zzz.sigsegv.[exec date +%s]"
@@ -99,6 +116,14 @@ while {1} {
                 wait_for_shell_prompt ; echo_and_say "Hooray, test passed"
                 exit 0
             }
+            {schedule:} {
+                echo_and_say "Hooray, test time done"
+                exit 0
+            }
+            {.} {
+                send_user "~"
+                ##send_user "[exec date | cut -d ' ' -f 4]~"
+            }
             timeout {
                 echo_and_say "Bummer, there was a timeout"
                 #puts "cp /tmp/slf-stuff-just-in-case ./zzz.timeout.[exec date +%s]"
@@ -107,9 +132,6 @@ while {1} {
                 send "\003\r" ; sleep 1; send "\003\r" ; sleep 1;
                 wait_for_shell_prompt ; echo_and_say "Got prompt"
                 break
-            }
-            {.} {
-                send_user "~"
             }
         }
     }

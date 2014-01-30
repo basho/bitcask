@@ -591,7 +591,6 @@ fold_hintfile_loop(_Bytes, _Fun, Acc0, Consumed0, Args, _EOI) ->
                                 {more, any(), integer(), any()} |
                                 {done, any()} |
                                 {done, any(), integer()} |
-                                {skip, any(), integer(), any()} |
                                 {error, any()}),
                      fun(), any(), any()) -> 
                             {error, any()} | any().
@@ -604,14 +603,8 @@ fold_file_loop(Fd, FoldFn, IntFoldFn, Acc0, Args0, Prev0, ChunkSz0) ->
     %% in datafile folds and key folds
     {Prev, ChunkSz}
         = case Prev0 of 
-              none -> {<<>>, ChunkSz0};
-              %if we're skipping around, we're likely too big
-              skip -> 
-                  CS = case ChunkSz0 >= (?MIN_CHUNK_SIZE * 2) of
-                           true -> ChunkSz0 div 2;
-                           false -> ?MIN_CHUNK_SIZE
-                       end,
-                  {<<>>, CS};
+              none ->
+                  {<<>>, ChunkSz0};
               Other -> 
                   CS = case byte_size(Other) of
                            %% to avoid having to rescan the same 
@@ -641,19 +634,6 @@ fold_file_loop(Fd, FoldFn, IntFoldFn, Acc0, Args0, Prev0, ChunkSz0) ->
                         end,
                     fold_file_loop(Fd, FoldFn, IntFoldFn, 
                                    Acc, Args, Rest, ChunkSz);
-                %% foldfuns should return skip when they have no need for 
-                %% the rest of the binary that they've been handed.
-                %% see fold_int_loop for proper usage.
-                {skip, Acc, SkipTo, Args} ->
-                    case bitcask_io:file_position(Fd, SkipTo) of
-                        {ok, SkipTo} ->
-                            fold_file_loop(Fd, FoldFn, IntFoldFn, 
-                                           Acc, Args, skip, ChunkSz);
-                        {error, Reason} ->
-                            {error, Reason};
-                        Other1 ->
-                            {error, {file_fold_error, Other1}}
-                    end;
                 %% the done two tuple is returned when we want to be 
                 %% unconditionally successfully finished, i.e. trailing data 
                 %% is a non-fatal error
