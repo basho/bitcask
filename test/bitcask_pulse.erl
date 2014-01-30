@@ -35,7 +35,7 @@
 -define(BITCASK_TESTING_KEY, bitcask_testing_module).
 %% Max number of forks to run simultaneously.  Too many means huge pauses
 %% while PULSE & postcondition checking operates.
--define(FORK_CONC_LIMIT, 2).
+-define(FORK_CONC_LIMIT, 4).
 
 %% Used for output within EUnit...
 -define(QC_FMT(Fmt, Args),
@@ -82,7 +82,7 @@ command(S) ->
     %% best for catching race bugs because it checks all keys instead of
     %% only one.  'puts' is much more effective also than 'put' because
     %% 'puts' operates on several keys at once.
-    [ {3, {call, ?MODULE, get, [S#state.handle, key()]}}
+    [ {10, {call, ?MODULE, gets, [S#state.handle, key_pair()]}}
       || S#state.handle /= undefined ] ++
     [ {3, {call, ?MODULE, put, [S#state.handle, key(), value()]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
@@ -100,7 +100,7 @@ command(S) ->
       || S#state.handle /= undefined ] ++
     [ {1, {call, ?MODULE, fold_keys, [S#state.handle]}}
       || S#state.handle /= undefined ] ++
-    [ {15, {call, ?MODULE, fold, [S#state.handle]}}
+    [ {7, {call, ?MODULE, fold, [S#state.handle]}}
       || S#state.handle /= undefined ] ++
     %% We want to call close quite frequently, because historically
     %% there has been problems with delete/tombstones that only appear
@@ -109,8 +109,8 @@ command(S) ->
       || S#state.handle /= undefined ] ++
     [ {12, {call, ?MODULE, merge, [S#state.handle]}}
       || S#state.is_writer, not S#state.did_fork_merge, S#state.handle /= undefined ] ++
-    [ {12, {call, ?MODULE, fork_merge, [S#state.handle]}}
-      || S#state.is_writer, S#state.handle /= undefined ] ++
+   [ {1, {call, ?MODULE, fork_merge, [S#state.handle]}}
+     || S#state.is_writer, S#state.handle /= undefined ] ++
     %% Disable 'join_reader' for now.
     [ {0, {call, ?MODULE, join_reader, [elements(S#state.readers)]}}
       || S#state.is_writer, S#state.readers /= []] ++
@@ -129,7 +129,7 @@ length(S#state.readers) < ?FORK_CONC_LIMIT andalso
   S#state.is_writer;
 precondition(_S, {call, _, incr_clock, _}) ->
   true;
-precondition(S, {call, _, get, [H, _]}) ->
+precondition(S, {call, _, gets, [H, _]}) ->
   S#state.handle == H;
 precondition(S, {call, _, puts, [H, _, _]}) ->
   S#state.is_writer andalso S#state.handle == H;
@@ -234,11 +234,15 @@ postcondition(_S, {call, _, bc_open, [IsWriter]}, V) ->
     {error, timeout}                        -> {dont_want_this_timeout, V};
     _                                       -> {bc_open, V}
   end;
-postcondition(_S, {call, _, get, _}, V) ->
-  case V of
-    {ok, _}   -> true;
-    not_found -> true;
-    _         -> {get, V}
+postcondition(_S, {call, _, gets, _}, Vs) ->
+  case [X || X <- Vs,
+          X /= not_found andalso
+                 not (is_tuple(X) andalso
+                      tuple_size(X) == 2 andalso
+                      element(1, X) == ok andalso
+                      is_binary(element(2, X)))] of
+    [] -> true;
+    _  -> {gets, Vs}
   end;
 postcondition(_S, {call, _, _, _}, _V) ->
   true.
@@ -550,13 +554,13 @@ check_trace(Trace, Cmds, Seed) ->
       %% for the corresponding key seen during the call. For fold we keep a
       %% dictionary mapping keys to lists of possible values and for fold_keys
       %% we keep a dictionary mapping keys to a list of found or not_found.
-      fun({call, Pid, {get, _H, K}})    -> {get, Pid, K, []};
+      fun({call, Pid, {get, _H, K}})    -> {s_get, Pid, K, []};
          ({call, Pid, {fold_keys, _H}}) -> {fold_keys, Pid, orddict:new()};
          ({call, Pid, {fold, _H}})      -> {fold, Pid, orddict:new()} end,
 
       fun
         %% Update a get call with a new set of possible values.
-         ({get, Pid, K, Vs}, {values, Vals}) ->
+         ({s_get, Pid, K, Vs}, {values, Vals}) ->
           %% Get all possible values for K
           Ws = case orddict:find(K, Vals) of
                  error    -> [];
@@ -568,7 +572,7 @@ check_trace(Trace, Cmds, Seed) ->
                               %% changed since eqc_temporal:stateful allows you
                               %% to change the state several times during the
                               %% same time slot.
-          [{get, Pid, K, VWs}];
+          [{s_get, Pid, K, VWs}];
 
         %% Update a fold_keys call
          ({fold_keys, Pid, Vals1}, {values, Vals2}) ->
@@ -597,7 +601,7 @@ check_trace(Trace, Cmds, Seed) ->
           [{fold, Pid, Vals}];
 
         %% Check a call to get
-         ({get, Pid, K, Vs}, {result, Pid, R}) ->
+         ({s_get, Pid, K, Vs}, {result, Pid, R}) ->
             V = case R of not_found -> not_found;
                           {ok, U}   -> U end,
             case lists:member(V, Vs) of
@@ -757,9 +761,38 @@ nice_key(K) ->
 un_nice_key(<<"kk", Num:2/binary>>) ->
     list_to_integer(binary_to_list(Num)).
 
+-define(UNLUCKY_KEY, 3).
+
+%% Note that these three manual cases work much better if
+%% the command() generator's entries for fold and fold_keys are
+%% temporarily changed to frequency 0.
+
+%% Test #1 for gets() refactoring (uncomment manually to test)
+
+%% get(H, K=?UNLUCKY_KEY) ->
+%%   erlang:display({get, unlucky_k, K}),
+%%   ?LOG({get, H, K}, {ok, <<"unlucky">>});
+
 get(H, K) ->
   ?LOG({get, H, K},
   ?CHECK_HANDLE(H, not_found, bitcask:get(H, nice_key(K)))).
+
+gets(H, {Start, End}) ->
+  [get(H, K) || K <- lists:seq(Start, End)].
+
+%% Test #2 for gets() refactoring (uncomment manually to test)
+
+%% put(H, K=?UNLUCKY_KEY, V) ->
+%%   erlang:display({put, unlucky_k, K, orig_v, V, completely_omitting_operation}),
+%%   ?LOG({put, H, K, V}, ok);
+
+%% Test #3 for gets() refactoring (uncomment manually to test)
+
+%% put(H, K=?UNLUCKY_KEY, V) ->
+%%   Sorry = <<"sorry">>,
+%%   erlang:display({put, unlucky_k, K, orig_v, V, new_v, Sorry}),
+%%   ?LOG({put, H, K, V},
+%%   ?CHECK_HANDLE(H, ok, bitcask:put(H, nice_key(K), Sorry)));
 
 put(H, K, V) ->
   ?LOG({put, H, K, V},
