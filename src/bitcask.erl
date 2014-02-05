@@ -909,7 +909,8 @@ scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile, EnoentOK) ->
             case bitcask_fileops:fold_keys(File, F, 0, recovery) of
                 0 -> 
                     bitcask_fileops:delete(File),
-                    lager:info("removing empty cask file");
+                    error_logger:info_msg("Removing empty cask file ~p",
+                                          [Filename]);
                 _R ->
                     ok
             end,
