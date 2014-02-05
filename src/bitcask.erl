@@ -2004,6 +2004,50 @@ truncated_merge_test() ->
                         {KV, {ok, V}} = {KV, bitcask:get(B, K)}
                 end, undefined, GoodData).
 
+gh137_regression_test_() ->
+    {timeout, 300,
+     fun() ->
+             %% Case 1-2: there are ok cask files/hints following N
+             %% Case 3: mangle either a data file or hint file
+             %% Case 4-5: a mangled data/hint file exists but not the
+             %%           corresponding type
+             [{ok, N} = {gh137_regression_test(N, Blob, Type), N} ||
+                 N <- [1,2,3,4,5],
+                 Blob <- [<<>>,
+                          <<"foobar">>,
+                          <<N:(80*8)>> % 80 bytes
+                         ],
+                 Type <- ["data", "hint"]],
+             ok
+     end}.
+
+gh137_regression_test(N, Blob, Type) ->
+    Dir = "/tmp/bc.test.gh137",
+    os:cmd("rm -rf " ++ Dir),
+    os:cmd("mkdir " ++ Dir),
+    try
+        close(init_dataset(Dir, [{max_file_size, 1}], default_dataset())),
+
+        %% Verify number of files in directory
+        3 = length(readable_files(Dir)),
+
+        %% GH 137: make a 0-byte data file
+        file:write_file(Dir ++ "/" ++
+                        integer_to_list(N) ++ ".bitcask." ++ Type, Blob),
+
+        B = bitcask:open(Dir, [read_write]),
+        KsVs = [{<<"k10">>, <<"v10a">>},
+                {<<"k11">>, <<"v11a">>},
+                {<<"k12">>, <<"v12a">>},
+                {<<"k13">>, <<"v13a">>}],
+        [ok = bitcask:put(B, K, V) || {K, V} <- KsVs],
+        [{ok, V} = bitcask:get(B, K) || {K, V} <- KsVs],
+        bitcask:close(B),
+        ok
+    after
+        os:cmd("rm -rf " ++ Dir)
+    end.
+
 truncate_file(Path, Offset) ->
     {ok, FH} = file:open(Path, [read, write]),
     {ok, Offset} = file:position(FH, Offset),
