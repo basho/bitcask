@@ -896,16 +896,23 @@ scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile, EnoentOK) ->
     case bitcask_fileops:open_file(Filename) of
         {ok, File} ->
             FileTstamp = bitcask_fileops:file_tstamp(File),
-            F = fun(K, Tstamp, {Offset, TotalSz}, _) ->
+            F = fun(K, Tstamp, {Offset, TotalSz}, FunAcc) ->
                         bitcask_nifs:keydir_put(KeyDir,
                                                 K,
                                                 FileTstamp,
                                                 TotalSz,
                                                 Offset,
                                                 Tstamp,
-                                                false)
+                                                false),
+                        FunAcc + 1
                 end,
-            bitcask_fileops:fold_keys(File, F, undefined, recovery),
+            case bitcask_fileops:fold_keys(File, F, 0, recovery) of
+                0 -> 
+                    bitcask_fileops:delete(File),
+                    lager:info("removing empty cask file");
+                _R ->
+                    ok
+            end,
             if CloseFile == true ->
                     bitcask_fileops:close(File);
                true ->
