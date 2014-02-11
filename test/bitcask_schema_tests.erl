@@ -117,10 +117,7 @@ override_schema_test() ->
 %% riak_core's schema file is written with some {{mustache_vars}} for substitution during packaging
 %% cuttlefish doesn't have a great time parsing those, so we perform the substitutions first, because
 %% that's how it would work in real life.
-context() ->
-    [
-        {platform_data_dir, "./data"}
-    ].
+context() -> [].
 
 %% This predefined schema covers riak_kv's dependency on
 %% platform_data_dir
