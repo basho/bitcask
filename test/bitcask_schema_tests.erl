@@ -8,7 +8,7 @@
 basic_schema_test() ->
     lager:start(),
     %% The defaults are defined in ../priv/bitcask.schema. it is the file under test.
-    Config = cuttlefish_unit:generate_templated_config("../priv/bitcask.schema", [], context()),
+    Config = cuttlefish_unit:generate_templated_config("../priv/bitcask.schema", [], context(), predefined_schema()),
 
     cuttlefish_unit:assert_config(Config, "bitcask.data_root", "./data/bitcask"),
     cuttlefish_unit:assert_config(Config, "bitcask.open_timeout", 4),
@@ -40,7 +40,7 @@ merge_window_test() ->
     ],
 
     %% The defaults are defined in ../priv/bitcask.schema. it is the file under test.
-    Config = cuttlefish_unit:generate_templated_config("../priv/bitcask.schema", Conf, context()),
+    Config = cuttlefish_unit:generate_templated_config("../priv/bitcask.schema", Conf, context(), predefined_schema()),
 
     cuttlefish_unit:assert_config(Config, "bitcask.data_root", "./data/bitcask"),
     cuttlefish_unit:assert_config(Config, "bitcask.open_timeout", 4),
@@ -90,7 +90,7 @@ override_schema_test() ->
     ],
 
     %% The defaults are defined in ../priv/bitcask.schema. it is the file under test.
-    Config = cuttlefish_unit:generate_templated_config("../priv/bitcask.schema", Conf, context()),
+    Config = cuttlefish_unit:generate_templated_config("../priv/bitcask.schema", Conf, context(), predefined_schema()),
 
     cuttlefish_unit:assert_config(Config, "bitcask.data_root", "/absolute/data/bitcask"),
     cuttlefish_unit:assert_config(Config, "bitcask.open_timeout", 2),
@@ -121,3 +121,14 @@ context() ->
     [
         {platform_data_dir, "./data"}
     ].
+
+%% This predefined schema covers riak_kv's dependency on
+%% platform_data_dir
+predefined_schema() ->
+    Mapping = cuttlefish_mapping:parse({mapping,
+                                        "platform_data_dir",
+                                        "riak_core.platform_data_dir", [
+                                            {default, "./data"},
+                                            {datatype, directory}
+                                       ]}),
+    {[], [Mapping], []}.

@@ -4,7 +4,13 @@
 
 %% @doc A path under which bitcask data files will be stored.
 {mapping, "bitcask.data_root", "bitcask.data_root", [
-  {default, "{{platform_data_dir}}/bitcask"},
+  {default, "#(platform_data_dir)/bitcask"},
+  {datatype, directory}
+]}.
+
+%% @see bitcask.data_root
+{mapping, "multi_backend.$name.bitcask.data_root", "riak_kv.multi_backend", [
+  {level, advanced},
   {datatype, directory}
 ]}.
 
@@ -15,6 +21,13 @@
 %% bitcask backend: .... " Only then should you consider a longer
 %% timeout.
 {mapping, "bitcask.open_timeout", "bitcask.open_timeout", [
+  {default, "4s"},
+  {datatype, {duration, s}},
+  {level, advanced}
+]}.
+
+%% @see bitcask.open_timeout
+{mapping, "multi_backend.$name.bitcask.open_timeout", "riak_kv.multi_backend", [
   {default, "4s"},
   {datatype, {duration, s}},
   {level, advanced}
@@ -53,7 +66,20 @@
 ]}.
 
 %% @see bitcask.sync.strategy
+{mapping, "multi_backend.$name.bitcask.sync.strategy", "riak_kv.multi_backend", [
+  {default, none},
+  {datatype, {enum, [none, o_sync, interval]}},
+  {level, advanced}
+]}.
+
+%% @see bitcask.sync.strategy
 {mapping, "bitcask.sync.interval", "bitcask.sync_strategy", [
+  {datatype, {duration, s}},
+  {level, advanced}
+]}.
+
+%% @see bitcask.sync.strategy
+{mapping, "multi_backend.$name.bitcask.sync.interval", "riak_kv.multi_backend", [
   {datatype, {duration, s}},
   {level, advanced}
 ]}.
@@ -82,6 +108,12 @@
   {level, advanced}
 ]}.
 
+%% @see bitcask.max_file_size
+{mapping, "multi_backend.$name.bitcask.max_file_size", "riak_kv.multi_backend", [
+  {default, "2GB"},
+  {datatype, bytesize},
+  {level, advanced}
+]}.
 
 %% @doc Lets you specify when during the day merge operations are
 %% allowed to be triggered. Valid options are:
@@ -102,7 +134,21 @@
 ]}.
 
 %% @see bitcask.merge.policy
+{mapping, "multi_backend.$name.bitcask.merge.policy", "riak_kv.multi_backend", [
+  {default, always},
+  {datatype, {enum, [always, never, window]}},
+  {level, advanced}
+]}.
+
+%% @see bitcask.merge.policy
 {mapping, "bitcask.merge.window.start", "bitcask.merge_window", [
+  {default, 0},
+  {datatype, integer},
+  {level, advanced}
+]}.
+
+%% @see bitcask.merge.policy
+{mapping, "multi_backend.$name.bitcask.merge.window.start", "riak_kv.multi_backend", [
   {default, 0},
   {datatype, integer},
   {level, advanced}
@@ -115,6 +161,12 @@
   {level, advanced}
 ]}.
 
+%% @see bitcask.merge.policy
+{mapping, "multi_backend.$name.bitcask.merge.window.end", "riak_kv.multi_backend", [
+  {default, 23},
+  {datatype, integer},
+  {level, advanced}
+]}.
 
 {translation,
  "bitcask.merge_window",
@@ -149,6 +201,14 @@
   {validators, ["is_percentage"]}
 ]}.
 
+%% @see bitcask.merge.triggers.fragmentation
+{mapping, "multi_backend.$name.bitcask.merge.triggers.fragmentation", "riak_kv.multi_backend", [
+  {datatype, integer},
+  {level, advanced},
+  {default, 60},
+  {validators, ["is_percentage"]}
+]}.
+
 {validator,
  "is_percentage",
  "must be a percentage",
@@ -175,6 +235,13 @@
   {default, "512MB"}
 ]}.
 
+%% @see bitcask.merge.triggers.dead_bytes
+{mapping, "multi_backend.$name.bitcask.merge.triggers.dead_bytes", "riak_kv.multi_backend", [
+  {datatype, bytesize},
+  {level, advanced},
+  {default, "512MB"}
+]}.
+
 %% @doc Describes what ratio of dead keys to total keys in a file will
 %% cause it to be included in the merge. The value of this setting is
 %% a percentage (0-100). For example, if a data file contains 4 dead
@@ -186,6 +253,14 @@
 {mapping, "bitcask.merge.thresholds.fragmentation",
  "bitcask.frag_threshold",
 [
+  {datatype, integer},
+  {level, advanced},
+  {default, 40},
+  {validators, ["is_percentage"]}
+]}.
+
+%% @see bitcask.merge.thresholds.fragmentation
+{mapping, "multi_backend.$name.bitcask.thresholds.fragmentation", "riak_kv.multi_backend", [
   {datatype, integer},
   {level, advanced},
   {default, 40},
@@ -205,6 +280,13 @@
   {default, "128MB"}
 ]}.
 
+%% @see bitcask.merge.thresholds.dead_bytes
+{mapping, "multi_backend.$name.bitcask.thresholds.dead_bytes", "riak_kv.multi_backend", [
+  {datatype, bytesize},
+  {level, advanced},
+  {default, "128MB"}
+]}.
+
 %% @doc Describes the minimum size a file must have to be _excluded_
 %% from the merge. Files smaller than the threshold will be
 %% included. Increasing the value will cause _more_ files to be
@@ -218,12 +300,26 @@
   {default, "10MB"}
 ]}.
 
+%% @see bitcask.merge.thresholds.small_file
+{mapping, "multi_backend.$name.bitcask.thresholds.small_file", "riak_kv.multi_backend", [
+  {datatype, bytesize},
+  {level, advanced},
+  {default, "10MB"}
+]}.
+
 %% @doc Fold keys thresholds will reuse the keydir if another fold was
 %% started less than `fold.max_age` ago and there were less than
 %% `fold.max_puts` updates.  Otherwise it will wait until all current
 %% fold keys complete and then start.  Set either option to unlimited
 %% to disable.
 {mapping, "bitcask.fold.max_age", "bitcask.max_fold_age", [
+  {datatype, [{atom, unlimited}, {duration, ms}]},
+  {level, advanced},
+  {default, unlimited}
+]}.
+
+%% @see bitcask.fold.max_age
+{mapping, "multi_backend.$name.bitcask.fold.max_age", "riak_kv.multi_backend", [
   {datatype, [{atom, unlimited}, {duration, ms}]},
   {level, advanced},
   {default, unlimited}
@@ -243,6 +339,13 @@
 
 %% @see bitcask.fold.max_age
 {mapping, "bitcask.fold.max_puts", "bitcask.max_fold_puts", [
+  {datatype, [integer, {atom, unlimited}]},
+  {level, advanced},
+  {default, 0}
+]}.
+
+%% @see bitcask.fold.max_age
+{mapping, "multi_backend.$name.bitcask.fold.max_puts", "riak_kv.multi_backend", [
   {datatype, [integer, {atom, unlimited}]},
   {level, advanced},
   {default, 0}
@@ -270,6 +373,13 @@
   {default, off}
 ]}.
 
+%% @see bitcask.expiry
+{mapping, "multi_backend.$name.bitcask.expiry", "riak_kv.multi_backend", [
+  {datatype, [{atom, off}, {duration, s}]},
+  {level, advanced},
+  {default, off}
+]}.
+
 {translation, "bitcask.expiry_secs",
  fun(Conf) ->
    case cuttlefish:conf_get("bitcask.expiry", Conf) of
@@ -285,6 +395,13 @@
 %% compatible mode where old hint files will still be accepted without
 %% CRC signatures.
 {mapping, "bitcask.hintfile_checksums", "bitcask.require_hint_crc", [
+  {default, strict},
+  {datatype, {enum, [strict, allow_missing]}},
+  {level, advanced}
+]}.
+
+%% @see bitcask.hintfile_checksums
+{mapping, "multi_backend.$name.bitcask.hintfile_checksums", "riak_kv.multi_backend", [
   {default, strict},
   {datatype, {enum, [strict, allow_missing]}},
   {level, advanced}
@@ -314,6 +431,13 @@
   {default, 0}
 ]}.
 
+%% @see bitcask.expiry.grace_time
+{mapping, "multi_backend.$name.bitcask.expiry.grace_time", "riak_kv.multi_backend", [
+  {datatype, {duration, s}},
+  {level, advanced},
+  {default, 0}
+]}.
+
 %% @doc Configure how Bitcask writes data to disk.
 %%   erlang: Erlang's built-in file API
 %%      nif: Direct calls to the POSIX C API
@@ -325,135 +449,6 @@
 {mapping, "bitcask.io_mode", "bitcask.io_mode", [
   {default, erlang},
   {datatype, {enum, [erlang, nif]}}
-]}.
-
-%% @see bitcask.data_root
-{mapping, "multi_backend.$name.bitcask.data_root", "riak_kv.multi_backend", [
-  {level, advanced},
-  {datatype, directory}
-]}.
-
-%% @see bitcask.open_timeout
-{mapping, "multi_backend.$name.bitcask.open_timeout", "riak_kv.multi_backend", [
-  {default, "4s"},
-  {datatype, {duration, s}},
-  {level, advanced}
-]}.
-
-%% @see bitcask.sync.strategy
-{mapping, "multi_backend.$name.bitcask.sync.strategy", "riak_kv.multi_backend", [
-  {default, none},
-  {datatype, {enum, [none, o_sync, interval]}},
-  {level, advanced}
-]}.
-
-%% @see bitcask.sync.strategy
-{mapping, "multi_backend.$name.bitcask.sync.interval", "riak_kv.multi_backend", [
-  {datatype, {duration, s}},
-  {level, advanced}
-]}.
-
-%% @see bitcask.max_file_size
-{mapping, "multi_backend.$name.bitcask.max_file_size", "riak_kv.multi_backend", [
-  {default, "2GB"},
-  {datatype, bytesize},
-  {level, advanced}
-]}.
-
-
-%% @see bitcask.merge.policy
-{mapping, "multi_backend.$name.bitcask.merge.policy", "riak_kv.multi_backend", [
-  {default, always},
-  {datatype, {enum, [always, never, window]}},
-  {level, advanced}
-]}.
-
-%% @see bitcask.merge.policy
-{mapping, "multi_backend.$name.bitcask.merge.window.start", "riak_kv.multi_backend", [
-  {default, 0},
-  {datatype, integer},
-  {level, advanced}
-]}.
-
-%% @see bitcask.merge.policy
-{mapping, "multi_backend.$name.bitcask.merge.window.end", "riak_kv.multi_backend", [
-  {default, 23},
-  {datatype, integer},
-  {level, advanced}
-]}.
-
-%% @see bitcask.merge.triggers.fragmentation
-{mapping, "multi_backend.$name.bitcask.merge.triggers.fragmentation", "riak_kv.multi_backend", [
-  {datatype, integer},
-  {level, advanced},
-  {default, 60},
-  {validators, ["is_percentage"]}
-]}.
-
-
-%% @see bitcask.merge.triggers.dead_bytes
-{mapping, "multi_backend.$name.bitcask.merge.triggers.dead_bytes", "riak_kv.multi_backend", [
-  {datatype, bytesize},
-  {level, advanced},
-  {default, "512MB"}
-]}.
-
-%% @see bitcask.merge.thresholds.fragmentation
-{mapping, "multi_backend.$name.bitcask.thresholds.fragmentation", "riak_kv.multi_backend", [
-  {datatype, integer},
-  {level, advanced},
-  {default, 40},
-  {validators, ["is_percentage"]}
-]}.
-
-%% @see bitcask.merge.thresholds.dead_bytes
-{mapping, "multi_backend.$name.bitcask.thresholds.dead_bytes", "riak_kv.multi_backend", [
-  {datatype, bytesize},
-  {level, advanced},
-  {default, "128MB"}
-]}.
-
-%% @see bitcask.merge.thresholds.small_file
-{mapping, "multi_backend.$name.bitcask.thresholds.small_file", "riak_kv.multi_backend", [
-  {datatype, bytesize},
-  {level, advanced},
-  {default, "10MB"}
-]}.
-
-%% @see bitcask.fold.max_age
-{mapping, "multi_backend.$name.bitcask.fold.max_age", "riak_kv.multi_backend", [
-  {datatype, [{atom, unlimited}, {duration, ms}]},
-  {level, advanced},
-  {default, unlimited}
-]}.
-
-%% @see bitcask.fold.max_age
-{mapping, "multi_backend.$name.bitcask.fold.max_puts", "riak_kv.multi_backend", [
-  {datatype, [integer, {atom, unlimited}]},
-  {level, advanced},
-  {default, 0}
-]}.
-
-%% @see bitcask.expiry
-{mapping, "multi_backend.$name.bitcask.expiry", "riak_kv.multi_backend", [
-  {datatype, [{atom, off}, {duration, s}]},
-  {level, advanced},
-  {default, off}
-]}.
-
-
-%% @see bitcask.hintfile_checksums
-{mapping, "multi_backend.$name.bitcask.hintfile_checksums", "riak_kv.multi_backend", [
-  {default, strict},
-  {datatype, {enum, [strict, allow_missing]}},
-  {level, advanced}
-]}.
-
-%% @see bitcask.expiry.grace_time
-{mapping, "multi_backend.$name.bitcask.expiry.grace_time", "riak_kv.multi_backend", [
-  {datatype, {duration, s}},
-  {level, advanced},
-  {default, 0}
 ]}.
 
 %% @see bitcask.io_mode
