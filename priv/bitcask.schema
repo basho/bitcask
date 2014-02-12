@@ -10,7 +10,7 @@
 
 %% @see bitcask.data_root
 {mapping, "multi_backend.$name.bitcask.data_root", "riak_kv.multi_backend", [
-  {level, advanced},
+  hidden,
   {datatype, directory}
 ]}.
 
@@ -23,14 +23,14 @@
 {mapping, "bitcask.open_timeout", "bitcask.open_timeout", [
   {default, "4s"},
   {datatype, {duration, s}},
-  {level, advanced}
+  hidden
 ]}.
 
 %% @see bitcask.open_timeout
 {mapping, "multi_backend.$name.bitcask.open_timeout", "riak_kv.multi_backend", [
   {default, "4s"},
   {datatype, {duration, s}},
-  {level, advanced}
+  hidden
 ]}.
 
 %% @doc Changes the durability of writes by specifying when to
@@ -62,26 +62,26 @@
 {mapping, "bitcask.sync.strategy", "bitcask.sync_strategy", [
   {default, none},
   {datatype, {enum, [none, o_sync, interval]}},
-  {level, advanced}
+  hidden
 ]}.
 
 %% @see bitcask.sync.strategy
 {mapping, "multi_backend.$name.bitcask.sync.strategy", "riak_kv.multi_backend", [
   {default, none},
   {datatype, {enum, [none, o_sync, interval]}},
-  {level, advanced}
+  hidden
 ]}.
 
 %% @see bitcask.sync.strategy
 {mapping, "bitcask.sync.interval", "bitcask.sync_strategy", [
   {datatype, {duration, s}},
-  {level, advanced}
+  hidden
 ]}.
 
 %% @see bitcask.sync.strategy
 {mapping, "multi_backend.$name.bitcask.sync.interval", "riak_kv.multi_backend", [
   {datatype, {duration, s}},
-  {level, advanced}
+  hidden
 ]}.
 
 {translation,
@@ -105,14 +105,14 @@
 {mapping, "bitcask.max_file_size", "bitcask.max_file_size", [
   {default, "2GB"},
   {datatype, bytesize},
-  {level, advanced}
+  hidden
 ]}.
 
 %% @see bitcask.max_file_size
 {mapping, "multi_backend.$name.bitcask.max_file_size", "riak_kv.multi_backend", [
   {default, "2GB"},
   {datatype, bytesize},
-  {level, advanced}
+  hidden
 ]}.
 
 %% @doc Lets you specify when during the day merge operations are
@@ -130,42 +130,42 @@
 {mapping, "bitcask.merge.policy", "bitcask.merge_window", [
   {default, always},
   {datatype, {enum, [always, never, window]}},
-  {level, advanced}
+  hidden
 ]}.
 
 %% @see bitcask.merge.policy
 {mapping, "multi_backend.$name.bitcask.merge.policy", "riak_kv.multi_backend", [
   {default, always},
   {datatype, {enum, [always, never, window]}},
-  {level, advanced}
+  hidden
 ]}.
 
 %% @see bitcask.merge.policy
 {mapping, "bitcask.merge.window.start", "bitcask.merge_window", [
   {default, 0},
   {datatype, integer},
-  {level, advanced}
+  hidden
 ]}.
 
 %% @see bitcask.merge.policy
 {mapping, "multi_backend.$name.bitcask.merge.window.start", "riak_kv.multi_backend", [
   {default, 0},
   {datatype, integer},
-  {level, advanced}
+  hidden
 ]}.
 
 %% @see bitcask.merge.policy
 {mapping, "bitcask.merge.window.end", "bitcask.merge_window", [
   {default, 23},
   {datatype, integer},
-  {level, advanced}
+  hidden
 ]}.
 
 %% @see bitcask.merge.policy
 {mapping, "multi_backend.$name.bitcask.merge.window.end", "riak_kv.multi_backend", [
   {default, 23},
   {datatype, integer},
-  {level, advanced}
+  hidden
 ]}.
 
 {translation,
@@ -196,7 +196,7 @@
  "bitcask.frag_merge_trigger",
  [
   {datatype, integer},
-  {level, advanced},
+  hidden,
   {default, 60},
   {validators, ["is_percentage"]}
 ]}.
@@ -204,7 +204,7 @@
 %% @see bitcask.merge.triggers.fragmentation
 {mapping, "multi_backend.$name.bitcask.merge.triggers.fragmentation", "riak_kv.multi_backend", [
   {datatype, integer},
-  {level, advanced},
+  hidden,
   {default, 60},
   {validators, ["is_percentage"]}
 ]}.
@@ -231,14 +231,14 @@
  "bitcask.dead_bytes_merge_trigger",
  [
   {datatype, bytesize},
-  {level, advanced},
+  hidden,
   {default, "512MB"}
 ]}.
 
 %% @see bitcask.merge.triggers.dead_bytes
 {mapping, "multi_backend.$name.bitcask.merge.triggers.dead_bytes", "riak_kv.multi_backend", [
   {datatype, bytesize},
-  {level, advanced},
+  hidden,
   {default, "512MB"}
 ]}.
 
@@ -254,7 +254,7 @@
  "bitcask.frag_threshold",
 [
   {datatype, integer},
-  {level, advanced},
+  hidden,
   {default, 40},
   {validators, ["is_percentage"]}
 ]}.
@@ -262,7 +262,7 @@
 %% @see bitcask.merge.thresholds.fragmentation
 {mapping, "multi_backend.$name.bitcask.thresholds.fragmentation", "riak_kv.multi_backend", [
   {datatype, integer},
-  {level, advanced},
+  hidden,
   {default, 40},
   {validators, ["is_percentage"]}
 ]}.
@@ -276,14 +276,14 @@
 {mapping, "bitcask.merge.thresholds.dead_bytes",
  "bitcask.dead_bytes_threshold", [
   {datatype, bytesize},
-  {level, advanced},
+  hidden,
   {default, "128MB"}
 ]}.
 
 %% @see bitcask.merge.thresholds.dead_bytes
 {mapping, "multi_backend.$name.bitcask.thresholds.dead_bytes", "riak_kv.multi_backend", [
   {datatype, bytesize},
-  {level, advanced},
+  hidden,
   {default, "128MB"}
 ]}.
 
@@ -296,14 +296,14 @@
 {mapping, "bitcask.merge.thresholds.small_file",
  "bitcask.small_file_threshold", [
   {datatype, bytesize},
-  {level, advanced},
+  hidden,
   {default, "10MB"}
 ]}.
 
 %% @see bitcask.merge.thresholds.small_file
 {mapping, "multi_backend.$name.bitcask.thresholds.small_file", "riak_kv.multi_backend", [
   {datatype, bytesize},
-  {level, advanced},
+  hidden,
   {default, "10MB"}
 ]}.
 
@@ -314,14 +314,14 @@
 %% to disable.
 {mapping, "bitcask.fold.max_age", "bitcask.max_fold_age", [
   {datatype, [{atom, unlimited}, {duration, ms}]},
-  {level, advanced},
+  hidden,
   {default, unlimited}
 ]}.
 
 %% @see bitcask.fold.max_age
 {mapping, "multi_backend.$name.bitcask.fold.max_age", "riak_kv.multi_backend", [
   {datatype, [{atom, unlimited}, {duration, ms}]},
-  {level, advanced},
+  hidden,
   {default, unlimited}
 ]}.
 
@@ -340,14 +340,14 @@
 %% @see bitcask.fold.max_age
 {mapping, "bitcask.fold.max_puts", "bitcask.max_fold_puts", [
   {datatype, [integer, {atom, unlimited}]},
-  {level, advanced},
+  hidden,
   {default, 0}
 ]}.
 
 %% @see bitcask.fold.max_age
 {mapping, "multi_backend.$name.bitcask.fold.max_puts", "riak_kv.multi_backend", [
   {datatype, [integer, {atom, unlimited}]},
-  {level, advanced},
+  hidden,
   {default, 0}
 ]}.
 
@@ -369,14 +369,14 @@
 %% Default is: `off` which disables automatic expiration
 {mapping, "bitcask.expiry", "bitcask.expiry_secs", [
   {datatype, [{atom, off}, {duration, s}]},
-  {level, advanced},
+  hidden,
   {default, off}
 ]}.
 
 %% @see bitcask.expiry
 {mapping, "multi_backend.$name.bitcask.expiry", "riak_kv.multi_backend", [
   {datatype, [{atom, off}, {duration, s}]},
-  {level, advanced},
+  hidden,
   {default, off}
 ]}.
 
@@ -397,14 +397,14 @@
 {mapping, "bitcask.hintfile_checksums", "bitcask.require_hint_crc", [
   {default, strict},
   {datatype, {enum, [strict, allow_missing]}},
-  {level, advanced}
+  hidden
 ]}.
 
 %% @see bitcask.hintfile_checksums
 {mapping, "multi_backend.$name.bitcask.hintfile_checksums", "riak_kv.multi_backend", [
   {default, strict},
   {datatype, {enum, [strict, allow_missing]}},
-  {level, advanced}
+  hidden
 ]}.
 
 {translation, "bitcask.require_hint_crc",
@@ -427,14 +427,14 @@
 %% Default is: `0`
 {mapping, "bitcask.expiry.grace_time", "bitcask.expiry_grace_time", [
   {datatype, {duration, s}},
-  {level, advanced},
+  hidden,
   {default, 0}
 ]}.
 
 %% @see bitcask.expiry.grace_time
 {mapping, "multi_backend.$name.bitcask.expiry.grace_time", "riak_kv.multi_backend", [
   {datatype, {duration, s}},
-  {level, advanced},
+  hidden,
   {default, 0}
 ]}.
 
@@ -455,5 +455,5 @@
 {mapping, "multi_backend.$name.bitcask.io_mode", "riak_kv.multi_backend", [
   {default, erlang},
   {datatype, {enum, [erlang, nif]}},
-  {level, advanced}
+  hidden
 ]}.
