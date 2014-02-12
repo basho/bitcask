@@ -520,7 +520,7 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
             %% reader/writer comes along in the same VM. Note that we
             %% won't necessarily merge all these files.
             AllFiles = scan_key_files(readable_files(Dirname), LiveKeyDir, [],
-                                      false, true),
+                                      false, true, false),
 
             %% Partition all files to files we'll merge and files we
             %% won't (so that we can close those extra files once
@@ -889,9 +889,9 @@ put_state(Ref, State) ->
 reverse_sort(L) ->
     lists:reverse(lists:sort(L)).
 
-scan_key_files([], _KeyDir, Acc, _CloseFile, _EnoentOK) ->
+scan_key_files([], _KeyDir, Acc, _CloseFile, _EnoentOK, _DelZeroFilesP) ->
     Acc;
-scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile, EnoentOK) ->
+scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile, EnoentOK, DelZeroFilesP) ->
     %% Restrictive pattern matching below is intentional
     case bitcask_fileops:open_file(Filename) of
         {ok, File} ->
@@ -907,7 +907,7 @@ scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile, EnoentOK) ->
                         FunAcc + 1
                 end,
             case bitcask_fileops:fold_keys(File, F, 0, recovery) of
-                0 -> 
+                0 when DelZeroFilesP ->
                     bitcask_fileops:delete(File),
                     error_logger:info_msg("Removing empty cask file ~p",
                                           [Filename]);
@@ -919,9 +919,9 @@ scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile, EnoentOK) ->
                true ->
                     ok
             end,
-            scan_key_files(Rest, KeyDir, [File | Acc], CloseFile, EnoentOK);
+            scan_key_files(Rest, KeyDir, [File | Acc], CloseFile, EnoentOK, DelZeroFilesP);
         {error, enoent} when EnoentOK ->
-            scan_key_files(Rest, KeyDir, Acc, CloseFile, EnoentOK)
+            scan_key_files(Rest, KeyDir, Acc, CloseFile, EnoentOK, DelZeroFilesP)
     end.
 
 %%
@@ -992,7 +992,7 @@ init_keydir_scan_key_files(_Dirname, _Keydir, 0) ->
 init_keydir_scan_key_files(Dirname, KeyDir, Count) ->
     try
         SortedFiles = readable_files(Dirname),
-        _ = scan_key_files(SortedFiles, KeyDir, [], true, false)
+        _ = scan_key_files(SortedFiles, KeyDir, [], true, false, true)
     catch _:_ ->
             init_keydir_scan_key_files(Dirname, KeyDir, Count - 1)
     end.
