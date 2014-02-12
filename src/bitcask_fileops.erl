@@ -93,7 +93,7 @@ create_file(DirName, Opts0, Keydir) ->
     catch Error:Reason ->
             %% if we fail somehow, do we need to nuke any partial
             %% state?
-            {Error, Reason}
+            {error, {Error, Reason}}
     after
         bitcask_lockops:release(Lock)
     end.
