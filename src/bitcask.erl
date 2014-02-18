@@ -53,6 +53,7 @@
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
+-export([leak_t0/0, leak_t1/0]).
 -endif.
 
 %% In the real world, 1 or 2 retries is usually sufficient.  In the
@@ -1453,7 +1454,6 @@ get_key_transform(_State) ->
 %% EUnit tests
 %% ===================================================================
 -ifdef(TEST).
-
 init_dataset(Dirname, KVs) ->
     init_dataset(Dirname, [], KVs).
 
