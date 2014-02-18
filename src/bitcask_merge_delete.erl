@@ -133,7 +133,8 @@ check_status(S) ->
     end.
 
 delete_files(Files) ->
-    [bitcask_fileops:delete(#filestate{filename = F}) || F <- Files].
+    lists:foreach(fun bitcask_fileops:delete/1, Files),
+    ok.
 
 -ifdef(TEST).
 

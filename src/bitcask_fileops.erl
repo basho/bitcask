@@ -26,6 +26,7 @@
 -export([create_file/3,
          open_file/1,
          close/1,
+         close_all/1,
          close_for_writing/1,
          data_file_tstamps/1,
          write/4,
@@ -132,8 +133,14 @@ open_file(Filename) ->
 close(fresh) -> ok;
 close(undefined) -> ok;
 close(State = #filestate{ fd = FD }) ->
-    close_hintfile(State),
+    _ = close_hintfile(State),
     bitcask_io:file_close(FD),
+    ok.
+
+%% @doc Use when closing multiple files.  (never open for writing again)
+-spec close_all([#filestate{} | fresh | undefined]) -> ok.
+close_all(FileStates) ->
+    lists:foreach(fun ?MODULE:close/1, FileStates),
     ok.
 
 %% @doc Close a file for writing, but leave it open for reads.
@@ -183,7 +190,7 @@ data_file_tstamps(Dirname) ->
 %% @doc Use only after merging, to permanently delete a data file.
 -spec delete(#filestate{}) -> ok | {error, atom()}.
 delete(#filestate{ filename = FN } = State) ->
-    file:delete(FN),
+    _ = file:delete(FN),
     case has_hintfile(State) of
         true ->
             file:delete(hintfile_name(State));
@@ -747,7 +754,7 @@ get_efile_port() ->
     Key = bitcask_efile_port,
     case get(Key) of
         undefined ->
-            case prim_file_drv_open(efile, [binary]) of
+            case prim_file_drv_open("efile", [binary]) of
                 {ok, Port} ->
                     put(Key, Port),
                     get_efile_port();

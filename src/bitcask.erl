@@ -65,33 +65,31 @@
 -define(POLL_FOR_MERGE_LOCK_PSEUDOFAILURE, pseudo_failure).
 
 %% @type bc_state().
--record(bc_state, {dirname,
-                   write_file,     % File for writing
-                   write_lock,     % Reference to write lock
-                   read_files,     % Files opened for reading
-                   max_file_size,  % Max. size of a written file
-                   opts,           % Original options used to open the bitcask
+-record(bc_state, {dirname :: string(),
+                   write_file :: 'fresh' | 'undefined' | #filestate{},     % File for writing
+                   write_lock :: reference(),     % Reference to write lock
+                   read_files :: [#filestate{}],     % Files opened for reading
+                   max_file_size :: integer(),  % Max. size of a written file
+                   opts :: list(),           % Original options used to open the bitcask
                    key_transform :: function(),
-                   keydir,
+                   keydir :: reference(),
                    read_write_p :: integer()    % integer() avoids atom -> NIF
                   }).       % Key directory
 
--record(mstate, { dirname,
-                  merge_lock,
-                  merge_start,
-                  max_file_size,
-                  input_files,
-                  out_file,
-                  merged_files,
-                  partial,
+-record(mstate, { dirname :: string(),
+                  merge_lock :: reference(),
+                  merge_start :: integer(),
+                  max_file_size :: integer(),
+                  input_files :: [#filestate{}],
+                  out_file :: 'fresh' | #filestate{},
+                  partial :: boolean(),
                   live_keydir :: reference(),
-                  hint_keydir,
-                  del_keydir,
-                  expiry_time,
-                  expiry_grace_time,
+                  del_keydir :: reference(),
+                  expiry_time :: integer(),
+                  expiry_grace_time :: integer(),
                   key_transform :: function(),
                   read_write_p :: integer(),    % integer() avoids atom -> NIF
-                  opts }).
+                  opts :: list() }).
 
 %% A bitcask is a directory containing:
 %% * One or more data files - {integer_timestamp}.bitcask.data
@@ -172,7 +170,7 @@ close(Ref) ->
         fresh ->
             ok;
         WriteFile ->
-            bitcask_fileops:close_for_writing(WriteFile),
+            _ = bitcask_fileops:close_for_writing(WriteFile),
             ok = bitcask_lockops:release(State#bc_state.write_lock)
     end,
 
@@ -181,7 +179,7 @@ close(Ref) ->
     bitcask_nifs:keydir_release(State#bc_state.keydir),
 
     %% Clean up all the reading files
-    [ok = bitcask_fileops:close(F) || F <- State#bc_state.read_files],
+    bitcask_fileops:close_all(State#bc_state.read_files),
 
     ok.
 
@@ -272,6 +270,7 @@ put(Ref, Key, Value, ValueType) ->
 %% @doc Delete a key from a bitcask datastore.
 -spec delete(reference(), Key::binary()) -> ok.
 delete(Ref, Key) ->
+    %% XXX Do we care if this fails?
     put(Ref, Key, ?TOMBSTONE, tombstone),
     ok = bitcask_nifs:keydir_remove((get_state(Ref))#bc_state.keydir, Key).
 
@@ -428,7 +427,7 @@ open_files([Filename | Rest], Acc) ->
         {ok, Fd} ->
             open_files(Rest, [Fd | Acc]);
         {error, _} ->
-            [bitcask_fileops:close(Fd) || Fd <- Acc],
+            bitcask_fileops:close_all(Acc),
             error
     end.
 
@@ -561,7 +560,7 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
             {InFiles1, UnusedFiles} = lists:partition(P, AllFiles),
 
             %% Close the unused files
-            [bitcask_fileops:close(U) || U <- UnusedFiles],
+            bitcask_fileops:close_all(UnusedFiles),
 
             bitcask_nifs:keydir_mark_ready(LiveKeyDir);
 
@@ -610,7 +609,6 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
                       input_files = InFiles,
                       merge_start = MergeStart,
                       out_file = fresh,  % will be created when needed
-                      merged_files = [],
                       partial = Partial,
                       live_keydir = LiveKeyDir,
                       del_keydir = DelKeyDir,
@@ -635,9 +633,10 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
 
     %% Close the original input files, schedule them for deletion,
     %% close keydirs, and release our lock
-    [bitcask_fileops:close(F) || F <- State#mstate.input_files ++ ExpiredFilesFinished],
+    bitcask_fileops:close_all(State#mstate.input_files ++ ExpiredFilesFinished),
     {_, _, _, {IterGeneration, _, _}} = bitcask_nifs:keydir_info(LiveKeyDir),
     FileNames = [F#filestate.filename || F <- State#mstate.input_files ++ ExpiredFilesFinished],
+    %% XXX do we care if this fails?
     [catch set_setuid_bit(F) || F <- FileNames],
     bitcask_merge_delete:defer_delete(Dirname, IterGeneration, FileNames),
 
@@ -990,6 +989,7 @@ init_keydir(Dirname, WaitTime, ReadWriteModeP, KT) ->
                    true ->
                         ok
                 end,
+                %% XXX this can return the too many iterations error, but we ignore the return value
                 init_keydir_scan_key_files(Dirname, KeyDir, KT)
             after
                 case Lock of
@@ -1373,8 +1373,8 @@ purge_setuid_files(Dirname) ->
                 StaleFs = [F || F <- list_data_files(Dirname,
                                                      undefined, undefined),
                                 has_setuid_bit(F)],
-                [bitcask_fileops:delete(#filestate{filename = F}) ||
-                    F <- StaleFs],
+                _ = [bitcask_fileops:delete(#filestate{filename = F}) ||
+                        F <- StaleFs],
                 if StaleFs == [] ->
                         ok;
                    true ->

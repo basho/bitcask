@@ -7,20 +7,20 @@
 
 
 %% @type filestate().
--record(filestate, {mode,     % File mode: read_only, read_write
-                    filename, % Filename
-                    tstamp,   % Tstamp portion of filename
-                    fd,       % File handle
-                    hintfd,   % File handle for hints
-                    hintcrc=0,% CRC-32 of current hint
-                    ofs }).   % Current offset for writing
+-record(filestate, {mode :: 'read_only' | 'read_write',     % File mode: read_only, read_write
+                    filename :: string(), % Filename
+                    tstamp :: integer(),   % Tstamp portion of filename
+                    fd :: port(),       % File handle
+                    hintfd :: port(),   % File handle for hints
+                    hintcrc=0 :: integer(),  % CRC-32 of current hint
+                    ofs :: non_neg_integer() }).   % Current offset for writing
 
--record(file_status, { filename,
-                       fragmented,
-                       dead_bytes,
-                       total_bytes,
-                       oldest_tstamp,
-                       newest_tstamp }).
+-record(file_status, { filename :: string(),
+                      fragmented :: integer(),
+                      dead_bytes :: integer(),
+                      total_bytes :: integer(),
+                      oldest_tstamp :: integer(),
+                      newest_tstamp :: integer() }).
 
 
 -define(FMT(Str, Args), lists:flatten(io_lib:format(Str, Args))).
