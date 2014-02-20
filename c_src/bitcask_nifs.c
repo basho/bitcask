@@ -155,7 +155,7 @@ typedef struct
     uint32_t total_sz;
     uint64_t offset;
     uint32_t tstamp;
-    uint32_t tstamp_epoch;
+    uint8_t  tstamp_epoch;
     uint16_t key_sz;
     char *   key;
 } bitcask_keydir_entry_proxy;
