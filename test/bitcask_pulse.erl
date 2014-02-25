@@ -28,11 +28,14 @@
 %% bitcask. Each test uses a fresh directory!
 -define(BITCASK, token:get_name()).
 %% Number of keys used in the tests
--define(NUM_KEYS, 15).
+-define(NUM_KEYS, 50).
 %% max_file_size given to bitcask.
--define(FILE_SIZE, 250).
+-define(FILE_SIZE, 400).
 %% Signal that Bitcask is under test
 -define(BITCASK_TESTING_KEY, bitcask_testing_module).
+%% Max number of forks to run simultaneously.  Too many means huge pauses
+%% while PULSE & postcondition checking operates.
+-define(FORK_CONC_LIMIT, 4).
 
 %% Used for output within EUnit...
 -define(QC_FMT(Fmt, Args),
@@ -70,17 +73,26 @@ not_commands(Module, State) ->
 command(S) ->
   frequency(
     [ {2, {call, ?MODULE, fork, [not_commands(?MODULE, #state{ is_writer = false })]}}
-      || S#state.is_writer ] ++
-    [ {8, {call, ?MODULE, incr_clock, []}}
+      || S#state.is_writer andalso length(S#state.readers) < ?FORK_CONC_LIMIT] ++
+      %% || S#state.is_writer ] ++
+    [ {3, {call, ?MODULE, incr_clock, []}}
       %% Any proc can call incr_clock
     ] ++
-    [ {10, {call, ?MODULE, get, [S#state.handle, key()]}}
+    %% Move 'get' and 'put' methods to low frequency.  'fold' is the
+    %% best for catching race bugs because it checks all keys instead of
+    %% only one.  'puts' is much more effective also than 'put' because
+    %% 'puts' operates on several keys at once.
+    [ {10, {call, ?MODULE, gets, [S#state.handle, key_pair()]}}
       || S#state.handle /= undefined ] ++
-    [ {20, {call, ?MODULE, put, [S#state.handle, key(), value()]}}
+    [ {3, {call, ?MODULE, put, [S#state.handle, key(), value()]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
-    [ {20, {call, ?MODULE, puts, [S#state.handle, key_pair(), value()]}}
+    [ {10, {call, ?MODULE, puts, [S#state.handle, key_pair(), value()]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
-    [ {6, {call, ?MODULE, delete, [S#state.handle, key()]}}
+    %% Use a high rate for delete: we have a good chance of actually
+    %% deleting something that was in a prior 'puts' range of keys.
+    %% And we know that delete+merge has been a good source of
+    %% race bugs, so keep doing it.
+    [ {50, {call, ?MODULE, delete, [S#state.handle, key()]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
     [ {2, {call, ?MODULE, bc_open, [S#state.is_writer]}}
       || S#state.handle == undefined ] ++
@@ -88,28 +100,36 @@ command(S) ->
       || S#state.handle /= undefined ] ++
     [ {1, {call, ?MODULE, fold_keys, [S#state.handle]}}
       || S#state.handle /= undefined ] ++
-    [ {1, {call, ?MODULE, fold, [S#state.handle]}}
+    [ {7, {call, ?MODULE, fold, [S#state.handle]}}
       || S#state.handle /= undefined ] ++
-    [ {1, {call, ?MODULE, bc_close, [S#state.handle]}}
+    %% We want to call close quite frequently, because historically
+    %% there has been problems with delete/tombstones that only appear
+    %% after closing & opening.
+    [ {10, {call, ?MODULE, bc_close, [S#state.handle]}}
       || S#state.handle /= undefined ] ++
-    %% [ {1, {call, ?MODULE, merge, [S#state.handle]}}
-    %%   || S#state.is_writer, not S#state.did_fork_merge, S#state.handle /= undefined ] ++
-    [ {12, {call, ?MODULE, fork_merge, [S#state.handle]}}
+    [ {12, {call, ?MODULE, merge, [S#state.handle]}}
+      || S#state.is_writer, not S#state.did_fork_merge, S#state.handle /= undefined ] ++
+    [ {1, {call, ?MODULE, fork_merge, [S#state.handle]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
+    %% Disable 'join_reader' for now.
     [ {0, {call, ?MODULE, join_reader, [elements(S#state.readers)]}}
       || S#state.is_writer, S#state.readers /= []] ++
-    [ {1, {call, ?MODULE, kill, [elements([bitcask_merge_worker|S#state.readers])]}}
+    %% Disable 'kill' for now: this model has a flaw and needs some
+    %% fixing to avoid false positives.
+    %% TODO: fix it.  :-)
+    [ {0, {call, ?MODULE, kill, [elements([bitcask_merge_worker|S#state.readers])]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
-    [ {12, {call, ?MODULE, needs_merge, [S#state.handle]}}
+    [ {2, {call, ?MODULE, needs_merge, [S#state.handle]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
     []).
 
 %% Precondition, checked before a command is added to the command sequence.
 precondition(S, {call, _, fork, _}) ->
-  S#state.is_writer;
+  length(S#state.readers) < ?FORK_CONC_LIMIT andalso
+    S#state.is_writer;
 precondition(_S, {call, _, incr_clock, _}) ->
   true;
-precondition(S, {call, _, get, [H, _]}) ->
+precondition(S, {call, _, gets, [H, _]}) ->
   S#state.handle == H;
 precondition(S, {call, _, puts, [H, _, _]}) ->
   S#state.is_writer andalso S#state.handle == H;
@@ -203,8 +223,9 @@ postcondition(_S, {call, _, needs_merge, _}, V) ->
     false          -> true;
     _              -> {needs_merge, V}
   end;
-postcondition(_S, {call, _, bc_open, _}, V) ->
+postcondition(_S, {call, _, bc_open, [IsWriter]}, V) ->
   case V of
+    _ when is_reference(V) andalso IsWriter -> check_no_tombstones(V, true);
     _ when is_reference(V)                  -> true;
     {'EXIT', {{badmatch,{error,enoent}},_}} -> true;
     %% If we manage to get a timeout, there's a pathological scheduling
@@ -213,11 +234,15 @@ postcondition(_S, {call, _, bc_open, _}, V) ->
     {error, timeout}                        -> {dont_want_this_timeout, V};
     _                                       -> {bc_open, V}
   end;
-postcondition(_S, {call, _, get, _}, V) ->
-  case V of
-    {ok, _}   -> true;
-    not_found -> true;
-    _         -> {get, V}
+postcondition(_S, {call, _, gets, _}, Vs) ->
+   case [X || X <- Vs,
+           X /= not_found andalso
+                  not (is_tuple(X) andalso
+                       tuple_size(X) == 2 andalso
+                       element(1, X) == ok andalso
+                       is_binary(element(2, X)))] of
+     [] -> true;
+     _  -> {gets, Vs}
   end;
 postcondition(_S, {call, _, _, _}, _V) ->
   true.
@@ -251,7 +276,7 @@ start_node(Verbose) ->
     _ -> ok
   end,
   stop_node(),
-  {ok, _} = slave:start(host(), slave_name(), "-pa ../ebin " ++
+  {ok, _} = slave:start(host(), slave_name(), "-pa ./.eunit -pz ./ebin ./deps/*/ebin " ++
                           lists:append(["-detached" || not Verbose ])),
   ok.
 
@@ -259,10 +284,10 @@ stop_node() ->
   slave:stop(node_name()).
 
 run_on_node(local, _Verbose, M, F, A) ->
-  rpc:call(node(), M, F, A, 120*1000);
+  rpc:call(node(), M, F, A, 10*60*1000);
 run_on_node(slave, Verbose, M, F, A) ->
   start_node(Verbose),
-  rpc:call(node_name(), M, F, A, 120*1000).
+  rpc:call(node_name(), M, F, A, 10*60*1000).
 
 %% Muting the QuickCheck license printout from the slave node
 mute(true,  Fun) -> Fun();
@@ -303,7 +328,7 @@ run_commands_on_node(LocalOrSlave, Cmds, Seed, Verbose) ->
         end, [{seed, Seed},
               {strategy, unfair}]),
       Schedule = pulse:get_schedule(),
-      Errors = gen_event:call(error_logger, handle_errors, get_errors),
+      Errors = gen_event:call(error_logger, handle_errors, get_errors, 60*1000),
       {H, S, Res, PidRs, Trace, Schedule, Errors}
     catch
       _:Err ->
@@ -321,7 +346,7 @@ prop_pulse(Boolean) ->
 prop_pulse(LocalOrSlave, Verbose) ->
   P = ?FORALL(Cmds, commands(?MODULE),
   ?IMPLIES(length(Cmds) > 0,
-  ?ALWAYS(3,                           % re-do this many times in normal runs
+  ?ALWAYS(1,                           % re-do this many times in normal runs
   ?FORALL(Seed, pulse:seed(),
   begin
     case run_on_node(LocalOrSlave, Verbose, ?MODULE, run_commands_on_node, [LocalOrSlave, Cmds, Seed, Verbose]) of
@@ -351,7 +376,7 @@ prop_pulse(LocalOrSlave, Verbose) ->
             , {events, check_trace(Trace)} ]))))))
     end
   end)))),
-  ?SHRINK(P, [?ALWAYS(25, P)]).          % re-do this many times during shrinking
+  ?SHRINK(P, [?ALWAYS(3, P)]).          % re-do this many times during shrinking
 
 %% A EUnit wrapper for the QuickCheck property
 prop_pulse_test_() ->
@@ -667,6 +692,9 @@ get(H, K) ->
   ?LOG({get, H, K},
   ?CHECK_HANDLE(H, not_found, bitcask:get(H, <<K:32>>))).
 
+gets(H, {Start, End}) ->
+    [get(H, K) || K <- lists:seq(Start, End)].
+
 put(H, K, V) ->
   ?LOG({put, H, K, V},
   ?CHECK_HANDLE(H, ok, bitcask:put(H, <<K:32>>, V))).
@@ -686,7 +714,8 @@ fork_merge(H) ->
   ?CHECK_HANDLE(H, not_needed,
   case bitcask:needs_merge(H) of
     {true, Files} -> catch bitcask_merge_worker:merge(?BITCASK, [], Files);
-    false         -> not_needed
+    false         -> not_needed;
+    Else -> Else
   end)).
 
 merge(H) ->
@@ -1019,5 +1048,15 @@ mangle_temporal_relation_with_finite_time([{Start, infinity, [_|_]=L}]) ->
     [{Start, Start+1, L}, {Start+1, infinity, []}];
 mangle_temporal_relation_with_finite_time([H|T]) ->
     [H|mangle_temporal_relation_with_finite_time(T)].
+
+check_no_tombstones(Ref, Good) ->
+    Res = bitcask:fold_keys(Ref, fun(K, Acc0) -> [K|Acc0] end,
+                            [], -1, -1),
+    case [X || {tombstone, _} = X <- Res] of
+        [] ->
+            Good;
+        Else ->
+            {check_no_tombstones, Else}
+    end.
 
 -endif.
