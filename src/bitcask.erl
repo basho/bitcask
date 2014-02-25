@@ -79,6 +79,7 @@
 -record(mstate, { dirname,
                   merge_lock,
                   merge_start,
+                  merge_epoch,
                   max_file_size,
                   input_files,
                   out_file,
@@ -360,9 +361,9 @@ fold(State, Fun, Acc0, MaxAge, MaxPut) ->
     KT = State#bc_state.key_transform,
     FrozenFun = 
         fun() ->
-                NowTstamp = bitcask_time:tstamp(),
+                CurrentEpoch = bitcask_nifs:keydir_get_epoch(State#bc_state.keydir),
                 PendingEpoch = pending_epoch(State#bc_state.keydir),
-                FoldTime = min(NowTstamp, PendingEpoch),
+                FoldEpoch = min(CurrentEpoch, PendingEpoch),
                 case open_fold_files(State#bc_state.dirname, 3) of
                     {ok, Files} ->
                         ExpiryTime = expiry_time(State#bc_state.opts),
@@ -374,7 +375,7 @@ fold(State, Fun, Acc0, MaxAge, MaxPut) ->
                                              false ->
                                                  case bitcask_nifs:keydir_get(
                                                         State#bc_state.keydir, K,
-                                                        FoldTime) of
+                                                        FoldEpoch) of
                                                      not_found ->
                                                          Acc;
                                                      E when is_record(E, bitcask_entry) ->
@@ -582,6 +583,7 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
     end,
 
     MergeStart = bitcask_time:tstamp(),
+    MergeEpoch = bitcask_nifs:keydir_get_epoch(LiveKeyDir),
     LiveRef = make_ref(),
     put_state(LiveRef, #bc_state{dirname = Dirname, keydir = LiveKeyDir}),
     {_KeyCount, Summary} = summary_info(LiveRef),
@@ -615,6 +617,7 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
                       max_file_size = get_opt(max_file_size, Opts),
                       input_files = InFiles,
                       merge_start = MergeStart,
+                      merge_epoch = MergeEpoch,
                       out_file = fresh,  % will be created when needed
                       merged_files = [],
                       partial = Partial,
@@ -1098,7 +1101,7 @@ merge_files(#mstate {  dirname = Dirname,
 
 merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
     case out_of_date(State, K, Tstamp, FileId, Pos, State#mstate.expiry_time,
-                     State#mstate.merge_start, false,
+                     State#mstate.merge_epoch, false,
                      [State#mstate.live_keydir, State#mstate.del_keydir]) of
         true ->
             %% NOTE: This remove is conditional on an exact match on
@@ -1186,20 +1189,20 @@ inner_merge_write(K, V, Tstamp, OldFileId, OldOffset, State) ->
 
 
 out_of_date(_State, _Key, _Tstamp, _FileId, _Pos, _ExpiryTime,
-            _MergeStart, EverFound, []) ->
+            _MergeEpoch, EverFound, []) ->
     %% if we ever found it, and none of the entries were out of date,
     %% then it's not out of date
     EverFound == false;
 out_of_date(_State, _Key, Tstamp, _FileId, _Pos, ExpiryTime,
-            _EverFound, _MergeStart, _KeyDirs)
+            _EverFound, _MergeEpoch, _KeyDirs)
   when Tstamp < ExpiryTime ->
     true;
 out_of_date(State, Key, Tstamp, FileId, {_,_,Offset,_} = Pos,
-            ExpiryTime, MergeStart, EverFound, [KeyDir|Rest]) ->
-    case bitcask_nifs:keydir_get(KeyDir, Key, MergeStart) of
+            ExpiryTime, MergeEpoch, EverFound, [KeyDir|Rest]) ->
+    case bitcask_nifs:keydir_get(KeyDir, Key, MergeEpoch) of
         not_found ->
             out_of_date(State, Key, Tstamp, FileId, Pos, ExpiryTime,
-                        MergeStart, EverFound, Rest);
+                        MergeEpoch, EverFound, Rest);
 
         E when is_record(E, bitcask_entry) ->
             if
@@ -1220,7 +1223,7 @@ out_of_date(State, Key, Tstamp, FileId, {_,_,Offset,_} = Pos,
                                 false ->
                                     out_of_date(
                                       State, Key, Tstamp, FileId, Pos,
-                                      ExpiryTime, MergeStart, true, Rest)
+                                      ExpiryTime, MergeEpoch, true, Rest)
                             end;
 
                         true ->
@@ -1239,13 +1242,13 @@ out_of_date(State, Key, Tstamp, FileId, {_,_,Offset,_} = Pos,
                             %% rest of the keydirs to ensure this
                             %% holds true.
                             out_of_date(State, Key, Tstamp, FileId, Pos,
-                                        ExpiryTime, MergeStart, true, Rest)
+                                        ExpiryTime, MergeEpoch, true, Rest)
                     end;
 
                 E#bitcask_entry.tstamp < Tstamp ->
                     %% Not out of date -- check rest of the keydirs
                     out_of_date(State, Key, Tstamp, FileId, Pos,
-                                ExpiryTime, MergeStart, true, Rest);
+                                ExpiryTime, MergeEpoch, true, Rest);
 
                 true ->
                     %% Out of date!
@@ -1639,19 +1642,16 @@ fold_visits_frozen_test(RollOver) ->
                 ok
         end,
 
-        % While we have timestamp resolution, we need to make sure the
-        % update time for the next ops is > freezing time
-        % to avoid a read race in the fold below
-        timer:sleep(2000),
-        
         %% A delete, an update and an insert
         ok = delete(B, <<"k">>),
         ok = put(B, <<"k2">>, <<"v2-2">>),
         ok = put(B, <<"k4">>, <<"v4">>),
-
+        
+        timer:sleep(900), %% wait for the disk to settle
         CollectAll = fun(K, V, Acc) ->
                              [{K, V} | Acc]
                      end,
+        %% force fold over the frozen keydir
         L = fold(B, CollectAll, [], -1, -1),
         ?assertEqual(default_dataset(), lists:sort(L)),
 
@@ -1662,7 +1662,7 @@ fold_visits_frozen_test(RollOver) ->
         %% test state, instead of using sleeps.
         timer:sleep(900),
         %% Check we see the updated fold
-        L2 = fold(B, CollectAll, [], -1, -1),
+        L2 = fold(B, CollectAll, []),
         ?assertEqual([{<<"k2">>,<<"v2-2">>},
                       {<<"k3">>,<<"v3">>},
                       {<<"k4">>,<<"v4">>}], lists:sort(L2))
