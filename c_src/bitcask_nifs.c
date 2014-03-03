@@ -1625,9 +1625,12 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_release(ErlNifEnv* env, int argc, const ERL
         handle->keydir->keyfolders--;
 
         // If last iterator closing, unfreeze keydir and merge pending entries.
-        if (handle->keydir->keyfolders == 0 && handle->keydir->pending != NULL)
+        if (handle->keydir->keyfolders == 0)
         {
-            merge_pending_entries(env, handle->keydir);
+            if (handle->keydir->pending != NULL)
+            {
+                merge_pending_entries(env, handle->keydir);
+            }
             handle->keydir->iter_generation++;
         }
         UNLOCK(handle->keydir);
