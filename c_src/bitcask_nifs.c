@@ -37,8 +37,11 @@
 
 #include <stdio.h>
 
+
 #ifdef BITCASK_DEBUG
 #include <stdarg.h>
+#include <ctype.h>
+#include <string.h>
 void DEBUG(const char *fmt, ...)
 {
     va_list ap;
@@ -46,16 +49,80 @@ void DEBUG(const char *fmt, ...)
     vfprintf(stderr, fmt, ap);
     va_end(ap);
 }
+int erts_snprintf(char *, size_t, const char *, ...); 
+#define MAX_DEBUG_STR 128
+#define DEBUG_STR(N, V) \
+    char N[MAX_DEBUG_STR];\
+    erts_snprintf(N, MAX_DEBUG_STR, "%s", V)
+
+#define DEBUG_BIN(N, V, S) \
+    char N[MAX_DEBUG_STR];\
+    format_bin(N, MAX_DEBUG_STR, (unsigned char*)V, (size_t)S)
+
+#define DEBUG2 DEBUG
+#else
+void DEBUG2(const char *fmt, ...) { }
+#define DEBUG_STR(A, B)
+#define DEBUG_BIN(N, V, S)
+#  define DEBUG(X, ...) {}
+#endif
+
+#if defined(BITCASK_DEBUG) && defined(BITCASK_DEBUG_KEYDIR)
 #  define DEBUG_KEYDIR(KD) print_keydir((KD))
 #  define DEBUG_ENTRY(E) print_entry((E))
 #else
-#  define DEBUG(X, ...) {}
 #  define DEBUG_KEYDIR(X) {}
 #  define DEBUG_ENTRY(E) {}
 #endif
 
 #ifdef PULSE
 #include "pulse_c_send.h"
+#endif
+
+#ifdef BITCASK_DEBUG
+void format_bin(char * buf, size_t buf_size, const unsigned char * bin, size_t bin_size)
+{
+    char cbuf[4]; // up to 3 digits + \0
+    int is_printable = 1;
+    int i, n;
+    size_t av_size = buf_size;
+
+    for (i=0;i<bin_size;++i)
+    {
+        if (!isprint(bin[i]))
+        {
+            is_printable = 0;
+            break;
+        }
+    }
+
+    buf[0] = '\0';
+
+    // TODO: Protect against overriding that buffer yo!
+    if (is_printable)
+    {
+        strcat(buf, "<<\"");
+        av_size -= 3;
+        n = av_size < bin_size ? av_size : bin_size;
+        strncat(buf, (char*)bin, n);
+        strcat(buf, "\">>");
+    }
+    else
+    {
+        strcat(buf, "<<");
+        for (i=0;i<bin_size;++i)
+        {
+            if (i>0)
+            {
+                strcat(buf, ",");
+            }
+            sprintf(cbuf, "%u", bin[i]);
+            strcat(buf, cbuf);
+        }
+        strcat(buf, ">>");
+    }
+
+}
 #endif
 
 static ErlNifResourceType* bitcask_keydir_RESOURCE;
@@ -127,6 +194,7 @@ typedef struct
     uint32_t total_sz;
     uint64_t offset;
     uint32_t tstamp;
+    uint16_t is_tombstone;
     uint16_t key_sz;
     char *   key;
 } bitcask_keydir_entry_proxy;
@@ -207,10 +275,8 @@ typedef struct
 
 // Related to tombstones in the pending hash.
 // Notice that tombstones in the entries hash are different.
-#define is_pending_tombstone(e) ((e)->tstamp == 0 &&   \
-                                 (e)->offset == 0)
-#define set_pending_tombstone(e) {(e)->tstamp = 0; \
-                                  (e)->offset = 0; }
+#define is_pending_tombstone(e) ((e)->offset == MAX_OFFSET)
+#define set_pending_tombstone(e) {(e)->offset = MAX_OFFSET; }
 
 // Atoms (initialized in on_load)
 static ERL_NIF_TERM ATOM_ALLOCATION_ERROR;
@@ -235,6 +301,7 @@ static ERL_NIF_TERM ATOM_PWRITE_ERROR;
 static ERL_NIF_TERM ATOM_READY;
 static ERL_NIF_TERM ATOM_SETFL_ERROR;
 static ERL_NIF_TERM ATOM_TRUE;
+static ERL_NIF_TERM ATOM_UNDEFINED;
 static ERL_NIF_TERM ATOM_EOF;
 static ERL_NIF_TERM ATOM_CREATE;
 static ERL_NIF_TERM ATOM_READONLY;
@@ -602,15 +669,6 @@ static inline int is_sib_tombstone(bitcask_keydir_entry_sib *s)
     return 0;
 }
 
-// True if the entry is a tombstone in the entries hash.
-// Notice that tombstones in the pending hash are different.
-// Use is_pending_tombstone() on those.
-static inline int is_tombstone(bitcask_keydir_entry *e)
-{
-    return IS_ENTRY_LIST(e) &&
-        is_sib_tombstone(GET_ENTRY_LIST_POINTER(e)->sibs);
-}
-
 // Extracts the entry values from a regular entry or from the 
 // closest snapshot in time in an entry list.
 static int proxy_kd_entry_at_time(bitcask_keydir_entry* old,
@@ -624,6 +682,7 @@ static int proxy_kd_entry_at_time(bitcask_keydir_entry* old,
         ret->tstamp = old->tstamp;
         ret->key_sz = old->key_sz;
         ret->key = old->key;
+        ret->is_tombstone = is_pending_tombstone(old);
 
         return 1;
     }
@@ -642,7 +701,7 @@ static int proxy_kd_entry_at_time(bitcask_keydir_entry* old,
         s = s->next;
     }
 
-    if (s == NULL || is_sib_tombstone(s))
+    if (s == NULL)
     {
         return 0;
     }
@@ -651,6 +710,7 @@ static int proxy_kd_entry_at_time(bitcask_keydir_entry* old,
     ret->total_sz = s->total_sz;
     ret->offset = s->offset;
     ret->tstamp = s->tstamp;
+    ret->is_tombstone = is_sib_tombstone(s);
 
     ret->key_sz = head->key_sz;
     ret->key = head->key;
@@ -681,48 +741,45 @@ typedef struct
     khiter_t itr;
     // True if found, even if it is a tombstone
     char found;
-    char is_tombstone;
-    // Set if found in entries, but not for the requested snapshot
-    char no_snapshot;
 } find_result;
 
 // Find an entry in the pending hash when they keydir is frozen, or in the
 // entries hash otherwise.
 static void find_keydir_entry(bitcask_keydir* keydir, ErlNifBinary* key,
-        uint32_t tstamp, int iterating, find_result * ret)
+        uint32_t tstamp, find_result * ret)
 {
     // Search pending. If keydir handle used is in iterating mode
     // we want to see a past snapshot instead.
-    if (keydir->pending != NULL && !iterating)
+    if (keydir->pending != NULL)
     {
         if (get_entries_hash(keydir->pending, key,
-                    &ret->itr, &ret->pending_entry))
+                    &ret->itr, &ret->pending_entry)
+                && (tstamp >= ret->pending_entry->tstamp))
         {
+            DEBUG("Found in pending %u > %u", tstamp, ret->pending_entry->tstamp),
             ret->hash = keydir->pending;
             ret->entries_entry = NULL;
             ret->found = 1;
             proxy_kd_entry(ret->pending_entry, &ret->proxy);
-            ret->is_tombstone = is_pending_tombstone(ret->pending_entry);
             return;
         }
     }
 
+    // Definitely not in the pending entries
     ret->pending_entry = NULL;
 
-    // If not in pending, check normal entries
-    if (get_entries_hash(keydir->entries, key, &ret->itr, &ret->entries_entry))
+    // If a snapshot for that time is found in regular entries
+    if (get_entries_hash(keydir->entries, key, &ret->itr, &ret->entries_entry)
+            && proxy_kd_entry_at_time(ret->entries_entry, tstamp, &ret->proxy))
     {
         ret->hash = keydir->entries;
-        ret->is_tombstone = is_tombstone(ret->entries_entry);
-        ret->no_snapshot = !proxy_kd_entry_at_time(ret->entries_entry, tstamp,
-                &ret->proxy);
         ret->found = 1;
         return;
     }
 
     ret->entries_entry = NULL;
     ret->hash = NULL;
-    ret->found = ret->is_tombstone = 0;
+    ret->found = 0;
     return;
 }
 
@@ -1078,14 +1135,15 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
 
         LOCK(keydir);
 
-        DEBUG("+++ Put key = %d file_id=%d offset=%d total_sz=%d tstamp=%u old_file_id=%d\r\n",
-               (int)(key.data[3]),
+        DEBUG_BIN(dbgKey, key.data, key.size);
+        DEBUG("+++ Put key = %s file_id=%d offset=%d total_sz=%d tstamp=%u old_file_id=%d\r\n",
+                dbgKey,
               (int) entry.file_id, (int) entry.offset,
               (int)entry.total_sz, (unsigned) entry.tstamp, (int)old_file_id);
         DEBUG_KEYDIR(keydir);
 
         find_result f;
-        find_keydir_entry(keydir, &key, MAX_TIME, 0, &f);
+        find_keydir_entry(keydir, &key, MAX_TIME, &f);
 
         // If conditional put and not found, bail early
         if (!f.found && old_file_id != 0)
@@ -1103,7 +1161,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
             keydir->pending_start = time(NULL);
         }
 
-        if (!f.found || f.is_tombstone)
+        if (!f.found || f.proxy.is_tombstone)
         {
             keydir->key_count++;
             keydir->key_bytes += key.size;
@@ -1204,12 +1262,13 @@ ERL_NIF_TERM bitcask_nifs_keydir_get_int(ErlNifEnv* env, int argc, const ERL_NIF
         bitcask_keydir* keydir = handle->keydir;
         LOCK(keydir);
 
-        DEBUG("+++ Get issued\r\n");
+        DEBUG_BIN(dbgKey, key.data, key.size);
+        DEBUG("+++ Get %s time = %u\r\n", dbgKey, time);
 
         find_result f;
-        find_keydir_entry(keydir, &key, time, handle->iterating, &f);
+        find_keydir_entry(keydir, &key, time, &f);
 
-        if (f.found && !f.is_tombstone && (rw_p || !f.no_snapshot))
+        if (f.found && !f.proxy.is_tombstone)
         {
             ERL_NIF_TERM result;
             result = enif_make_tuple6(env,
@@ -1219,8 +1278,9 @@ ERL_NIF_TERM bitcask_nifs_keydir_get_int(ErlNifEnv* env, int argc, const ERL_NIF
                                       enif_make_uint(env, f.proxy.total_sz),
                                       enif_make_uint64_bin(env, f.proxy.offset),
                                       enif_make_uint(env, f.proxy.tstamp));
-            DEBUG(" ... returned value file id=%u size=%u ofs=%u tstamp=%u\r\n",
-                    f.proxy.file_id, f.proxy.total_sz, f.proxy.offset, f.proxy.tstamp);
+            DEBUG(" ... returned value file id=%u size=%u ofs=%u tstamp=%u tomb=%u\r\n",
+                    f.proxy.file_id, f.proxy.total_sz, f.proxy.offset, f.proxy.tstamp,
+                    (unsigned)f.proxy.is_tombstone);
             DEBUG_ENTRY(f.entries_entry ? f.entries_entry : f.pending_entry);
             UNLOCK(keydir);
             return result;
@@ -1271,9 +1331,9 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
         DEBUG_KEYDIR(keydir);
 
         find_result fr;
-        find_keydir_entry(keydir, &key, remove_time, 0, &fr);
+        find_keydir_entry(keydir, &key, remove_time, &fr);
 
-        if (fr.found && !fr.is_tombstone)
+        if (fr.found && !fr.proxy.is_tombstone)
         {
             // If a conditional remove, bail if not a match.
             if (is_conditional &&
@@ -1298,6 +1358,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
             if (fr.pending_entry)
             {
                 set_pending_tombstone(fr.pending_entry);
+                fr.pending_entry->tstamp = remove_time;
             }
             // If frozen, add tombstone to pending hash (iteration must have
             // started between put/remove call in bitcask:delete.
@@ -1306,6 +1367,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
                 bitcask_keydir_entry* pending_entry =
                     add_entry(keydir, keydir->pending, &fr.proxy);
                 set_pending_tombstone(pending_entry);
+                pending_entry->tstamp = remove_time;
             }
             // If not iterating, just remove.
             else if(keydir->keyfolders == 0)
@@ -1557,12 +1619,16 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
                 ErlNifBinary key;
                 bitcask_keydir_entry_proxy proxy;
 
-                if (!proxy_kd_entry_at_time(entry, handle->timestamp, &proxy))
+                if (!proxy_kd_entry_at_time(entry, handle->timestamp, &proxy)
+                        || proxy.is_tombstone)
                 {
+                    DEBUG("No value for itr_next");
                     // No value in the snapshot for the iteration time
                     (handle->iterator)++;
                     continue;
                 }
+                DEBUG_BIN(dbgKey, proxy.key, proxy.key_sz);
+                DEBUG("itr_next key=%s", dbgKey);
 
                 // Alloc the binary and make sure it succeeded
                 if (!enif_alloc_binary_compat(env, proxy.key_sz, &key))
@@ -1679,10 +1745,12 @@ ERL_NIF_TERM bitcask_nifs_keydir_info(ErlNifEnv* env, int argc, const ERL_NIF_TE
         }
 
         ERL_NIF_TERM iter_info =
-            enif_make_tuple3(env,
+            enif_make_tuple4(env,
                              enif_make_uint64(env, keydir->iter_generation),
                              enif_make_ulong(env, keydir->keyfolders),
-                             keydir->pending == NULL ? ATOM_FALSE : ATOM_TRUE);
+                             keydir->pending == NULL ? ATOM_FALSE : ATOM_TRUE,
+                             keydir->pending == NULL ? ATOM_UNDEFINED :
+                             enif_make_uint64(env, keydir->pending_start));
 
         ERL_NIF_TERM result = enif_make_tuple4(env,
                                                enif_make_uint64(env, keydir->key_count),
@@ -2559,6 +2627,7 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
     ATOM_READY = enif_make_atom(env, "ready");
     ATOM_SETFL_ERROR = enif_make_atom(env, "setfl_error");
     ATOM_TRUE = enif_make_atom(env, "true");
+    ATOM_UNDEFINED = enif_make_atom(env, "undefined");
     ATOM_EOF = enif_make_atom(env, "eof");
     ATOM_CREATE = enif_make_atom(env, "create");
     ATOM_READONLY = enif_make_atom(env, "readonly");

@@ -120,7 +120,7 @@
         {integer(), integer(),
          [{integer(), integer(), integer(), integer(), integer(),
            integer(), integer()}],
-         {integer(), integer(), boolean()}}.
+         {integer(), integer(), boolean(), integer()}}.
 -spec keydir_release(reference()) ->
         ok.
 -spec keydir_trim_fstats(reference(), [integer()]) ->
@@ -438,7 +438,7 @@ keydir_basic_test() ->
     ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
 
     {1, 3, [{0, 1, 1, 1234, 1234, 1, 1}],
-     {0, 0, false}} = keydir_info(Ref),
+     {0, 0, false, _}} = keydir_info(Ref),
 
     E = keydir_get(Ref, <<"abc">>, 1),
     0 = E#bitcask_entry.file_id,

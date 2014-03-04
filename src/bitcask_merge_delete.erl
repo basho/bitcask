@@ -113,9 +113,9 @@ check_status(S) ->
                                      check_status(S#state{q = NewQ})
                              end,
                 case IterStatus of
-                    {_, _, false} ->
+                    {_, _, false, _} ->
                         CleanAndGo();
-                    {CurGen, _, true} when CurGen > IterGeneration ->
+                    {CurGen, _, true, _} when CurGen > IterGeneration ->
                         CleanAndGo();
                     _ ->
                         %% Do nothing, ignore NewQ
