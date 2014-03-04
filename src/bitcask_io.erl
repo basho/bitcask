@@ -22,6 +22,10 @@
 -module(bitcask_io).
 -compile(export_all).
 
+-ifdef(PULSE).
+-compile({parse_transform, pulse_instrument}).
+-endif.
+
 file_open(Filename, Opts) ->
     M = file_module(),
     M:file_open(Filename, Opts).
@@ -57,6 +61,10 @@ file_seekbof(Ref) ->
 file_position(Ref, Position) ->
     M = file_module(),
     M:file_position(Ref, Position).
+
+file_truncate(Ref) ->
+    M = file_module(),
+    M:file_truncate(Ref).
 
 file_module() ->
     case get(bitcask_file_mod) of
