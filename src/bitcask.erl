@@ -212,7 +212,7 @@ get(Ref, Key) ->
 get(_Ref, _Key, 0) -> {error, nofile};
 get(Ref, Key, TryNum) ->
     State = get_state(Ref),
-    case bitcask_nifs:keydir_get(State#bc_state.keydir, Key, State#bc_state.read_write_p) of
+    case bitcask_nifs:keydir_get(State#bc_state.keydir, Key) of
         not_found ->
             not_found;
         E when is_record(E, bitcask_entry) ->
@@ -374,7 +374,7 @@ fold(State, Fun, Acc0, MaxAge, MaxPut) ->
                                              false ->
                                                  case bitcask_nifs:keydir_get(
                                                         State#bc_state.keydir, K,
-                                                        FoldTime, State#bc_state.read_write_p) of
+                                                        FoldTime) of
                                                      not_found ->
                                                          Acc;
                                                      E when is_record(E, bitcask_entry) ->
@@ -1196,7 +1196,7 @@ out_of_date(_State, _Key, Tstamp, _FileId, _Pos, ExpiryTime,
     true;
 out_of_date(State, Key, Tstamp, FileId, {_,_,Offset,_} = Pos,
             ExpiryTime, MergeStart, EverFound, [KeyDir|Rest]) ->
-    case bitcask_nifs:keydir_get(KeyDir, Key, MergeStart, State#mstate.read_write_p) of
+    case bitcask_nifs:keydir_get(KeyDir, Key, MergeStart) of
         not_found ->
             out_of_date(State, Key, Tstamp, FileId, Pos, ExpiryTime,
                         MergeStart, EverFound, Rest);
@@ -1326,7 +1326,7 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State,
                            already_exists, ValueType)
             end;
         tombstone ->
-            case bitcask_nifs:keydir_get(State2#bc_state.keydir, Key, State#bc_state.read_write_p) of
+            case bitcask_nifs:keydir_get(State2#bc_state.keydir, Key) of
                 not_found ->
                     {ok, State2#bc_state { write_file = WriteFile2 }};
                 E when is_record(E, bitcask_entry) ->
