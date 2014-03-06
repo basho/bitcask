@@ -212,7 +212,7 @@ get(Ref, Key) ->
 get(_Ref, _Key, 0) -> {error, nofile};
 get(Ref, Key, TryNum) ->
     State = get_state(Ref),
-    case bitcask_nifs:keydir_get(State#bc_state.keydir, Key, State#bc_state.read_write_p) of
+    case bitcask_nifs:keydir_get(State#bc_state.keydir, Key) of
         not_found ->
             not_found;
         E when is_record(E, bitcask_entry) ->
@@ -360,7 +360,9 @@ fold(State, Fun, Acc0, MaxAge, MaxPut) ->
     KT = State#bc_state.key_transform,
     FrozenFun = 
         fun() ->
-                FoldTime = bitcask_time:tstamp(),
+                NowTstamp = bitcask_time:tstamp(),
+                PendingEpoch = pending_epoch(State#bc_state.keydir),
+                FoldTime = min(NowTstamp, PendingEpoch),
                 case open_fold_files(State#bc_state.dirname, 3) of
                     {ok, Files} ->
                         ExpiryTime = expiry_time(State#bc_state.opts),
@@ -372,7 +374,7 @@ fold(State, Fun, Acc0, MaxAge, MaxPut) ->
                                              false ->
                                                  case bitcask_nifs:keydir_get(
                                                         State#bc_state.keydir, K,
-                                                        FoldTime, State#bc_state.read_write_p) of
+                                                        FoldTime) of
                                                      not_found ->
                                                          Acc;
                                                      E when is_record(E, bitcask_entry) ->
@@ -402,7 +404,11 @@ fold(State, Fun, Acc0, MaxAge, MaxPut) ->
         end,
     KeyDir = State#bc_state.keydir,
     bitcask_nifs:keydir_frozen(KeyDir, FrozenFun, MaxAge, MaxPut).
-    
+
+pending_epoch(Keydir) ->
+    {_, _, _, {_, _, _, Epoch}} = bitcask_nifs:keydir_info(Keydir),
+    Epoch.
+
 %%
 %% Get a list of readable files and attempt to open them for a fold. If we can't
 %% open any one of the files, get a fresh list of files and try again.
@@ -636,7 +642,7 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
     %% Close the original input files, schedule them for deletion,
     %% close keydirs, and release our lock
     [bitcask_fileops:close(F) || F <- State#mstate.input_files ++ ExpiredFilesFinished],
-    {_, _, _, {IterGeneration, _, _}} = bitcask_nifs:keydir_info(LiveKeyDir),
+    {_, _, _, {IterGeneration, _, _, _}} = bitcask_nifs:keydir_info(LiveKeyDir),
     FileNames = [F#filestate.filename || F <- State#mstate.input_files ++ ExpiredFilesFinished],
     [catch set_setuid_bit(F) || F <- FileNames],
     bitcask_merge_delete:defer_delete(Dirname, IterGeneration, FileNames),
@@ -1190,7 +1196,7 @@ out_of_date(_State, _Key, Tstamp, _FileId, _Pos, ExpiryTime,
     true;
 out_of_date(State, Key, Tstamp, FileId, {_,_,Offset,_} = Pos,
             ExpiryTime, MergeStart, EverFound, [KeyDir|Rest]) ->
-    case bitcask_nifs:keydir_get(KeyDir, Key, MergeStart, State#mstate.read_write_p) of
+    case bitcask_nifs:keydir_get(KeyDir, Key, MergeStart) of
         not_found ->
             out_of_date(State, Key, Tstamp, FileId, Pos, ExpiryTime,
                         MergeStart, EverFound, Rest);
@@ -1320,7 +1326,7 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State,
                            already_exists, ValueType)
             end;
         tombstone ->
-            case bitcask_nifs:keydir_get(State2#bc_state.keydir, Key, State#bc_state.read_write_p) of
+            case bitcask_nifs:keydir_get(State2#bc_state.keydir, Key) of
                 not_found ->
                     {ok, State2#bc_state { write_file = WriteFile2 }};
                 E when is_record(E, bitcask_entry) ->
@@ -1632,6 +1638,11 @@ fold_visits_frozen_test(RollOver) ->
             _ ->
                 ok
         end,
+
+        % While we have timestamp resolution, we need to make sure the
+        % update time for the next ops is > freezing time
+        % to avoid a read race in the fold below
+        timer:sleep(2000),
         
         %% A delete, an update and an insert
         ok = delete(B, <<"k">>),
@@ -1831,8 +1842,9 @@ list_keys_test() ->
     {ok, <<"v3">>} = bitcask:get(B, <<"k">>),
     ok = bitcask:delete(B,<<"k">>),
     ok = bitcask:put(B, <<"k7">>,<<"v7">>),
-    true = ([<<"k2">>,<<"k7">>] =:= lists:sort(bitcask:list_keys(B))),
+    Keys = bitcask:list_keys(B),
     close(B),
+    ?assertEqual([<<"k2">>,<<"k7">>], lists:sort(Keys)),
     ok.
 
 expire_test() ->
