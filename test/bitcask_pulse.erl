@@ -355,21 +355,45 @@ prop_pulse(LocalOrSlave, Verbose) ->
 
 %% A EUnit wrapper for the QuickCheck property
 prop_pulse_test_() ->
-  Timeout = case os:getenv("PULSE_TIME") of
-                false -> 60;
-                Val   -> list_to_integer(Val)
-            end,
-  ExtraTO = case os:getenv("PULSE_SHRINK_TIME") of
-                false -> 0;
-                Val2  -> list_to_integer(Val2)
-            end,
-  io:format(user, "prop_pulse_test time: ~p + ~p seconds\n",
-            [Timeout, ExtraTO]),
-  {timeout, (Timeout*1000) + 30,
-   fun() ->
-       copy_bitcask_app(),
-       ?assert(eqc:quickcheck(eqc:testing_time(Timeout,?QC_OUT(prop_pulse()))))
-   end}.
+    Timeout = case os:getenv("PULSE_TIME") of
+                  false -> 60;
+                  Val   -> list_to_integer(Val)
+              end,
+    ExtraTO = case os:getenv("PULSE_SHRINK_TIME") of
+                  false -> 0;
+                  Val2  -> list_to_integer(Val2)
+              end,
+    %% eqc has the irritating behavior of not asking for a license for
+    %% its entire test time at the start of the test. the following
+    %% code calulates the amount of time remaining and then reserves
+    %% the license until then, so long running tests won't fail
+    %% because the license server becomes unreachable sometime in the
+    %% middle of the test.
+    {D, {H, M0, S}} = calendar:time_difference(calendar:local_time(),
+                                                eqc:reserved_until()),
+    %% any minutes or seconds at all and we should just bump up to the
+    %% next hour
+    M =
+        case (M0 + S) of
+            0 ->
+                0;
+            _N ->
+                1
+        end,
+    HoursLeft = (D * 24) + H + M,
+    HoursAsked = trunc((Timeout + ExtraTO)/60/60),
+    case HoursLeft < HoursAsked of
+        true -> eqc:reserve({HoursAsked, hours});
+        false -> ok
+    end,
+    io:format(user, "prop_pulse_test time: ~p + ~p seconds\n",
+              [Timeout, ExtraTO]),
+    {timeout, (Timeout+ExtraTO) + 60,
+     fun() ->
+             copy_bitcask_app(),
+             ?assert(eqc:quickcheck(eqc:testing_time(Timeout,
+                                                     ?QC_OUT(prop_pulse()))))
+     end}.
 
 %% Needed since rebar fails miserably in setting up the .eunit test directory
 copy_bitcask_app() ->
