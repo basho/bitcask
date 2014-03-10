@@ -22,8 +22,8 @@
 -module(bitcask_time).
 
 -export([tstamp/0]).
--export([test__set_fudge/1, test__get_fudge/0, test__incr_fudge/1]).
-
+-export([test__set_fudge/1, test__get_fudge/0, test__incr_fudge/1,
+         test__clear_fudge/0, test__time_travel_loop_sleep/0]).
 -define(KEY, bitcask_time_fudge).
 
 %% Return number of seconds since 1970
@@ -59,3 +59,15 @@ test__get(Key) ->
             Fudge
     end.
 
+test__clear_fudge() ->
+    application:unset_env(bitcask, ?KEY),
+    erase(?KEY).
+
+-ifdef(PULSE).
+test__time_travel_loop_sleep() ->
+    test__incr_fudge(1).
+-else.
+
+test__time_travel_loop_sleep() ->
+    timer:sleep(250).
+-endif.
