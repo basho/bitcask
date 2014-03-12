@@ -177,17 +177,17 @@ next_state(S, _, {call, _, kill, [Pid]}) ->
 next_state(S, _V, {call, _, _, _}) ->
   S.
 
-eq(X, X) -> true;
-eq(X, Y) -> {X, '/=', Y}.
+leq(X, X) -> true;
+leq(X, Y) -> {X, '/=', Y}.
 
 %% Postcondition, checked after the command has been evaluated. V is the result
 %% of the command. Note: S is the state before next_state/3 has been called.
 postcondition(_S, {call, _, put, _}, V) ->
-  eq(V, ok);
+  leq(V, ok);
 postcondition(_S, {call, _, puts, _}, V) ->
-  eq(V, ok);
+  leq(V, ok);
 postcondition(_S, {call, _, delete, _}, V) ->
-  eq(V, ok);
+  leq(V, ok);
 postcondition(_S, {call, _, fork_merge, _}, V) ->
   case V of
     ok             -> true;
@@ -205,7 +205,7 @@ postcondition(_S, {call, _, merge, _}, V) ->
     _                                  -> {merge, V}
   end;
 postcondition(_S, {call, _, join_reader, _}, V) ->
-   eq(V, ok);
+   leq(V, ok);
 postcondition(_S, {call, _, fold, _}, V) ->
   case V of
     {error, max_retries_exceeded_for_fold} -> true;
@@ -296,7 +296,7 @@ mute(false, Fun) -> mute:run(Fun).
 %%
 %% The actual code of the property, run on remote node via rpc:call above
 %%
-run_commands_on_node(LocalOrSlave, Cmds, Seed, Verbose) ->
+run_commands_on_node(LocalOrSlave, Cmds, Seed, Verbose, KeepFlies) ->
   mute(Verbose, fun() ->
     AfterTime = if LocalOrSlave == local -> 50000;
                    LocalOrSlave == slave -> 1000000
@@ -334,16 +334,19 @@ run_commands_on_node(LocalOrSlave, Cmds, Seed, Verbose) ->
       _:Err ->
         {'EXIT', Err}
     end,
-    really_delete_bitcask(),
+    case KeepFiles of
+        true -> really_delete_bitcask();
+        false -> ok
+    end,
     X end).
 
 prop_pulse() ->
-  prop_pulse(local, false).
+  prop_pulse(local, false, false).
 
 prop_pulse(Boolean) ->
-    prop_pulse(local, Boolean).
+    prop_pulse(local, Boolean, false).
 
-prop_pulse(LocalOrSlave, Verbose) ->
+prop_pulse(LocalOrSlave, Verbose, KeepFiles) ->
   P = ?FORALL(Cmds, commands(?MODULE),
   ?IMPLIES(length(Cmds) > 0,
   ?LET(Shrinking, parameter(shrinking, false),
@@ -352,7 +355,7 @@ prop_pulse(LocalOrSlave, Verbose) ->
           end,
   ?FORALL(Seed, pulse:seed(),
   begin
-    case run_on_node(LocalOrSlave, Verbose, ?MODULE, run_commands_on_node, [LocalOrSlave, Cmds, Seed, Verbose]) of
+    case run_on_node(LocalOrSlave, Verbose, ?MODULE, run_commands_on_node, [LocalOrSlave, Cmds, Seed, Verbose, KeepFiles]) of
       {'EXIT', Err} ->
         equals({'EXIT', Err}, ok);
       {badrpc, timeout} = Bad ->
@@ -443,8 +446,10 @@ copy_bitcask_app() ->
 %% operation overlaps with a put/delete.
 check_trace(Trace) ->
   %% Turn the trace into a temporal relation
-  Events = eqc_temporal:from_timed_list(Trace),
-
+  Events0 = eqc_temporal:from_timed_list(Trace),
+  %% convert pids and refs into something the reader won't choke on,
+  %% and is easier to read, for ease of debugging the test.
+  Events = clean_events(Events0),
   %% The Calls relation contains {call, Pid, Call} whenever Call by Pid is in
   %% progress.
   Calls  = eqc_temporal:stateful(
@@ -452,12 +457,12 @@ check_trace(Trace) ->
       fun({call, Pid, _Call}, {result, Pid, _}) -> [] end,
       Events),
 
-  Folds = eqc_temporal:stateful(
-            fun({call, Pid, {fold, _}})      -> [{folding, Pid}];
-               ({call, Pid, {fold_keys, _}}) -> [{folding, Pid}]
-            end,
-            fun({folding, Pid}, {result, Pid, _}) -> [] end,
-            Events),
+  %% Folds = eqc_temporal:stateful(
+  %%           fun({call, Pid, {fold, _}})      -> [{folding, Pid}];
+  %%              ({call, Pid, {fold_keys, _}}) -> [{folding, Pid}]
+  %%           end,
+  %%           fun({folding, Pid}, {result, Pid, _}) -> [] end,
+  %%           Events),
 
   %% The initial value for each key is not_found.
   AllKeys = lists:usort(fold(
@@ -574,49 +579,54 @@ check_trace(Trace) ->
       eqc_temporal:union(Events, eqc_temporal:map(fun(D) -> {values, D} end, ValueDict))),
 
   %% Filter out the bad stuff from the Reads relation.
-  Bad0 = eqc_temporal:map(fun(X={bad, _, _}) -> X end, Reads),
-  [{_Time1, {call, FirstPid, _}} | _] = Trace,
-  %% SLF: Any bad gets that happen during an active fold may be the result
-  %% of Bitcask snapshotting.  I'm not good enough at the temporal logic to
-  %% avoid putting 'bad' markers into Reads, but I can try to remove the
-  %% ones that we know happened during an active fold and (hope) that they
-  %% weren't truly bogus.
-  Bad1stPid = eqc_temporal:map(
-                fun({bad, Pid, _} = X) when Pid == FirstPid -> X end,
-                Bad0),
-  BadForked0 = eqc_temporal:map(
-                fun({bad, Pid, _} = X) when Pid /= FirstPid -> X end,
-           Bad0),
-  %% This is really ugly internal data structure hacking, but I'm at a loss
-  %% to do things The Right Way: is a fold happening when a forked process
-  %% sees something bad?  If yes, that's probably OK (but we can't prove it).
-  BadForked1 = mangle_temporal_relation_with_finite_time(BadForked0),
-  BadForked2 = eqc_temporal:union(BadForked1, Folds),
-  BadForkedP = lists:any(
-                 fun({_Start, _End, Xs}) ->
-                         lists:keymember(bad, 1, Xs) andalso
-                             not lists:keymember(folding, 1, Xs)
-                 end, BadForked2),
-  case eqc_temporal:is_false(Bad0) of
-      true ->
-          ok;
-      false ->
-          io:format(user, "~p Sanity check:\n", [time()]),
-          ?QC_FMT("  Bad1stPid:\n    ~p\n", [Bad1stPid]),
-          ?QC_FMT("  Folds:\n    ~p\n", [Folds]),
-          ?QC_FMT("  BadForked2:\n    ~p\n", [BadForked2]),
-          ?QC_FMT("  BadForkedP:\n    ~p\n", [BadForkedP])
-  end,
-  ?WHENFAIL(begin
-    ?QC_FMT("Time: ~p ~p\n", [date(), time()]),
-    ?QC_FMT("Events:\n~p\n", [Events]),
-    ?QC_FMT("Bad1stPid:\n~p\n", [Bad1stPid]),
-    %% ?QC_FMT("Folds:\n~p\n", [Folds]),
-    ?QC_FMT("BadForked2:\n~p\n", [BadForked2]),
-    ?QC_FMT("BadForkedP:\n~p\n", [BadForkedP]) end,
-    %% There shouldn't be any Bad stuff, for the 1st pid or forked pids
-    %%%%%%%%  eqc_temporal:is_false(Bad1stPid)).
-    eqc_temporal:is_false(Bad1stPid) andalso BadForkedP == false).
+  Bad = eqc_temporal:map(fun(X={bad, _, _}) -> X end, Reads),
+  ?WHENFAIL(
+     begin
+         ?QC_FMT("Time: ~p ~p\n", [date(), time()]),
+         ?QC_FMT("Events:\n~p\n", [Events]),
+         ?QC_FMT("Bad:\n~p\n", [Bad])
+     end,
+     eqc_temporal:is_false(Bad)).
+
+clean_events(Events) ->
+    lists:map(fun pprint_ref_pid/1, Events).
+
+pprint_ref_pid({Time1, Time2, Events}) ->
+    {Time1, Time2, recursive_clean(Events)}.
+
+recursive_clean([E|Rest]) ->
+    [recursive_clean(E)|recursive_clean(Rest)];
+recursive_clean(E) when is_tuple(E) ->
+    L = tuple_to_list(E),
+    list_to_tuple([recursive_clean(TE) || TE <- L]);
+recursive_clean(E) when is_pid(E) ->
+    get_name(E, pid);
+recursive_clean(E) when is_reference(E) ->
+    get_name(E, ref);
+recursive_clean(E) ->
+    E.
+
+get_name(E, Base) ->
+    case get(E) of
+        undefined ->
+            Name = fresh_name(Base),
+            put(E, Name),
+            Name;
+        Name ->
+            Name
+    end.
+
+fresh_name(Base) ->
+    Num =
+        case get(Base) of
+            undefined ->
+                put(Base, 1),
+                1;
+            N ->
+                put(Base, N+1),
+                N+1
+        end,
+    list_to_atom(atom_to_list(Base)++"_"++integer_to_list(Num)).
 
 check_fold_result([{K, Vs}|Expected], [{K, V}|Actual]) ->
   lists:member(V, Vs) andalso check_fold_result(Expected, Actual);
