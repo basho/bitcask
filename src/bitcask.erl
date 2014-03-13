@@ -2413,13 +2413,14 @@ fold_itercount_test() ->
         
         KD = (get_state(Ref))#bc_state.keydir,
         Info = bitcask_nifs:keydir_info(KD),
-        io:format(user, "~p~n", [Info]),
         {_,_,_,{_,Count,_,_}} = Info,
         
         ?assertEqual(length(Pids), Count),
             
         %% kill them all dead
         [ exit(Pid, brutal_kill) || Pid <- Pids],
+
+        [erlang:garbage_collect(Pid) || Pid <- processes()],
 
         %% collect the iterator information and make sure that the
         %% count is still 0
