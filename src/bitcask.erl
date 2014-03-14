@@ -83,8 +83,6 @@
 
 -record(mstate, { dirname,
                   merge_lock,
-                  merge_start,
-                  merge_epoch,
                   max_file_size,
                   input_files,
                   out_file,
@@ -589,8 +587,6 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
             throw({error, not_ready})
     end,
 
-    MergeStart = bitcask_time:tstamp(),
-    MergeEpoch = bitcask_nifs:keydir_get_epoch(LiveKeyDir),
     LiveRef = make_ref(),
     put_state(LiveRef, #bc_state{dirname = Dirname, keydir = LiveKeyDir}),
     erlang:erase(LiveRef),
@@ -617,8 +613,6 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
                       merge_lock = Lock,
                       max_file_size = get_opt(max_file_size, Opts),
                       input_files = InFiles,
-                      merge_start = MergeStart,
-                      merge_epoch = MergeEpoch,
                       out_file = fresh,  % will be created when needed
                       merged_files = [],
                       partial = Partial,
@@ -1101,11 +1095,7 @@ merge_files(#mstate {  dirname = Dirname,
                     } = State) ->
     FileId = bitcask_fileops:file_tstamp(File),
     F = fun(K, V, Tstamp, Pos, State0) ->
-                if Tstamp =< State0#mstate.merge_start ->
-                        merge_single_entry(KT(K), V, Tstamp, FileId, Pos, State0);
-                   true ->
-                        State0
-                end
+                merge_single_entry(KT(K), V, Tstamp, FileId, Pos, State0)
         end,
     State2 = try bitcask_fileops:fold(File, F, State) of
                  State1 ->
@@ -1121,42 +1111,51 @@ merge_files(#mstate {  dirname = Dirname,
 
 merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
     case out_of_date(State, K, Tstamp, FileId, Pos, State#mstate.expiry_time,
-                     State#mstate.merge_epoch, false,
+                     false,
                      [State#mstate.live_keydir, State#mstate.del_keydir]) of
         true ->
+            % Value in keydir is newer, so drop
             State;
         expired ->
-            %% Note: we would drop a tombstone if it expired. Under normal
-            %% circumstances it's OK as any value older than that is expired
+            %% Note: we drop a tombstone if it expired. Under normal
+            %% circumstances it's OK as any value older than that has expired
             %% too and you wouldn't see values coming back to life after a
             %% merge and reopen.  However with a clock going back in time,
             %% and badly timed quick merges you could end up seeing an old
             %% value after we drop a tombstone that has a lower timestamp
-            %% than a value that was actually written before until that value
-            %% expires too.
-            %% NOTE: This remove is conditional on an exact match on
-            %%       Tstamp + FileId + Offset
+            %% than a value that was actually written before. Likely that other
+            %% value would expire soon too, but...
+
+            %% Remove only if this is the current entry in the keydir
             bitcask_nifs:keydir_remove(State#mstate.live_keydir, K,
                                        Tstamp, FileId, Offset),
             State;
         not_found ->
+            % Not in keydir. If a tombstone, first we see for this key.
             case is_tombstone(V) of
                 true ->
-                    % A tombstone for a deleted value, remember the delete
+                    % Not in keydir and not already deleted.
+                    % Remember we deleted this already during this merge.
                     ok = bitcask_nifs:keydir_put(State#mstate.del_keydir, K,
                                                  FileId, 0, Offset, Tstamp,
                                                  bitcask_time:tstamp()),
                     case State#mstate.partial of
                         true ->
+                            % Merging only some files, forward tombstone
                             inner_merge_write(K, V, Tstamp, FileId, Offset,
-                                              false, State);
+                                              State);
                         false ->
+                            % Full merge, so safe to drop tombstone
                             State
                     end;
                 false ->
+                    % Regular value not in keydir, ignore
                     State
             end;
         false ->
+            % Either a current value or a tombstone with nothing in the keydir
+            % but an entry in the del keydir because we've seen another during
+            % this merge.
             case is_tombstone(V) of
                 true ->
                     %% We have seen a tombstone for this key before, but this
@@ -1167,19 +1166,13 @@ merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
 
                     %% Use the conditional remove on the live
                     %% keydir. We only want to actually remove
-                    %% whatever is in the live keydir IIF the
+                    %% whatever is in the live keydir IFF the
                     %% tstamp/fileid we have matches the current
                     %% entry.
-                    %% Note: The keydir does not keep the file/offset info
-                    %% for a tombstone, so I don't think we can ever remove
-                    %% something here.
-                    bitcask_nifs:keydir_remove(State#mstate.live_keydir, K,
-                                               Tstamp, FileId, Offset),
-
                     case State#mstate.partial of
                         true ->
-                                inner_merge_write(K, V, Tstamp, FileId, Offset,
-                                                  false, State);
+                            inner_merge_write(K, V, Tstamp, FileId, Offset,
+                                              State);
                         false ->
                             State
                     end;
@@ -1193,9 +1186,6 @@ merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
                         #mstate{}) -> #mstate{}.
 
 inner_merge_write(K, V, Tstamp, OldFileId, OldOffset, State) ->
-    inner_merge_write(K, V, Tstamp, OldFileId, OldOffset, true, State).
-
-inner_merge_write(K, V, Tstamp, OldFileId, OldOffset, UpdateKeydirP, State) ->
     %% write a single item while inside the merge process
 
     %% See if it's time to rotate to the next file
@@ -1233,23 +1223,25 @@ inner_merge_write(K, V, Tstamp, OldFileId, OldOffset, UpdateKeydirP, State) ->
         end,
     
     {ok, Outfile, Offset, Size} =
-        bitcask_fileops:write(State1#mstate.out_file,
-                              K, V, Tstamp, is_tombstone(V)),
-    case bitcask_fileops:file_tstamp(Outfile) =< OldFileId of
+        bitcask_fileops:write(State1#mstate.out_file, K, V, Tstamp),
+
+    OutFileId = bitcask_fileops:file_tstamp(Outfile),
+    case OutFileId =< OldFileId of
         true ->
             exit({invariant_violation, K, V, OldFileId, OldOffset, "->",
-                  bitcask_fileops:file_tstamp(Outfile), Offset});
+                  OutFileId, Offset});
         false ->
             ok
     end,
     Outfile2 =
-        if UpdateKeydirP ->
+        case is_tombstone(V) of
+            false ->
                 %% Update live keydir for the current out
                 %% file. It's possible that someone else may have written
                 %% a newer value whilst we were processing ... and if
                 %% they did, we need to undo our write here.
                 case bitcask_nifs:keydir_put(State#mstate.live_keydir, K,
-                                             bitcask_fileops:file_tstamp(Outfile),
+                                             OutFileId,
                                              Size, Offset, Tstamp,
                                              bitcask_time:tstamp(),
                                              OldFileId, OldOffset) of
@@ -1260,13 +1252,21 @@ inner_merge_write(K, V, Tstamp, OldFileId, OldOffset, UpdateKeydirP, State) ->
                         O
                 end;
            true ->
-                Outfile
+                case bitcask_nifs:keydir_get(State#mstate.live_keydir, K) of
+                    not_found ->
+                        % Still not there, tombstone write is cool
+                        Outfile;
+                    #bitcask_entry{} ->
+                        % New value written, undo
+                        {ok, O} = bitcask_fileops:un_write(Outfile),
+                        O
+                end
         end,
     State1#mstate { out_file = Outfile2 }.
 
 
 out_of_date(_State, _Key, _Tstamp, _FileId, _Pos, _ExpiryTime,
-            _MergeEpoch, EverFound, []) ->
+            EverFound, []) ->
     %% if we ever found it, and none of the entries were out of date,
     %% then it's not out of date
     case EverFound of
@@ -1274,15 +1274,15 @@ out_of_date(_State, _Key, _Tstamp, _FileId, _Pos, _ExpiryTime,
         false -> not_found
     end;
 out_of_date(_State, _Key, Tstamp, _FileId, _Pos, ExpiryTime,
-            _EverFound, _MergeEpoch, _KeyDirs)
+            _EverFound, _KeyDirs)
   when Tstamp < ExpiryTime ->
     expired;
 out_of_date(State, Key, Tstamp, FileId, {_,_,Offset,_} = Pos,
-            ExpiryTime, MergeEpoch, EverFound, [KeyDir|Rest]) ->
-    case bitcask_nifs:keydir_get(KeyDir, Key, MergeEpoch) of
+            ExpiryTime, EverFound, [KeyDir|Rest]) ->
+    case bitcask_nifs:keydir_get(KeyDir, Key) of
         not_found ->
             out_of_date(State, Key, Tstamp, FileId, Pos, ExpiryTime,
-                        MergeEpoch, EverFound, Rest);
+                        EverFound, Rest);
 
         E when is_record(E, bitcask_entry) ->
             if
@@ -1305,7 +1305,7 @@ out_of_date(State, Key, Tstamp, FileId, {_,_,Offset,_} = Pos,
                                 false ->
                                     out_of_date(
                                       State, Key, Tstamp, FileId, Pos,
-                                      ExpiryTime, MergeEpoch, true, Rest)
+                                      ExpiryTime, true, Rest)
                             end;
 
                         true ->
@@ -1324,13 +1324,13 @@ out_of_date(State, Key, Tstamp, FileId, {_,_,Offset,_} = Pos,
                             %% rest of the keydirs to ensure this
                             %% holds true.
                             out_of_date(State, Key, Tstamp, FileId, Pos,
-                                        ExpiryTime, MergeEpoch, true, Rest)
+                                        ExpiryTime, true, Rest)
                     end;
 
                 E#bitcask_entry.tstamp < Tstamp ->
                     %% Not out of date -- check rest of the keydirs
                     out_of_date(State, Key, Tstamp, FileId, Pos,
-                                ExpiryTime, MergeEpoch, true, Rest);
+                                ExpiryTime, true, Rest);
 
                 true ->
                     %% Out of date!
@@ -1391,7 +1391,7 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State,
         BinValue when is_binary(BinValue) ->
             {ok, WriteFile2, Offset, Size} = bitcask_fileops:write(
                                                State2#bc_state.write_file,
-                                               Key, Value, Tstamp, false),
+                                               Key, Value, Tstamp),
             case bitcask_nifs:keydir_put(State2#bc_state.keydir, Key,
                                          bitcask_fileops:file_tstamp(WriteFile2),
                                          Size, Offset, Tstamp,
@@ -1427,7 +1427,7 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State,
                     Tombstone = ?TOMBSTONE,
                     {ok, WriteFile2, _, _} =
                         bitcask_fileops:write(State2#bc_state.write_file,
-                                              Key, Tombstone, Tstamp, true),
+                                              Key, Tombstone, Tstamp),
 
                     case bitcask_nifs:keydir_remove(State2#bc_state.keydir,
                                                     Key, OldTstamp, OldFileId,

@@ -1179,7 +1179,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
         find_keydir_entry(keydir, &key, MAX_EPOCH, &f);
 
         // If conditional put and not found, bail early
-        if (!f.found && old_file_id != 0)
+        if ((!f.found || f.proxy.is_tombstone)
+                && old_file_id != 0)
         {
             DEBUG2("LINE %d put -> already_exists\r\n", __LINE__);
             UNLOCK(keydir);

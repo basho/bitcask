@@ -28,7 +28,7 @@
          close/1,
          close_for_writing/1,
          data_file_tstamps/1,
-         write/5,
+         write/4,
          read/3,
          sync/1,
          delete/1,
@@ -194,14 +194,14 @@ delete(#filestate{ filename = FN } = State) ->
 
 %% @doc Write a Key-named binary data field ("Value") to the Filestate.
 -spec write(#filestate{}, 
-            Key :: binary(), Value :: binary(), Tstamp :: integer(), TombstoneP :: boolean()) ->
+            Key :: binary(), Value :: binary(), Tstamp :: integer()) ->
         {ok, #filestate{}, Offset :: integer(), Size :: integer()} |
         {error, read_only}.
-write(#filestate { mode = read_only }, _K, _V, _Tstamp, _TombstoneP) ->
+write(#filestate { mode = read_only }, _K, _V, _Tstamp) ->
     {error, read_only};
 write(Filestate=#filestate{fd = FD, hintfd = HintFD, 
                            hintcrc = HintCRC0, ofs = Offset},
-      Key, Value, Tstamp, TombstoneP) ->
+      Key, Value, Tstamp) ->
     KeySz = size(Key),
     true = (KeySz =< ?MAXKEYSIZE),
     ValueSz = size(Value),
@@ -215,8 +215,9 @@ write(Filestate=#filestate{fd = FD, hintfd = HintFD,
     ok = bitcask_io:file_pwrite(FD, Offset, Bytes),
     %% Create and store the corresponding hint entry
     TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
-    TombInt = if TombstoneP -> 1;
-                 true       -> 0
+    TombInt = case bitcask:is_tombstone(Value) of
+                  true  -> 1;
+                  false -> 0
               end,
     Iolist = hintfile_entry(Key, Tstamp, TombInt, Offset, TotalSz),
     ok = bitcask_io:file_write(HintFD, Iolist),
