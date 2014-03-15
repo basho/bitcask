@@ -346,7 +346,10 @@ prop_pulse(Boolean) ->
 prop_pulse(LocalOrSlave, Verbose) ->
   P = ?FORALL(Cmds, commands(?MODULE),
   ?IMPLIES(length(Cmds) > 0,
-  ?ALWAYS(1,                           % re-do this many times in normal runs
+  ?LET(Shrinking, parameter(shrinking, false),
+  ?ALWAYS(if Shrinking -> 10; % re-do this many times in shrinking runs
+             true      -> 2   % re-do this many times in normal runs
+          end,
   ?FORALL(Seed, pulse:seed(),
   begin
     case run_on_node(LocalOrSlave, Verbose, ?MODULE, run_commands_on_node, [LocalOrSlave, Cmds, Seed, Verbose]) of
@@ -375,8 +378,8 @@ prop_pulse(LocalOrSlave, Verbose) ->
             [ {errors, equals(Errors, [])}
             , {events, check_trace(Trace)} ]))))))
     end
-  end)))),
-  ?SHRINK(P, [?ALWAYS(3, P)]).          % re-do this many times during shrinking
+  end))))),
+  P.
 
 %% A EUnit wrapper for the QuickCheck property
 prop_pulse_test_() ->
