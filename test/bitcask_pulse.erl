@@ -284,10 +284,10 @@ stop_node() ->
   slave:stop(node_name()).
 
 run_on_node(local, _Verbose, M, F, A) ->
-  rpc:call(node(), M, F, A, 10*60*1000);
+  rpc:call(node(), M, F, A, 45*60*1000);
 run_on_node(slave, Verbose, M, F, A) ->
   start_node(Verbose),
-  rpc:call(node_name(), M, F, A, 10*60*1000).
+  rpc:call(node_name(), M, F, A, 45*60*1000).
 
 %% Muting the QuickCheck license printout from the slave node
 mute(true,  Fun) -> Fun();
@@ -355,6 +355,9 @@ prop_pulse(LocalOrSlave, Verbose) ->
     case run_on_node(LocalOrSlave, Verbose, ?MODULE, run_commands_on_node, [LocalOrSlave, Cmds, Seed, Verbose]) of
       {'EXIT', Err} ->
         equals({'EXIT', Err}, ok);
+      {badrpc, timeout} = Bad ->
+        io:format(user, "GOT ~p, aborting.  Stop PULSE and restart!\n", [Bad]),
+        exit({stopping, Bad});
       {H, S, Res, PidRs, Trace, Schedule, Errors} ->
         ?WHENFAIL(
           ?QC_FMT("\nState: ~p\n", [S]),
