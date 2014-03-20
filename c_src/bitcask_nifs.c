@@ -1133,17 +1133,16 @@ static void perhaps_sweep_siblings(bitcask_keydir* keydir)
             current_entry = kh_key(keydir->entries, keydir->sweep_itr);
             if (IS_ENTRY_LIST(current_entry))
             {
-                if (is_tombstone(current_entry))
+                if (proxy_kd_entry(current_entry, &proxy))
                 {
-                    remove_entry(keydir, keydir->sweep_itr);
-                }
-                else
-                {
-                    // This could be optimized to avoid some byte copying
-                    // overhead ... but this method appears to be correct.
-                    // Optimize later.
-                    proxy_kd_entry_at_time(current_entry, MAX_TIME, &proxy);
-                    update_entry(keydir, current_entry, &proxy);
+                    if (proxy.is_tombstone)
+                    {
+                        remove_entry(keydir, keydir->sweep_itr);
+                    }
+                    else
+                    {
+                        update_entry(keydir, current_entry, &proxy);
+                    }
                 }
             }
         }
