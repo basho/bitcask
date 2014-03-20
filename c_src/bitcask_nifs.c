@@ -25,6 +25,7 @@
 #include <sys/stat.h>
 #include <stdint.h>
 #include <time.h>
+#include <sys/time.h>
 #include <assert.h>
 
 #include "erl_nif.h"
@@ -233,6 +234,9 @@ typedef struct
     unsigned int  keyfolders;
     uint64_t      newest_folder;  // Epoch for newest folder
     uint64_t      iter_generation;
+    char          iter_mutation;         // Mutation while iterating?
+    uint64_t      sweep_last_generation; // iter_generation of last sibling sweep
+    khiter_t      sweep_itr;             // iterator for sibling sweep
     uint64_t      pending_updated;
     uint64_t      pending_start_time;  // UNIX epoch seconds (since 1970)
     uint64_t      pending_start_epoch;
@@ -1076,6 +1080,76 @@ static void remove_entry(bitcask_keydir* keydir, khiter_t itr)
     free_entry(entry);
 }
 
+static void perhaps_sweep_siblings(bitcask_keydir* keydir)
+{
+    int i;
+    bitcask_keydir_entry* current_entry;
+    bitcask_keydir_entry_proxy proxy;
+    struct timeval target, now;
+    suseconds_t max_usec = 600;
+
+    assert(keydir != NULL);
+
+    /* fprintf(stderr, "keydir iter_mutation %d sweep_last_generation %d iter_generation %d\r\n", keydir->iter_mutation,keydir->sweep_last_generation,keydir->iter_generation); */
+    if (keydir->keyfolders > 0 ||
+        keydir->iter_mutation == 0 ||
+        keydir->sweep_last_generation == keydir->iter_generation)
+    {
+        return;
+    }
+
+#ifdef  PULSE
+    i = 10;
+#else   /* PULSE */
+    i = 100*1000;
+#endif
+
+    gettimeofday(&target, NULL);
+    target.tv_usec += max_usec;
+    if (target.tv_usec > 1000000)
+    {
+        target.tv_sec++;
+        target.tv_usec = target.tv_usec % 1000000;
+    }
+    while (i--)
+    {
+        if ((i % 500) == 0)
+        {
+            gettimeofday(&now, NULL);
+            if (now.tv_sec > target.tv_usec &&
+                now.tv_usec > target.tv_usec)
+            {
+                break;
+            }
+        }
+        if (keydir->sweep_itr >= kh_end(keydir->entries))
+        {
+            keydir->sweep_itr = kh_begin(keydir->entries);
+            keydir->sweep_last_generation = keydir->iter_generation;
+            return;
+        }
+        if (kh_exist(keydir->entries, keydir->sweep_itr))
+        {
+            current_entry = kh_key(keydir->entries, keydir->sweep_itr);
+            if (IS_ENTRY_LIST(current_entry))
+            {
+                if (proxy_kd_entry(current_entry, &proxy))
+                {
+                    if (proxy.is_tombstone)
+                    {
+                        remove_entry(keydir, keydir->sweep_itr);
+                    }
+                    else
+                    {
+                        update_entry(keydir, current_entry, &proxy);
+                    }
+                }
+            }
+        }
+        keydir->sweep_itr++;
+    }
+}
+
 // Adds a tombstone to an existing entries hash entry. Regular entries are
 // converted to lists first. Only to be called during iterations.
 // Entries are simply removed when there are no iterations.
@@ -1175,6 +1249,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
               (int)entry.total_sz, (unsigned) entry.tstamp, (int)old_file_id);
         DEBUG_KEYDIR(keydir);
 
+        perhaps_sweep_siblings(handle->keydir);
+
         find_result f;
         find_keydir_entry(keydir, &key, MAX_EPOCH, &f);
 
@@ -1219,6 +1295,10 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
 
             keydir->key_count++;
             keydir->key_bytes += key.size;
+            if (keydir->keyfolders > 0)
+            {
+                keydir->iter_mutation = 1;
+            }
 
             // Increment live and total stats.
             update_fstats(env, keydir, entry.file_id, entry.tstamp,
@@ -1270,6 +1350,10 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
               (((f.proxy.file_id == entry.file_id) &&
                 (f.proxy.offset < entry.offset))))))
         {
+            if (keydir->keyfolders > 0)
+            {
+                keydir->iter_mutation = 1;
+            }
             // Remove the stats for the old entry and add the new
             if (f.proxy.file_id != entry.file_id) // different files
             {
@@ -1332,6 +1416,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_get_int(ErlNifEnv* env, int argc, const ERL_NIF
 
         DEBUG_BIN(dbgKey, key.data, key.size);
         DEBUG("+++ Get %s time = %lu\r\n", dbgKey, epoch);
+
+        perhaps_sweep_siblings(handle->keydir);
 
         find_result f;
         find_keydir_entry(keydir, &key, epoch, &f);
@@ -1418,6 +1504,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
         DEBUG("+++ Remove %s\r\n", is_conditional ? "conditional" : "");
         DEBUG_KEYDIR(keydir);
 
+        perhaps_sweep_siblings(handle->keydir);
+
         find_result fr;
         find_keydir_entry(keydir, &key, keydir->epoch, &fr);
 
@@ -1437,6 +1525,10 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
             // Remove the key from the keydir stats
             keydir->key_count--;
             keydir->key_bytes -= fr.proxy.key_sz;
+            if (keydir->keyfolders > 0)
+            {
+                keydir->iter_mutation = 1;
+            }
 
             // Remove from file stats
             update_fstats(env, keydir, fr.proxy.file_id, fr.proxy.tstamp,

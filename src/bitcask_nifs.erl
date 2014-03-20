@@ -817,4 +817,108 @@ keydir_get_put_test_() ->
 
 -endif.
 
--endif.
+-ifdef(TIMING_TEST_NOT_EUNIT_TEST).
+
+-define(YOO_ITERS, 10).
+yoo_start_test_() ->
+    {timeout, 60, fun() ->
+                          io:format(user, "My OS pid is ~s\n", [os:getpid()]),
+                          timer:sleep(15*1000)
+                  end}.
+
+yoo_test_1M_c1k_d0_() ->
+    {timeout, 6666, fun() -> [yoo(1000000, 1000, 0) || _ <- lists:seq(1,?YOO_ITERS)] end}.
+
+yoo_test_1M_c250k_d0_() ->
+    {timeout, 6666, fun() -> [yoo(1000000, 250000, 0) || _ <- lists:seq(1,?YOO_ITERS)] end}.
+
+yoo_test_1M_c900k_d0_() ->
+    {timeout, 6666, fun() -> [yoo(1000000, 900000, 0) || _ <- lists:seq(1,?YOO_ITERS)] end}.
+
+yoo_test_1M_c0_d1k_() ->
+    {timeout, 6666, fun() -> [yoo(1000000, 1000, 0) || _ <- lists:seq(1,?YOO_ITERS)] end}.
+
+yoo_test_1M_c0_d250k_() ->
+    {timeout, 6666, fun() -> [yoo(1000000, 250000, 0) || _ <- lists:seq(1,?YOO_ITERS)] end}.
+
+yoo_test_1M_c0_d900k_() ->
+    {timeout, 6666, fun() -> [yoo(1000000, 900000, 0) || _ <- lists:seq(1,?YOO_ITERS)] end}.
+
+yoo(NumKeys, NumChange, NumDelete) ->
+    _ = (catch folsom:start()),
+    timer:sleep(200),
+    catch folsom_metrics:delete_metric(foo),
+    folsom_metrics:new_histogram(foo, uniform, 9981239823),
+    {ok, Ref} = keydir_new(),
+    try
+        T0 = os:timestamp(),
+        [ok = keydir_put(Ref, <<X:32>>, 0, 0, X, 0, bitcask_time:tstamp()) ||
+            X <- lists:seq(1, NumKeys)],
+        T1 = os:timestamp(),
+        ok = keydir_itr(Ref, -1, -1),
+        T2 = os:timestamp(),
+        [ok = keydir_put(Ref, <<X:32>>, 1, 0, X, 0, bitcask_time:tstamp()) ||
+            X <- lists:seq(1, NumChange)],
+        [ok = keydir_remove(Ref, <<X:32>>, bitcask_time:tstamp()) ||
+            X <- lists:seq(NumKeys - NumDelete, NumKeys)],
+        T3 = os:timestamp(),
+        ok = keydir_itr_release(Ref),
+
+        %% This method's use of list comprehension + lists:seq(1,LargeNum)
+        %% generates enough garbage to cause tail latency outliers
+        %% that are really annoying.
+        %%
+        %% OpList = lists:seq(1, NumKeys),
+        %% Get = fun(Seq) ->
+        %%               erlang:garbage_collect(),
+        %%               dyntrace:pn(0, 1),
+        %%               [begin
+        %%                    dyntrace:pn(1, 1),
+        %%                    %% T4 = os:timestamp(),
+        %%                    _ = keydir_get(Ref, <<X:32>>, 1),
+        %%                    %% T5 = os:timestamp(),
+        %%                    dyntrace:pn(1, 0),
+        %%                    %% Elapsed = timer:now_diff(T5, T4),
+        %%                    %% dyntrace:pn(900, Elapsed),
+        %%                    %% if Elapsed > 16384 -> io:format(user, "16+x", []); Elapsed > 8192 -> io:format(user, "8x", []); Elapsed > 4096 -> io:format(user, "4x", []); Elapsed > 2048 -> io:format(user, "2x", []); Elapsed > 1024 -> io:format(user, "x", []); true -> ok end,
+        %%                    %% folsom_metrics_histogram:update(foo, Elapsed)
+        %%                    ok
+        %%                end || X <- OpList],
+        %%               dyntrace:pn(0, 0),
+        %%               QQ = folsom_metrics:get_histogram_statistics(foo),
+        %%               catch folsom_metrics:delete_metric(foo),
+        %%               folsom_metrics:new_histogram(foo, uniform, 9981239823),
+        %%               {Seq, [X || X = {Tag, _} <- QQ, Tag == max orelse Tag == percentile]}
+        %%       end,
+
+        GetAndTime = fun(X) ->
+                             dyntrace:pn(1, 1),
+                             %% T4 = os:timestamp(),
+                             _ = keydir_get(Ref, <<X:32>>, 1),
+                             %% T5 = os:timestamp(),
+                             dyntrace:pn(1, 0)
+                     end,
+        Get = fun(Seq) ->
+                      erlang:garbage_collect(),
+                      dyntrace:pn(0, 1, Seq),
+                      iter(GetAndTime, NumKeys),
+                      dyntrace:pn(0, 0, Seq),
+                      ok
+              end,
+
+        [io:format(user, "~p\n", [Get(Seq)]) || Seq <- lists:seq(1,4)],
+        ok
+    after
+        catch folsom_metrics:delete_metric(foo),
+        ok = keydir_release(Ref)
+    end.
+
+iter(Fun, 0) ->
+    ok;
+iter(Fun, N) ->
+    Fun(N),
+    iter(Fun, N-1).
+
+-endif. % TIMING_TEST_NOT_EUNIT_TEST
+
+-endif. % EQC
