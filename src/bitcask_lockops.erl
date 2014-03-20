@@ -137,7 +137,7 @@ delete_stale_lock(Filename) ->
                                 not_stale;
                             false ->
                                 %% The lock IS stale; delete the file.
-                                file:delete(Filename),
+                                _ = file:delete(Filename),
                                 ok
                         end;
 
