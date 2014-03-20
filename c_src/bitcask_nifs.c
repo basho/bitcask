@@ -1021,13 +1021,15 @@ static void perhaps_sweep_siblings(bitcask_keydir* keydir)
 
     gettimeofday(&target, NULL);
     target.tv_usec += max_usec;
-    if (target.tv_usec > 1000000) {
+    if (target.tv_usec > 1000000)
+    {
         target.tv_sec++;
         target.tv_usec = target.tv_usec % 1000000;
     }
     while (i--)
     {
-        if ((i % 500) == 0) {
+        if ((i % 500) == 0)
+        {
             gettimeofday(&now, NULL);
             if (now.tv_sec > target.tv_usec &&
                 now.tv_usec > target.tv_usec)
@@ -1049,14 +1051,15 @@ static void perhaps_sweep_siblings(bitcask_keydir* keydir)
                 if (is_tombstone(current_entry))
                 {
                     remove_entry(keydir, keydir->sweep_itr);
-                } else {
+                }
+                else
+                {
                     // This could be optimized to avoid some byte copying
                     // overhead ... but this method appears to be correct.
                     // Optimize later.
                     proxy_kd_entry_at_time(current_entry, MAX_TIME, &proxy);
                     update_entry(keydir, current_entry, &proxy);
                 }
-            } else {
             }
         }
         keydir->sweep_itr++;
