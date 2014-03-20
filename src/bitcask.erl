@@ -1001,7 +1001,7 @@ init_keydir(Dirname, WaitTime, ReadWriteModeP, KT) ->
             %% 4. SortedFiles doesn't contain the list of all of the
             %%    files that we need.
             Lock = poll_for_merge_lock(Dirname),
-            _ =
+            ScanResult =
             try
                 _ = poll_deferred_delete_queue_empty(),
                 if ReadWriteModeP ->
@@ -1011,7 +1011,6 @@ init_keydir(Dirname, WaitTime, ReadWriteModeP, KT) ->
                    true ->
                         ok
                 end,
-                %% XXX this can return the too many iterations error, but we ignore the return value
                 init_keydir_scan_key_files(Dirname, KeyDir, KT)
             after
                 case Lock of
@@ -1022,10 +1021,15 @@ init_keydir(Dirname, WaitTime, ReadWriteModeP, KT) ->
                 end
             end,
 
-            %% Now that we loaded all the data, mark the keydir as ready
-            %% so other callers can use it
-            ok = bitcask_nifs:keydir_mark_ready(KeyDir),
-            {ok, KeyDir, []};
+            case ScanResult of
+                {error, _} ->
+                    ScanResult;
+                _ ->
+                    %% Now that we loaded all the data, mark the keydir as ready
+                    %% so other callers can use it
+                    ok = bitcask_nifs:keydir_mark_ready(KeyDir),
+                    {ok, KeyDir, []}
+            end;
 
         {error, not_ready} ->
             timer:sleep(100),
