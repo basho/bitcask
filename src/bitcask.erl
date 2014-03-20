@@ -2410,13 +2410,13 @@ fold_itercount_test() ->
         [ Pid ! {owner, self()} || Pid <- Pids],
         [receive i_have_started_folding -> ok end
          || _ <- Pids],
-        
+
         KD = (get_state(Ref))#bc_state.keydir,
         Info = bitcask_nifs:keydir_info(KD),
         {_,_,_,{_,Count,_,_}} = Info,
-        
+
         ?assertEqual(length(Pids), Count),
-            
+
         %% kill them all dead
         [ exit(Pid, brutal_kill) || Pid <- Pids],
 

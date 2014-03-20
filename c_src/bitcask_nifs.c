@@ -1727,7 +1727,7 @@ void itr_release_internal(ErlNifEnv* env, bitcask_keydir_handle* handle)
     handle->iterating = 0;
     handle->keydir->keyfolders--;
     handle->epoch = MAX_EPOCH;
-    
+
     // If last iterator closing, unfreeze keydir and merge pending entries.
     if (handle->keydir->keyfolders == 0 && handle->keydir->pending != NULL)
     {
@@ -2398,8 +2398,6 @@ static void msg_pending_awaken(ErlNifEnv* env, bitcask_keydir* keydir,
         enif_send(env, &keydir->pending_awaken[idx], msg_env, msg);
 #endif
     }
-    // make sure we clean up
-    keydir->pending_awaken_count = 0;
     enif_free_env(msg_env);
 }
 
@@ -2561,7 +2559,7 @@ static void bitcask_nifs_keydir_resource_cleanup(ErlNifEnv* env, void* arg)
         if (handle->iterating)
         {
             LOCK(handle->keydir);
-            
+
             itr_release_internal(env, handle);
 
             UNLOCK(handle->keydir);
