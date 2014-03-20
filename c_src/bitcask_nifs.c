@@ -1867,6 +1867,21 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_next(ErlNifEnv* env, int argc, const ERL_NI
     }
 }
 
+void itr_release_internal(ErlNifEnv* env, bitcask_keydir_handle* handle)
+{
+    handle->iterating = 0;
+    handle->keydir->keyfolders--;
+    handle->epoch = MAX_EPOCH;
+
+    // If last iterator closing, unfreeze keydir and merge pending entries.
+    if (handle->keydir->keyfolders == 0 && handle->keydir->pending != NULL)
+    {
+        DEBUG2("LINE %d itr_release\r\n", __LINE__);
+        merge_pending_entries(env, handle->keydir);
+        handle->keydir->iter_generation++;
+    }
+}
+
 ERL_NIF_TERM bitcask_nifs_keydir_itr_release(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     bitcask_keydir_handle* handle;
@@ -1881,17 +1896,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_release(ErlNifEnv* env, int argc, const ERL
             return enif_make_tuple2(env, ATOM_ERROR, ATOM_ITERATION_NOT_STARTED);
         }
 
-        handle->iterating = 0;
-        handle->keydir->keyfolders--;
-        handle->epoch = MAX_EPOCH;
+        itr_release_internal(env, handle);
 
-        // If last iterator closing, unfreeze keydir and merge pending entries.
-        if (handle->keydir->keyfolders == 0 && handle->keydir->pending != NULL)
-        {
-            DEBUG2("LINE %d itr_release\r\n", __LINE__);
-            merge_pending_entries(env, handle->keydir);
-            handle->keydir->iter_generation++;
-        }
         UNLOCK(handle->keydir);
         return ATOM_OK;
     }
@@ -1900,7 +1906,6 @@ ERL_NIF_TERM bitcask_nifs_keydir_itr_release(ErlNifEnv* env, int argc, const ERL
         return enif_make_badarg(env);
     }
 }
-
 
 ERL_NIF_TERM bitcask_nifs_keydir_info(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
@@ -2777,6 +2782,15 @@ static void bitcask_nifs_keydir_resource_cleanup(ErlNifEnv* env, void* arg)
     }
     else
     {
+        if (handle->iterating)
+        {
+            LOCK(handle->keydir);
+
+            itr_release_internal(env, handle);
+
+            UNLOCK(handle->keydir);
+        }
+
         handle->keydir = 0;
     }
 

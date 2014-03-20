@@ -2519,6 +2519,43 @@ freeze_close_reopen() ->
         os:cmd("rm -rf " ++ Cask)
     end.
 
+fold_itercount_test() ->
+    Cask = "/tmp/bc.itercount-test/",
+    os:cmd("rm -rf "++Cask),
+    Ref = bitcask:open(Cask, [read_write]),
+    try
+        %% populate the store a little
+        [bitcask:put(Ref, <<X:32>>, <<X>>)
+         || X <- lists:seq(1, 100)],
+
+        %% open a few slow folders
+        Pids = [spawn(fun() -> slow_folder(Cask) end)
+                || _ <- lists:seq(1,10)],
+        [ Pid ! {owner, self()} || Pid <- Pids],
+        [receive i_have_started_folding -> ok end
+         || _ <- Pids],
+
+        KD = (get_state(Ref))#bc_state.keydir,
+        Info = bitcask_nifs:keydir_info(KD),
+        {_,_,_,{_,Count,_,_}} = Info,
+
+        ?assertEqual(length(Pids), Count),
+
+        %% kill them all dead
+        [ exit(Pid, brutal_kill) || Pid <- Pids],
+
+        [erlang:garbage_collect(Pid) || Pid <- processes()],
+
+        %% collect the iterator information and make sure that the
+        %% count is still 0
+        Info2 = bitcask_nifs:keydir_info(KD),
+        {_,_,_,{_,Count2,_,_}} = Info2,
+        ?assertEqual(0, Count2)
+    after
+        ok = bitcask:close(Ref),
+        os:cmd("rm -rf "++Cask)
+    end.
+
 no_tombstones_after_reopen_test() ->
     no_tombstones_after_reopen_test2(false).
 
