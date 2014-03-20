@@ -24,9 +24,9 @@
 -export([init/0,
          keydir_new/0, keydir_new/1,
          keydir_mark_ready/1,
-         keydir_put/6,
          keydir_put/7,
          keydir_put/8,
+         keydir_put/9,
          keydir_get/2,
          keydir_get/3,
          keydir_get_epoch/1,
@@ -41,6 +41,7 @@
          keydir_info/1,
          keydir_release/1,
          increment_file_id/1,
+         increment_file_id/2,
          keydir_trim_fstats/2,
          lock_acquire/2,
          lock_release/1,
@@ -54,7 +55,8 @@
          file_read/2,
          file_write/2,
          file_position/2,
-         file_seekbof/1]).
+         file_seekbof/1,
+         file_truncate/1]).
 
 -on_load(init/0).
 
@@ -84,16 +86,16 @@
 -spec keydir_mark_ready(reference()) ->
         ok.
 -spec keydir_put(reference(), binary(), integer(), integer(),
-                 integer(), integer()) ->
+                 integer(), integer(), integer()) ->
         ok | already_exists.
 -spec keydir_put(reference(), binary(), integer(), integer(),
-                 integer(), integer(), boolean()) ->
+                 integer(), integer(), integer(), boolean()) ->
         ok | already_exists.
 -spec keydir_put(reference(), binary(), integer(), integer(),
-                 integer(), integer(), integer(), integer()) ->
+                 integer(), integer(), integer(), integer(), integer()) ->
         ok | already_exists.
 -spec keydir_put_int(reference(), binary(), integer(), integer(),
-                     binary(), integer(), 0 | 1, integer(), binary()) ->
+                     binary(), integer(), 0 | 1, integer(), integer(), binary()) ->
         ok | already_exists.
 -spec keydir_get(reference(), binary()) ->
         not_found | #bitcask_entry{}.
@@ -102,9 +104,9 @@
 -spec keydir_get_int(reference(), binary(), integer()) ->
         not_found | #bitcask_entry{}.
 -spec keydir_remove(reference(), binary()) ->
-        ok.
+        ok | already_exists.
 -spec keydir_remove(reference(), binary(), integer(), integer(), integer()) ->
-        ok.
+        ok | already_exists.
 -spec keydir_copy(reference()) ->
         {ok, reference()}.
 -spec keydir_itr(reference(), integer(), integer()) ->
@@ -114,6 +116,10 @@
         {error, iteration_not_started} | allocation_error | not_found.
 -spec keydir_itr_release(reference()) ->
         ok.
+-spec increment_file_id(reference()) ->
+        {ok, non_neg_integer()}.
+-spec increment_file_id(reference(), non_neg_integer()) ->
+        {ok, non_neg_integer()}.
 -spec keydir_fold(reference(), fun((any(), any()) -> any()), any(),
                   integer(), integer()) ->
         any() | {error, any()}.
@@ -177,26 +183,26 @@ keydir_new(Name) when is_list(Name) ->
 keydir_mark_ready(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
-keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp) ->
-    keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, false).
+keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NowSec) ->
+    keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NowSec, false).
 
-keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NewestPutB) ->
-    keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NewestPutB, 0, 0).
+keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NowSec, NewestPutB) ->
+    keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NowSec, NewestPutB, 0, 0).
 
-keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, OldFileId, OldOffset) ->
-    keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, false,
+keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NowSec, OldFileId, OldOffset) ->
+    keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NowSec, false,
                OldFileId, OldOffset).
 
-keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NewestPutB,
+keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NowSec, NewestPutB,
            OldFileId, OldOffset) ->
     keydir_put_int(Ref, Key, FileId, TotalSz, <<Offset:64/unsigned-native>>,
-                   Tstamp, if not NewestPutB -> 0;
-                              true           -> 1
-                           end,
+                   Tstamp, NowSec, if not NewestPutB -> 0;
+                                      true           -> 1
+                                   end,
                    OldFileId, <<OldOffset:64/unsigned-native>>).
 
-keydir_put_int(_Ref, _Key, _FileId, _TotalSz, _Offset, _Tstamp, _NewestPutI,
-               _OldFileId, _OldOffset) ->
+keydir_put_int(_Ref, _Key, _FileId, _TotalSz, _Offset, _Tstamp, _NowSec,
+               _NewestPutI, _OldFileId, _OldOffset) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_get(Ref, Key) ->
@@ -253,10 +259,12 @@ keydir_itr_next_int(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_itr_release(_Ref) ->
-    ok.
-
+    erlang:nif_error({error, not_loaded}).
 
 increment_file_id(_Ref) ->
+    erlang:nif_error({error, not_loaded}).
+
+increment_file_id(_Ref, _ConditionalFileId) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_fold(Ref, Fun, Acc0, MaxAge, MaxPuts) ->
@@ -302,13 +310,19 @@ keydir_wait_pending(Ref) ->
 
 -ifdef(PULSE).
 keydir_wait_ready() ->
+    keydir_wait_ready(100).
+
+keydir_wait_ready(0) ->
+    error({bummer, ?MODULE, "keydir_wait_ready: too deep"});
+keydir_wait_ready(N) ->
     receive
         ready -> % fold no matter what on second attempt
             ok;
         error ->
             {error, shutdown}
     after 1000 ->
-            keydir_wait_ready()
+            erlang:display({?MODULE,?LINE,keydir_wait_ready,retry,N}),
+            keydir_wait_ready(N-1)
     end.
 -else.
 keydir_wait_ready() ->
@@ -421,6 +435,13 @@ file_seekbof(Ref) ->
 file_seekbof_int(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
+file_truncate(Ref) ->
+    bitcask_bump:big(),
+    file_truncate_int(Ref).
+
+file_truncate_int(_Ref) ->
+    erlang:nif_error({error, not_loaded}).
+
 
 %% ===================================================================
 %% Internal functions
@@ -439,7 +460,7 @@ keydir_fold_cont(Curr, Ref, Fun, Acc0) ->
 
 keydir_basic_test() ->
     {ok, Ref} = keydir_new(),
-    ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
+    ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1, bitcask_time:tstamp()),
 
     {1, 3, [{0, 1, 1, 1234, 1234, 1, 1}],
      {0, 0, false, _}} = keydir_info(Ref),
@@ -450,7 +471,7 @@ keydir_basic_test() ->
     0 = E#bitcask_entry.offset,
     1 = E#bitcask_entry.tstamp,
 
-    already_exists = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 0),
+    already_exists = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 0, bitcask_time:tstamp()),
 
     ok = keydir_remove(Ref, <<"abc">>),
     not_found = keydir_get(Ref, <<"abc">>).
@@ -465,9 +486,9 @@ keydir_itr_named_test() ->
     keydir_itr_test_base(Ref).
 
 keydir_itr_test_base(Ref) ->
-    ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
-    ok = keydir_put(Ref, <<"def">>, 0, 4567, 1234, 2),
-    ok = keydir_put(Ref, <<"hij">>, 1, 7890, 0, 3),
+    ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1, bitcask_time:tstamp()),
+    ok = keydir_put(Ref, <<"def">>, 0, 4567, 1234, 2, bitcask_time:tstamp()),
+    ok = keydir_put(Ref, <<"hij">>, 1, 7890, 0, 3, bitcask_time:tstamp()),
 
     {3, 9, _, _} = keydir_info(Ref),
 
@@ -479,16 +500,16 @@ keydir_itr_test_base(Ref) ->
 
 keydir_copy_test() ->
     {ok, Ref1} = keydir_new(),
-    ok = keydir_put(Ref1, <<"abc">>, 0, 1234, 0, 1),
-    ok = keydir_put(Ref1, <<"def">>, 0, 4567, 1234, 2),
-    ok = keydir_put(Ref1, <<"hij">>, 1, 7890, 0, 3),
+    ok = keydir_put(Ref1, <<"abc">>, 0, 1234, 0, 1, bitcask_time:tstamp()),
+    ok = keydir_put(Ref1, <<"def">>, 0, 4567, 1234, 2, bitcask_time:tstamp()),
+    ok = keydir_put(Ref1, <<"hij">>, 1, 7890, 0, 3, bitcask_time:tstamp()),
 
     {ok, Ref2} = keydir_copy(Ref1),
     #bitcask_entry { key = <<"abc">>} = keydir_get(Ref2, <<"abc">>).
 
 keydir_named_test() ->
     {not_ready, Ref} = keydir_new("k1"),
-    ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
+    ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1, bitcask_time:tstamp()),
     keydir_mark_ready(Ref),
 
     {ready, Ref2} = keydir_new("k1"),
@@ -496,7 +517,7 @@ keydir_named_test() ->
 
 keydir_named_not_ready_test() ->
     {not_ready, Ref} = keydir_new("k2"),
-    ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1),
+    ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1, bitcask_time:tstamp()),
 
     {error, not_ready} = keydir_new("k2").
 
@@ -525,7 +546,7 @@ keydir_del_while_pending_test() ->
     {not_ready, Ref1} = keydir_new(Name),
     Key = <<"abc">>,
     T = bitcask_time:tstamp() - 10,
-    ok = keydir_put(Ref1, Key, 0, 1234, 0, T),
+    ok = keydir_put(Ref1, Key, 0, 1234, 0, T, bitcask_time:tstamp()),
     keydir_mark_ready(Ref1),
     ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
                                 offset = <<0:64/unsigned-native>>, tstamp = T}, 
@@ -560,7 +581,7 @@ keydir_create_del_while_pending_test() ->
         %% Start keyfold iterator on Ref2
         ok = keydir_itr(Ref2, -1, -1),
         %% Delete Key
-        ok = keydir_put(Ref1, Key, 0, 1234, 0, 1),
+        ok = keydir_put(Ref1, Key, 0, 1234, 0, 1, bitcask_time:tstamp()),
         ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
                                      offset = <<0:64/unsigned-native>>, tstamp = 1}, 
                      keydir_get_int(Ref1, Key, 16#ffffffffffffffff)),
@@ -592,7 +613,7 @@ keydir_del_put_while_pending_test() ->
         ok = keydir_itr(Ref2, -1, -1),
         %% Delete Key
         ?assertEqual(ok, keydir_remove(Ref1, Key)),
-        ok = keydir_put(Ref1, Key, 0, 1234, 0, T+2),
+        ok = keydir_put(Ref1, Key, 0, 1234, 0, T+2, bitcask_time:tstamp()),
         ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
                                      offset = <<0:64/unsigned-native>>, tstamp = T+2}, 
                      keydir_get_int(Ref1, Key, T+2)),
@@ -612,11 +633,11 @@ keydir_del_put_while_pending_test() ->
 keydir_multi_put_during_itr_test() ->
     {not_ready, Ref} = bitcask_nifs:keydir_new("t"),
     bitcask_nifs:keydir_mark_ready(Ref),
-    bitcask_nifs:keydir_put(Ref, <<"k">>, 123, 1, 0, 1),
+    bitcask_nifs:keydir_put(Ref, <<"k">>, 123, 1, 0, 1, bitcask_time:tstamp()),
     bitcask_nifs:keydir_itr(Ref, 0, 0),
-    bitcask_nifs:keydir_put(Ref, <<"k">>, 123, 2, 10, 2),
-    bitcask_nifs:keydir_put(Ref, <<"k">>, 123, 3, 20, 3),
-    bitcask_nifs:keydir_put(Ref, <<"k">>, 123, 4, 30, 4),
+    bitcask_nifs:keydir_put(Ref, <<"k">>, 123, 2, 10, 2, bitcask_time:tstamp()),
+    bitcask_nifs:keydir_put(Ref, <<"k">>, 123, 3, 20, 3, bitcask_time:tstamp()),
+    bitcask_nifs:keydir_put(Ref, <<"k">>, 123, 4, 30, 4, bitcask_time:tstamp()),
     bitcask_nifs:keydir_itr_release(Ref).
 
 keydir_itr_out_of_date_test() ->
@@ -639,7 +660,7 @@ keydir_itr_out_of_date_test() ->
                      end).
 
 put_till_frozen(R, Name) ->
-    bitcask_nifs:keydir_put(R, crypto:rand_bytes(32), 0, 1234, 0, 1), 
+    bitcask_nifs:keydir_put(R, crypto:rand_bytes(32), 0, 1234, 0, 1, bitcask_time:tstamp()),
     {ready, Ref2} = bitcask_nifs:keydir_new(Name),
     %%?debugFmt("Putting", []),
     case bitcask_nifs:keydir_itr_int(Ref2, 2000001,
@@ -688,7 +709,7 @@ keydir_itr_many_update_test() ->
     {not_ready, Ref1} = bitcask_nifs:keydir_new(Name),
     bitcask_nifs:keydir_mark_ready(Ref1),
     ok = bitcask_nifs:keydir_itr_int(Ref1, 1000000, 0, 0),
-    ok = keydir_put(Ref1, <<"key">>, 1, 2, 3, 4), 
+    ok = keydir_put(Ref1, <<"key">>, 1, 2, 3, 4, bitcask_time:tstamp()),
     Me = self(),
     F = fun() ->
                 {ready, Ref2} = bitcask_nifs:keydir_new(Name),
@@ -783,7 +804,7 @@ keydir_get_put_prop() ->
 
                 ok = keydir_put(Ref, E#bitcask_entry.key, E#bitcask_entry.file_id,
                                 E#bitcask_entry.total_sz, E#bitcask_entry.offset,
-                                E#bitcask_entry.tstamp),
+                                E#bitcask_entry.tstamp, bitcask_time:tstamp()),
 
                 E2 = keydir_get(Ref, E#bitcask_entry.key),
                 keydir_release(Ref),

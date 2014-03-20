@@ -12,7 +12,7 @@ case PulseBuild of
               [ {bitcask_nifs, keydir_new, 0}
               , {bitcask_nifs, keydir_new, 1}
               , {bitcask_nifs, keydir_mark_ready, 1}
-              , {bitcask_nifs, keydir_put_int, 9}
+              , {bitcask_nifs, keydir_put_int, 10}
               , {bitcask_nifs, keydir_get_int, 4}
               , {bitcask_nifs, keydir_remove, 3}
               , {bitcask_nifs, keydir_remove_int, 6}
@@ -25,6 +25,7 @@ case PulseBuild of
               , {bitcask_nifs, keydir_trim_fstats, 2}
 
               , {bitcask_nifs, increment_file_id, 1}
+              , {bitcask_nifs, increment_file_id, 2}
 
               , {bitcask_nifs, lock_acquire_int,   2}
               , {bitcask_nifs, lock_release_int,   1}
@@ -41,6 +42,7 @@ case PulseBuild of
               , {bitcask_nifs, file_position_int, 2}
               , {bitcask_nifs, file_seekbof_int, 1}
 
+              , {bitcask_file, '_', '_'}
               , {bitcask_time, tstamp, 0}
 
               , {prim_file, '_', '_'}
