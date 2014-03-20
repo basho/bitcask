@@ -134,7 +134,8 @@ check_status(S) ->
     end.
 
 delete_files(Files) ->
-    [bitcask_fileops:delete(#filestate{filename = F}) || F <- Files].
+    _ = [bitcask_fileops:delete(#filestate{filename = F}) || F <- Files],
+    ok.
 
 -ifdef(TEST).
 

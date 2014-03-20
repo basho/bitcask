@@ -36,9 +36,9 @@
 
 -compile(export_all).
 
--record(state,{ bitcask,
-                data = [],
-                keys }). %% Keys to use in the test
+-record(state,{ bitcask :: reference(),
+                data = [] :: list(),
+                keys :: list() }). %% Keys to use in the test
 
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).

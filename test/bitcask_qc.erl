@@ -33,7 +33,11 @@
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 -define(TEST_TIME, 30).                      % seconds
 
--record(m_fstats, {key_bytes=0, live_keys=0, live_bytes=0, total_keys=0, total_bytes=0}).
+-record(m_fstats, {key_bytes=0 :: integer(),
+                   live_keys=0 :: integer(),
+                   live_bytes=0 :: integer(),
+                   total_keys=0 :: integer(),
+                   total_bytes=0 :: integer()}).
 
 qc(P) ->
     qc(P, ?TEST_TIME).

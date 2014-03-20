@@ -7,23 +7,23 @@
 
 
 %% @type filestate().
--record(filestate, {mode,     % File mode: read_only, read_write
-                    filename, % Filename
-                    tstamp,   % Tstamp portion of filename
-                    fd,       % File handle
-                    hintfd,   % File handle for hints
-                    hintcrc=0,% CRC-32 of current hint
-                    ofs,      % Current offset for writing
-                    l_ofs=0,  % Last offset written to data file
-                    l_hbytes=0,% Last # bytes written to hint file
-                    l_hintcrc=0}). % CRC-32 of current hint prior to last write
+-record(filestate, {mode :: 'read_only' | 'read_write',     % File mode: read_only, read_write
+                    filename :: string(), % Filename
+                    tstamp :: integer(),   % Tstamp portion of filename
+                    fd :: port(),       % File handle
+                    hintfd :: port(),   % File handle for hints
+                    hintcrc=0 :: integer(),  % CRC-32 of current hint
+                    ofs :: non_neg_integer(), % Current offset for writing
+                    l_ofs=0 :: non_neg_integer(),  % Last offset written to data file
+                    l_hbytes=0 :: non_neg_integer(),% Last # bytes written to hint file
+                    l_hintcrc=0 :: non_neg_integer()}). % CRC-32 of current hint prior to last write
 
--record(file_status, { filename,
-                       fragmented,
-                       dead_bytes,
-                       total_bytes,
-                       oldest_tstamp,
-                       newest_tstamp }).
+-record(file_status, { filename :: string(),
+                      fragmented :: integer(),
+                      dead_bytes :: integer(),
+                      total_bytes :: integer(),
+                      oldest_tstamp :: integer(),
+                      newest_tstamp :: integer() }).
 
 
 -define(FMT(Str, Args), lists:flatten(io_lib:format(Str, Args))).
