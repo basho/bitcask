@@ -23,6 +23,10 @@
 -compile(export_all).
 -behaviour(gen_server).
 
+-ifdef(PULSE).
+-compile({parse_transform, pulse_instrument}).
+-endif.
+
 %% API
 
 %% gen_server callbacks
@@ -69,6 +73,9 @@ file_position(Pid, Position) ->
 
 file_seekbof(Pid) ->
     file_request(Pid, file_seekbof).
+
+file_truncate(Pid) ->
+    file_request(Pid, file_truncate).
 
 %%%===================================================================
 %%% API helper functions
@@ -168,6 +175,9 @@ handle_call(file_seekbof, From, State=#state{fd=Fd}) ->
     check_owner(From, State),
     {ok, _} = file:position(Fd, bof),
     {reply, ok, State};
+handle_call(file_truncate, From, State=#state{fd=Fd}) ->
+    check_owner(From, State),
+    {reply, file:truncate(Fd), State};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,

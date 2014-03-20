@@ -4,7 +4,7 @@
 
 %% @doc A path under which bitcask data files will be stored.
 {mapping, "bitcask.data_root", "bitcask.data_root", [
-  {default, "#(platform_data_dir)/bitcask"},
+  {default, "$(platform_data_dir)/bitcask"},
   {datatype, directory}
 ]}.
 
