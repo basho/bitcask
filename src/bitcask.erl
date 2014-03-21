@@ -1705,6 +1705,7 @@ fold_visits_frozen_test_() ->
 
 fold_visits_frozen_test(RollOver) ->
     Cask = "/tmp/bc.test.frozenfold",
+    os:cmd("rm -r " ++ Cask),
     B = init_dataset(Cask, default_dataset()),
     try
         Ref = (get_state(B))#bc_state.keydir,
@@ -1827,6 +1828,8 @@ finish_worker_loop(Pid) ->
 fold_visits_unfrozen_test(RollOver) ->
     %%?debugFmt("rollover is ~p~n", [RollOver]),
     Cask = "/tmp/bc.test.unfrozenfold",
+    os:cmd("rm -r "++Cask),
+
     bitcask_time:test__set_fudge(1),
     B = init_dataset(Cask, default_dataset()),
     try
