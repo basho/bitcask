@@ -665,7 +665,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_put_int(ErlNifEnv* env, int argc, const ERL_NIF
             }
             else // file_id is same, change live/total in one entry
             {
-                update_fstats(env, keydir, entry.file_id, 0,
+                update_fstats(env, keydir, entry.file_id, entry.tstamp,
                               0, 1,
                               entry.total_sz - old_entry->total_sz,
                               entry.total_sz);
