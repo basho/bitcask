@@ -2409,7 +2409,8 @@ slow_folder(Cask) ->
                                   ok
                           end,
                           receive
-                              go -> ok
+                              go -> ok;
+                              go_reply -> O ! reply, ok
                           end,
                           [{K, V} | Acc]
                   end,
@@ -2554,6 +2555,67 @@ fold_itercount_test() ->
         Info2 = bitcask_nifs:keydir_info(KD),
         {_,_,_,{_,Count2,_,_}} = Info2,
         ?assertEqual(0, Count2)
+    after
+        ok = bitcask:close(Ref),
+        os:cmd("rm -rf "++Cask)
+    end.
+
+
+fold_lockstep_test_() ->
+    {timeout, 100, fun fold_lockstep_test/0}.
+
+fold_lockstep_test() ->
+    Cask = "/tmp/bc.lockstep-test/",
+    os:cmd("rm -rf "++Cask),
+    Ref = bitcask:open(Cask, [read_write]),
+    try
+        Initial = 1500,  %% has to be large to avoid resize behavior.
+
+        %% populate the store a little
+        [bitcask:put(Ref, <<X:32>>, <<X>>)
+         || X <- lists:seq(1, Initial)],
+
+        Folders = 5,
+        Me = self(),
+
+        %%io:format(user, "spawning folders~n", []),
+        Pids = [begin
+                    P = spawn(fun() -> slow_folder(Cask) end),
+                    P ! {owner, Me},
+                    receive i_have_started_folding -> ok end,
+                    P ! go_ahead_with_fold,
+                    [bitcask:put(Ref, <<X:32>>, <<X>>)
+                     || X <- lists:seq(Initial + 1 + 100*(N-1), Initial + 100*N)],
+                    {P, Initial + 100*(N-1)}
+                end
+                || N <- lists:seq(1, Folders)],
+
+        %%io:format(user, "iterating folders in step~n", []),
+        [begin
+             [begin
+                  case I =< N of
+                      true ->
+                          P ! go_reply,
+                          receive reply -> ok end;
+                      false -> ok
+                  end
+              end|| {P,N} <- Pids],
+             %%io:format(user, "step~n", []),
+             timer:sleep(5)
+         end
+         || I <- lists:seq(1, Initial + 100 * Folders)],
+
+        %%io:format(user, "collecting output~n", []),
+        [begin
+             receive
+                 {slow_folder_done, P, L} ->
+                     ?assertEqual(N, length(L))
+             after 1000 ->
+                     throw(maybe_deadlock)
+             end
+         end
+         || {P,N} <- Pids],
+        ok
     after
         ok = bitcask:close(Ref),
         os:cmd("rm -rf "++Cask)
