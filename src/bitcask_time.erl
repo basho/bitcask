@@ -31,6 +31,7 @@ tstamp() ->
     test__get(?KEY).
 
 test__set_fudge(Amount) ->
+    erase(?KEY),
     application:set_env(bitcask, ?KEY, Amount).
 
 test__get_fudge() ->
