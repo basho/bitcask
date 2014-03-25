@@ -2562,9 +2562,9 @@ fold_itercount_test() ->
 
 
 fold_lockstep_test_() ->
-    {timeout, 100, fun fold_lockstep_test/0}.
+    {timeout, 100, fun fold_lockstep_body/0}.
 
-fold_lockstep_test() ->
+fold_lockstep_body() ->
     Cask = "/tmp/bc.lockstep-test/",
     os:cmd("rm -rf "++Cask),
     Ref = bitcask:open(Cask, [read_write]),
