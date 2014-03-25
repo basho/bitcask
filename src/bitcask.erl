@@ -2595,4 +2595,29 @@ no_tombstones_after_reopen_test2(DeleteHintFilesP) ->
     Res2 = bitcask:fold_keys(B2, fun(K, Acc0) -> [K|Acc0] end, [], -1, -1, true),
     ?assertEqual([], [X || {tombstone, _} = X <- Res2]).
 
+update_tstamp_stats_test() ->
+    Dir = "/tmp/bc.tstamp.stats",
+    bitcask_time:test__set_fudge(1),
+    try
+        B = init_dataset(Dir, [read_write, {max_file_size, 1000000}], []),
+        Write = fun(KVs) ->
+                        [ begin
+                              bitcask:put(B, K, V),
+                              bitcask_time:test__incr_fudge(1)
+                          end || {K, V} <- KVs]
+                end,
+
+        Write([{<<"k1">>, <<"v1">>}, {<<"k2">>, <<"v2">>},
+               {<<"k3">>, <<"v3">>}]),
+        ok = bitcask:close(B),
+
+        B2 = bitcask:open(Dir),
+        ?assertMatch({3, [#file_status{oldest_tstamp=1,
+                                       newest_tstamp=3}]},
+                     summary_info(B2)),
+        bitcask:close(B2)
+    after
+        bitcask_time:test__clear_fudge()
+    end.
+
 -endif.
