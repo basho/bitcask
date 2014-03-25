@@ -1705,6 +1705,36 @@ expire_merge_test() ->
     close(B),
     ok.
 
+single_key_expire_test_() ->
+    {timeout, 60, fun single_key_expire_body/0}.
+
+% At a customer site, having the same key written to a single file
+% was observed to not update the newest/latest tstamp stats and result
+% in the file considered expired before it was due.
+% The reason is the stats are not updated correctly when putting in the
+% same file. The develop branch has a test only for the stats, but this is
+% the original test that helped narrow down the problem.
+single_key_expire_body() ->
+    Dir = "/tmp/bc.single.key.expire",
+    K = <<"key">>,
+    Data = [{K, <<0:128/integer-unit:8>>} || _ <- lists:seq(1,4)],
+    B1 = init_dataset(Dir, [{max_file_size, 1024}, {expiry_secs, 4}], Data),
+    timer:sleep(6000),
+    ok = bitcask:put(B1, K, <<"val1">>),
+    timer:sleep(1100),
+    ?assertEqual([K], bitcask:list_keys(B1)),
+    ok = bitcask:close(B1),
+    B2 = bitcask:open(Dir, [read_write, {expiry_secs, 4}]),
+    case needs_merge(B2) of
+        {true, MFiles} ->
+            merge(Dir, [{expiry_secs, 4}], MFiles);
+        false ->
+            ok
+    end,
+    ?assertEqual([K], bitcask:list_keys(B2)),
+    bitcask:close(B2).
+
+
 fold_deleted_test() ->    
     os:cmd("rm -rf /tmp/bc.test.fold_delete"),
     B = bitcask:open("/tmp/bc.test.fold_delete",
