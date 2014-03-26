@@ -1,0 +1,39 @@
+%% -*- erlang -*-
+
+%% Yo, this is just a test backend for bitcask's multi_backend schema. It's not real
+%% If you really care about multi_backend, have a look at riak_kv/priv/multi_backend.schema
+
+%% @doc Storage_backend specifies the Erlang module defining the storage
+%% mechanism that will be used on this node.
+{mapping, "multi_backend.$name.storage_backend", "riak_kv.multi_backend", [
+  {default, bitcask},
+  {datatype, {enum, [bitcask, leveldb, memory]}},
+  hidden
+]}.
+
+{translation, "riak_kv.multi_backend",
+ fun(Conf, Schema) ->
+  %% group by $name into list, also cut the "multi_backend.$name" off every key
+  BackendNames = cuttlefish_variable:fuzzy_matches(["multi_backend","$name","storage_backend"], Conf),
+  %% for each in list, case statement on backend type
+  Backends = [ begin
+    BackendConfigName = ["multi_backend", Name],
+    {BackendModule, BackendConfig} = case cuttlefish:conf_get(BackendConfigName ++ ["storage_backend"], Conf) of
+      bitcask ->
+        BackendConfigPrefix = BackendConfigName ++ ["bitcask"],
+        SubConf = [ begin
+          {Key -- BackendConfigName, Value}
+        end || {Key, Value} <- cuttlefish_variable:filter_by_prefix(BackendConfigPrefix, Conf)],
+
+        case cuttlefish_generator:map(Schema, SubConf) of
+            BackendProplist ->
+                {riak_kv_bitcask_backend, proplists:get_value(bitcask, BackendProplist)}
+        end
+    end,
+    {list_to_binary(Name),  BackendModule, BackendConfig}
+  end || {"$name", Name} <- BackendNames],
+  case Backends of
+      [] -> throw(unset);
+      _ -> Backends
+  end
+ end}.

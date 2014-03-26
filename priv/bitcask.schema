@@ -8,12 +8,6 @@
   {datatype, directory}
 ]}.
 
-%% @see bitcask.data_root
-{mapping, "multi_backend.$name.bitcask.data_root", "riak_kv.multi_backend", [
-  hidden,
-  {datatype, directory}
-]}.
-
 %% @doc Specifies the maximum time Bitcask will block on startup while
 %% attempting to create or open the data directory. You generally need
 %% not change this value. If for some reason the timeout is exceeded
@@ -21,13 +15,6 @@
 %% bitcask backend: .... " Only then should you consider a longer
 %% timeout.
 {mapping, "bitcask.open_timeout", "bitcask.open_timeout", [
-  {default, "4s"},
-  {datatype, {duration, s}},
-  hidden
-]}.
-
-%% @see bitcask.open_timeout
-{mapping, "multi_backend.$name.bitcask.open_timeout", "riak_kv.multi_backend", [
   {default, "4s"},
   {datatype, {duration, s}},
   hidden
@@ -66,20 +53,7 @@
 ]}.
 
 %% @see bitcask.sync.strategy
-{mapping, "multi_backend.$name.bitcask.sync.strategy", "riak_kv.multi_backend", [
-  {default, none},
-  {datatype, {enum, [none, o_sync, interval]}},
-  hidden
-]}.
-
-%% @see bitcask.sync.strategy
 {mapping, "bitcask.sync.interval", "bitcask.sync_strategy", [
-  {datatype, {duration, s}},
-  hidden
-]}.
-
-%% @see bitcask.sync.strategy
-{mapping, "multi_backend.$name.bitcask.sync.interval", "riak_kv.multi_backend", [
   {datatype, {duration, s}},
   hidden
 ]}.
@@ -92,8 +66,8 @@
       none -> none;
       o_sync -> o_sync;
       interval ->
-	Interval = cuttlefish:conf_get("bitcask.sync.interval", Conf, undefined),
-	{seconds, Interval};
+        Interval = cuttlefish:conf_get("bitcask.sync.interval", Conf, undefined),
+        {seconds, Interval};
       _Default -> none
     end
  end}.
@@ -103,13 +77,6 @@
 %% exceed this size threshold then that file is closed, and a new file
 %% is opened for writes.
 {mapping, "bitcask.max_file_size", "bitcask.max_file_size", [
-  {default, "2GB"},
-  {datatype, bytesize},
-  hidden
-]}.
-
-%% @see bitcask.max_file_size
-{mapping, "multi_backend.$name.bitcask.max_file_size", "riak_kv.multi_backend", [
   {default, "2GB"},
   {datatype, bytesize},
   hidden
@@ -134,13 +101,6 @@
 ]}.
 
 %% @see bitcask.merge.policy
-{mapping, "multi_backend.$name.bitcask.merge.policy", "riak_kv.multi_backend", [
-  {default, always},
-  {datatype, {enum, [always, never, window]}},
-  hidden
-]}.
-
-%% @see bitcask.merge.policy
 {mapping, "bitcask.merge.window.start", "bitcask.merge_window", [
   {default, 0},
   {datatype, integer},
@@ -148,21 +108,7 @@
 ]}.
 
 %% @see bitcask.merge.policy
-{mapping, "multi_backend.$name.bitcask.merge.window.start", "riak_kv.multi_backend", [
-  {default, 0},
-  {datatype, integer},
-  hidden
-]}.
-
-%% @see bitcask.merge.policy
 {mapping, "bitcask.merge.window.end", "bitcask.merge_window", [
-  {default, 23},
-  {datatype, integer},
-  hidden
-]}.
-
-%% @see bitcask.merge.policy
-{mapping, "multi_backend.$name.bitcask.merge.window.end", "riak_kv.multi_backend", [
   {default, 23},
   {datatype, integer},
   hidden
@@ -176,9 +122,9 @@
       always -> always;
       never -> never;
       window ->
-	Start = cuttlefish:conf_get("bitcask.merge.window.start", Conf, undefined),
-	End = cuttlefish:conf_get("bitcask.merge.window.end", Conf, undefined),
-	{Start, End};
+  Start = cuttlefish:conf_get("bitcask.merge.window.start", Conf, undefined),
+  End = cuttlefish:conf_get("bitcask.merge.window.end", Conf, undefined),
+  {Start, End};
       _Default -> always
     end
  end}.
@@ -201,19 +147,11 @@
   {validators, ["is_percentage"]}
 ]}.
 
-%% @see bitcask.merge.triggers.fragmentation
-{mapping, "multi_backend.$name.bitcask.merge.triggers.fragmentation", "riak_kv.multi_backend", [
-  {datatype, integer},
-  hidden,
-  {default, 60},
-  {validators, ["is_percentage"]}
-]}.
-
 {validator,
  "is_percentage",
  "must be a percentage",
  fun(Value) ->
-	 Value >= 0 andalso Value =< 100
+   Value >= 0 andalso Value =< 100
  end}.
 
 %% @doc Describes how much data stored for dead keys in a single file
@@ -235,12 +173,6 @@
   {default, "512MB"}
 ]}.
 
-%% @see bitcask.merge.triggers.dead_bytes
-{mapping, "multi_backend.$name.bitcask.merge.triggers.dead_bytes", "riak_kv.multi_backend", [
-  {datatype, bytesize},
-  hidden,
-  {default, "512MB"}
-]}.
 
 %% @doc Describes what ratio of dead keys to total keys in a file will
 %% cause it to be included in the merge. The value of this setting is
@@ -253,14 +185,6 @@
 {mapping, "bitcask.merge.thresholds.fragmentation",
  "bitcask.frag_threshold",
 [
-  {datatype, integer},
-  hidden,
-  {default, 40},
-  {validators, ["is_percentage"]}
-]}.
-
-%% @see bitcask.merge.thresholds.fragmentation
-{mapping, "multi_backend.$name.bitcask.thresholds.fragmentation", "riak_kv.multi_backend", [
   {datatype, integer},
   hidden,
   {default, 40},
@@ -280,13 +204,6 @@
   {default, "128MB"}
 ]}.
 
-%% @see bitcask.merge.thresholds.dead_bytes
-{mapping, "multi_backend.$name.bitcask.thresholds.dead_bytes", "riak_kv.multi_backend", [
-  {datatype, bytesize},
-  hidden,
-  {default, "128MB"}
-]}.
-
 %% @doc Describes the minimum size a file must have to be _excluded_
 %% from the merge. Files smaller than the threshold will be
 %% included. Increasing the value will cause _more_ files to be
@@ -300,26 +217,12 @@
   {default, "10MB"}
 ]}.
 
-%% @see bitcask.merge.thresholds.small_file
-{mapping, "multi_backend.$name.bitcask.thresholds.small_file", "riak_kv.multi_backend", [
-  {datatype, bytesize},
-  hidden,
-  {default, "10MB"}
-]}.
-
 %% @doc Fold keys thresholds will reuse the keydir if another fold was
 %% started less than `fold.max_age` ago and there were less than
 %% `fold.max_puts` updates.  Otherwise it will wait until all current
 %% fold keys complete and then start.  Set either option to unlimited
 %% to disable.
 {mapping, "bitcask.fold.max_age", "bitcask.max_fold_age", [
-  {datatype, [{atom, unlimited}, {duration, ms}]},
-  hidden,
-  {default, unlimited}
-]}.
-
-%% @see bitcask.fold.max_age
-{mapping, "multi_backend.$name.bitcask.fold.max_age", "riak_kv.multi_backend", [
   {datatype, [{atom, unlimited}, {duration, ms}]},
   hidden,
   {default, unlimited}
@@ -339,13 +242,6 @@
 
 %% @see bitcask.fold.max_age
 {mapping, "bitcask.fold.max_puts", "bitcask.max_fold_puts", [
-  {datatype, [integer, {atom, unlimited}]},
-  hidden,
-  {default, 0}
-]}.
-
-%% @see bitcask.fold.max_age
-{mapping, "multi_backend.$name.bitcask.fold.max_puts", "riak_kv.multi_backend", [
   {datatype, [integer, {atom, unlimited}]},
   hidden,
   {default, 0}
@@ -373,13 +269,6 @@
   {default, off}
 ]}.
 
-%% @see bitcask.expiry
-{mapping, "multi_backend.$name.bitcask.expiry", "riak_kv.multi_backend", [
-  {datatype, [{atom, off}, {duration, s}]},
-  hidden,
-  {default, off}
-]}.
-
 {translation, "bitcask.expiry_secs",
  fun(Conf) ->
    case cuttlefish:conf_get("bitcask.expiry", Conf) of
@@ -395,13 +284,6 @@
 %% compatible mode where old hint files will still be accepted without
 %% CRC signatures.
 {mapping, "bitcask.hintfile_checksums", "bitcask.require_hint_crc", [
-  {default, strict},
-  {datatype, {enum, [strict, allow_missing]}},
-  hidden
-]}.
-
-%% @see bitcask.hintfile_checksums
-{mapping, "multi_backend.$name.bitcask.hintfile_checksums", "riak_kv.multi_backend", [
   {default, strict},
   {datatype, {enum, [strict, allow_missing]}},
   hidden
@@ -431,13 +313,6 @@
   {default, 0}
 ]}.
 
-%% @see bitcask.expiry.grace_time
-{mapping, "multi_backend.$name.bitcask.expiry.grace_time", "riak_kv.multi_backend", [
-  {datatype, {duration, s}},
-  hidden,
-  {default, 0}
-]}.
-
 %% @doc Configure how Bitcask writes data to disk.
 %%   erlang: Erlang's built-in file API
 %%      nif: Direct calls to the POSIX C API
@@ -449,11 +324,4 @@
 {mapping, "bitcask.io_mode", "bitcask.io_mode", [
   {default, erlang},
   {datatype, {enum, [erlang, nif]}}
-]}.
-
-%% @see bitcask.io_mode
-{mapping, "multi_backend.$name.bitcask.io_mode", "riak_kv.multi_backend", [
-  {default, erlang},
-  {datatype, {enum, [erlang, nif]}},
-  hidden
 ]}.
