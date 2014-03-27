@@ -33,7 +33,11 @@
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 -define(TEST_TIME, 30).                      % seconds
 
--record(m_fstats, {key_bytes=0, live_keys=0, live_bytes=0, total_keys=0, total_bytes=0}).
+-record(m_fstats, {key_bytes=0 :: integer(),
+                   live_keys=0 :: integer(),
+                   live_bytes=0 :: integer(),
+                   total_keys=0 :: integer(),
+                   total_bytes=0 :: integer()}).
 
 qc(P) ->
     qc(P, ?TEST_TIME).
@@ -136,9 +140,9 @@ check_fstats(Ref, Expect) ->
 
 check_model(Ref, Model) ->
     F = fun({K, deleted}) ->
-                ?assertEqual(not_found, bitcask:get(Ref, K));
+                ?assertEqual({K, not_found}, {K, bitcask:get(Ref, K)});
            ({K, V}) ->
-                ?assertEqual({ok, V}, bitcask:get(Ref, K))
+                ?assertEqual({K, {ok, V}}, {K, bitcask:get(Ref, K)})
         end,
     lists:map(F, Model).
 
@@ -207,7 +211,7 @@ prop_merge() ->
                      Validate = fun(Fname) ->
                                         {ok, S} = bitcask_fileops:open_file(Fname),
                                         try
-                                            ?assertEqual(true, bitcask_fileops:has_valid_hintfile(S))
+                                            ?assertEqual({Fname, true}, {Fname, bitcask_fileops:has_valid_hintfile(S)})
                                         after
                                             bitcask_fileops:close(S)
                                         end

@@ -19,7 +19,7 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, { errors = [] }).
+-record(state, { errors = [] :: list() }).
 
 %%%===================================================================
 %%% gen_event callbacks

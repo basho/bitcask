@@ -17,9 +17,11 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, { start_time, events = [] }).
+-record(event, { timestamp :: integer(),
+                data :: term() }).
 
--record(event, { timestamp, data }).
+-record(state, { start_time :: integer(),
+                events = [] :: [#event{}] }).
 
 
 %%====================================================================
