@@ -113,10 +113,45 @@ override_schema_test() ->
     cuttlefish_unit:assert_not_configured(Config, "riak_kv.multi_backend"),
     ok.
 
-%% this context() represents the substitution variables that rebar will use during the build process.
-%% riak_core's schema file is written with some {{mustache_vars}} for substitution during packaging
-%% cuttlefish doesn't have a great time parsing those, so we perform the substitutions first, because
-%% that's how it would work in real life.
+multi_backend_test() ->
+    Conf = [
+            {["multi_backend", "default", "storage_backend"], bitcask},
+            {["multi_backend", "default", "bitcask", "data_root"], "/data/default_bitcask"}
+           ],
+    %% The defaults are defined in ../priv/bitcask.schema. it is the file under test.
+    Config = cuttlefish_unit:generate_templated_config(
+               ["../priv/bitcask.schema", "../priv/bitcask_multi.schema", "../test/multi_backend.schema"],
+               Conf, context(), predefined_schema()),
+    %%io:format("Config: ~p~n", []),
+
+    MultiBackendConfig = proplists:get_value(multi_backend, proplists:get_value(riak_kv, Config)),
+
+    {<<"default">>, riak_kv_bitcask_backend, DefaultBackend} = lists:keyfind(<<"default">>, 1, MultiBackendConfig),
+
+    cuttlefish_unit:assert_config(DefaultBackend, "data_root", "/data/default_bitcask"),
+    cuttlefish_unit:assert_config(DefaultBackend, "open_timeout", 4),
+    cuttlefish_unit:assert_config(DefaultBackend, "sync_strategy", none),
+    cuttlefish_unit:assert_config(DefaultBackend, "max_file_size", 2147483648),
+    cuttlefish_unit:assert_config(DefaultBackend, "merge_window", always),
+    cuttlefish_unit:assert_config(DefaultBackend, "frag_merge_trigger", 60),
+    cuttlefish_unit:assert_config(DefaultBackend, "dead_bytes_merge_trigger", 536870912),
+    cuttlefish_unit:assert_config(DefaultBackend, "frag_threshold", 40),
+    cuttlefish_unit:assert_config(DefaultBackend, "dead_bytes_threshold", 134217728),
+    cuttlefish_unit:assert_config(DefaultBackend, "small_file_threshold", 10485760),
+    cuttlefish_unit:assert_config(DefaultBackend, "max_fold_age", -1),
+    cuttlefish_unit:assert_config(DefaultBackend, "max_fold_puts", 0),
+    cuttlefish_unit:assert_config(DefaultBackend, "expiry_secs", -1),
+    cuttlefish_unit:assert_config(DefaultBackend, "require_hint_crc", true),
+    cuttlefish_unit:assert_config(DefaultBackend, "expiry_grace_time", 0),
+    cuttlefish_unit:assert_config(DefaultBackend, "io_mode", erlang),
+    ok.
+
+%% this context() represents the substitution variables that rebar
+%% will use during the build process.  riak_core's schema file is
+%% written with some {{mustache_vars}} for substitution during
+%% packaging cuttlefish doesn't have a great time parsing those, so we
+%% perform the substitutions first, because that's how it would work
+%% in real life.
 context() -> [].
 
 %% This predefined schema covers riak_kv's dependency on
