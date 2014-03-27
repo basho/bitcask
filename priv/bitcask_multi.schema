@@ -1,6 +1,6 @@
 %% -*- erlang -*-
 
-%%%% bitcask
+%%%% bitcask multi
 
 %% @see bitcask.data_root
 {mapping, "multi_backend.$name.bitcask.data_root", "riak_kv.multi_backend", [

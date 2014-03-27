@@ -122,9 +122,9 @@
       always -> always;
       never -> never;
       window ->
-  Start = cuttlefish:conf_get("bitcask.merge.window.start", Conf, undefined),
-  End = cuttlefish:conf_get("bitcask.merge.window.end", Conf, undefined),
-  {Start, End};
+        Start = cuttlefish:conf_get("bitcask.merge.window.start", Conf, undefined),
+        End = cuttlefish:conf_get("bitcask.merge.window.end", Conf, undefined),
+        {Start, End};
       _Default -> always
     end
  end}.
@@ -165,9 +165,9 @@
 %% directory, Bitcask will attempt to merge files.
 %%
 %% Default is: 512MB
-{mapping, "bitcask.merge.triggers.dead_bytes",
- "bitcask.dead_bytes_merge_trigger",
- [
+{mapping,
+ "bitcask.merge.triggers.dead_bytes",
+ "bitcask.dead_bytes_merge_trigger", [
   {datatype, bytesize},
   hidden,
   {default, "512MB"}
@@ -182,9 +182,9 @@
 %% merged, decreasing the value will cause more files to be merged.
 %%
 %% Default is: `40`
-{mapping, "bitcask.merge.thresholds.fragmentation",
- "bitcask.frag_threshold",
-[
+{mapping,
+ "bitcask.merge.thresholds.fragmentation",
+ "bitcask.frag_threshold", [
   {datatype, integer},
   hidden,
   {default, 40},
@@ -197,7 +197,8 @@
 %% will cause more files to be merged.
 %%
 %% Default is: 128MB
-{mapping, "bitcask.merge.thresholds.dead_bytes",
+{mapping,
+ "bitcask.merge.thresholds.dead_bytes",
  "bitcask.dead_bytes_threshold", [
   {datatype, bytesize},
   hidden,
@@ -210,7 +211,8 @@
 %% merged, decreasing the value will cause _fewer_ files to be merged.
 %%
 %% Default is: 10MB
-{mapping, "bitcask.merge.thresholds.small_file",
+{mapping,
+ "bitcask.merge.thresholds.small_file",
  "bitcask.small_file_threshold", [
   {datatype, bytesize},
   hidden,
@@ -230,13 +232,13 @@
 
 {translation, "bitcask.max_fold_age",
  fun(Conf) ->
-         case cuttlefish:conf_get("bitcask.fold.max_age", Conf) of
-             unlimited -> -1;
-             I when is_integer(I) ->
-                 %% app.config expects microseconds
-                 I * 1000;
-             _ -> -1 %% The default, for safety
-         end
+  case cuttlefish:conf_get("bitcask.fold.max_age", Conf) of
+    unlimited -> -1;
+    I when is_integer(I) ->
+      %% app.config expects microseconds
+      I * 1000;
+    _ -> -1 %% The default, for safety
+  end
  end
 }.
 
@@ -250,9 +252,9 @@
 {translation, "bitcask.max_fold_puts",
  fun(Conf) ->
    case cuttlefish:conf_get("bitcask.fold.max_puts", Conf) of
-       unlimited -> -1;
-       I when is_integer(I) -> I;
-       _ -> 0 %% default catch
+     unlimited -> -1;
+     I when is_integer(I) -> I;
+     _ -> 0 %% default catch
    end
  end
 }.
@@ -292,9 +294,9 @@
 {translation, "bitcask.require_hint_crc",
  fun(Conf) ->
    case cuttlefish:conf_get("bitcask.hintfile_checksums", Conf) of
-      strict -> true;
-      allow_missing -> false;
-      _ -> true
+     strict -> true;
+     allow_missing -> false;
+     _ -> true
    end
  end}.
 
