@@ -85,7 +85,7 @@
         {ready, reference()} | {not_ready, reference()} |
         {error, not_ready}.
 -spec maybe_keydir_new(string()) ->
-        {ok, reference()} |
+        {ready, reference()} |
         {error, not_ready}.
 -spec keydir_mark_ready(reference()) ->
         ok.

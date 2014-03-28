@@ -914,10 +914,9 @@ put_state(Ref, State) ->
 kt_id(Key) ->
     Key.
 
-scan_key_files([], _KeyDir, Acc, _CloseFile, _EnoentOK, _KT) ->
+scan_key_files([], _KeyDir, Acc, _CloseFile, _KT) ->
     Acc;
-scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile, 
-               EnoentOK, KT) ->
+scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile, KT) ->
     %% Restrictive pattern matching below is intentional
     case bitcask_fileops:open_file(Filename) of
         {ok, File} ->
@@ -946,10 +945,7 @@ scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile,
                true ->
                     ok
             end,
-            scan_key_files(Rest, KeyDir, [File | Acc], CloseFile, 
-                           EnoentOK, KT);
-        {error, enoent} when EnoentOK ->
-            scan_key_files(Rest, KeyDir, Acc, CloseFile, EnoentOK, KT)
+            scan_key_files(Rest, KeyDir, [File | Acc], CloseFile, KT)
     end.
 
 %%
@@ -1030,7 +1026,7 @@ init_keydir_scan_key_files(_Dirname, _Keydir, _KT, 0) ->
 init_keydir_scan_key_files(Dirname, KeyDir, KT, Count) ->
     try
         SortedFiles = readable_files(Dirname),
-        _ = scan_key_files(SortedFiles, KeyDir, [], true, false, KT)
+        _ = scan_key_files(SortedFiles, KeyDir, [], true, KT)
     catch _X:_Y ->
             error_logger:error_msg("scan_key_files: ~p ~p @ ~p\n",
                                    [_X, _Y, erlang:get_stacktrace()]),
