@@ -981,7 +981,6 @@ init_keydir(Dirname, WaitTime, ReadWriteModeP, KT) ->
             Lock = poll_for_merge_lock(Dirname),
             ScanResult =
             try
-                _ = poll_deferred_delete_queue_empty(),
                 if ReadWriteModeP ->
                         %% This purge will acquire the write lock
                         %% prior to doing anything.
@@ -1505,12 +1504,6 @@ poll_for_merge_lock(Dirname, N) ->
         _ ->
             timer:sleep(100),
             poll_for_merge_lock(Dirname, N-1)
-    end.
-
-poll_deferred_delete_queue_empty() ->
-    case bitcask_merge_delete:queue_length() of
-        0 -> ok;
-        _ -> receive after 1100 -> poll_deferred_delete_queue_empty() end
     end.
 
 %% Internal merge function for cache_merge functionality.

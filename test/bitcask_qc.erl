@@ -158,6 +158,7 @@ prop_merge() ->
          ?FORALL({Ops, M1, M2}, {eqc_gen:non_empty(list(ops(Keys, Values))),
                                  choose(1,128), choose(1,128)},
                  begin
+		     bitcask_merge_delete:testonly__delete_trigger(),
                      ?cmd("rm -rf /tmp/bc.prop.merge"),
 
                      %% Open a bitcask, dump the ops into it and build

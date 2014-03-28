@@ -435,11 +435,8 @@ ERL_NIF_TERM bitcask_nifs_keydir_new0(ErlNifEnv* env, int argc, const ERL_NIF_TE
 ERL_NIF_TERM bitcask_nifs_maybe_keydir_new1(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     char name[4096];
-    size_t name_sz;
     if (enif_get_string(env, argv[0], name, sizeof(name), ERL_NIF_LATIN1))
     {
-        name_sz = strlen(name);
-
         // Get our private stash and check the global hash table for this entry
         bitcask_priv_data* priv = (bitcask_priv_data*)enif_priv_data(env);
         

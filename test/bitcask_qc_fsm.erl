@@ -25,7 +25,7 @@
          corrupt_hint/2,
          truncate_hint/2]).
 
--define(TEST_DIR, "/tmp/bitcask.qc").
+-define(TEST_DIR, "/tmp/bitcask.qc." ++ os:getpid()).
 -include_lib("kernel/include/file.hrl").
 
 -ifdef(EQC).
@@ -120,14 +120,17 @@ qc_test_() ->
 
 prepare() ->
     application:load(bitcask),
+    application:start(bitcask),
     application:set_env(bitcask, require_hint_crc, true).
 
 cleanup(_) ->
+    application:stop(bitcask),
     application:unload(bitcask).
 
 prop_bitcask() ->
     ?FORALL(Cmds, commands(?MODULE),
             begin
+		bitcask_merge_delete:testonly__delete_trigger(),
                 [] = os:cmd("rm -rf " ++ ?TEST_DIR),
                 {H,{_State, StateData}, Res} = run_commands(?MODULE,Cmds),
                 case (StateData#state.bitcask) of
@@ -183,7 +186,7 @@ truncate_hint(Seed, TruncBy0) ->
             {ok, Fi} = file:read_file_info(Hint),
             {ok, Fh} = file:open(Hint, [read, write]),
             TruncBy = (1 + abs(TruncBy0)) rem (Fi#file_info.size+1),
-            {ok, _To} = file:position(Fh, {eof, -TruncBy}),
+            {ok, _To} = file:position(Fh, {eof, erlang:max(-TruncBy, 0)}),
             %% io:format(user, "Truncating ~p by ~p to ~p\n", [Hint, TruncBy, _To]),
             file:truncate(Fh),
             file:close(Fh)
