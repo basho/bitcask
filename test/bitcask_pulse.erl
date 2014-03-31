@@ -47,10 +47,10 @@
 
 
 -record(state,
-  { handle
-  , is_writer = true
-  , did_fork_merge = false
-  , readers = []
+  { handle :: term()
+  , is_writer = true :: term()
+  , did_fork_merge = false :: term()
+  , readers = [] :: term()
   }).
 
 %% The initial state.
