@@ -1027,8 +1027,19 @@ init_keydir_scan_key_files(_Dirname, _Keydir, _KT, 0) ->
     {error, {init_keydir_scan_key_files, too_many_iterations}};
 init_keydir_scan_key_files(Dirname, KeyDir, KT, Count) ->
     try
-        SortedFiles = readable_files(Dirname),
-        _ = scan_key_files(SortedFiles, KeyDir, [], true, KT)
+        {SortedFiles, SetuidFiles} = readable_and_setuid_files(Dirname),
+        _ = scan_key_files(SortedFiles, KeyDir, [], true, KT),
+        %% There may be a setuid data file that has a larger tstamp name than
+        %% any non-setuid data file.  Tell the keydir about it, so that we
+        %% don't try to reuse that tstamp name.
+        case SetuidFiles of
+            [] ->
+                ok;
+            _ ->
+                MaxSetuid = lists:max([bitcask_fileops:file_tstamp(F) ||
+                                          F <- SetuidFiles]),
+                bitcask_nifs:increment_file_id(KeyDir, MaxSetuid)
+        end
     catch _X:_Y ->
             error_logger:error_msg("scan_key_files: ~p ~p @ ~p\n",
                                    [_X, _Y, erlang:get_stacktrace()]),
@@ -1320,6 +1331,10 @@ out_of_date(State, Key, Tstamp, FileId, {_,_,Offset,_} = Pos,
 
 -spec readable_files(string()) -> [string()].  
 readable_files(Dirname) ->
+    {ReadableFiles, _SetuidFiles} = readable_and_setuid_files(Dirname),
+    ReadableFiles.
+
+readable_and_setuid_files(Dirname) ->
     %% Check the write and/or merge locks to see what files are currently
     %% being written to. Generate our list excepting those.
     WritingFile = bitcask_lockops:read_activefile(write, Dirname),
@@ -1327,8 +1342,8 @@ readable_files(Dirname) ->
 
     %% Filter out files with setuid bit set: they've been marked for
     %% deletion by an earlier *successful* merge.
-    [F || F <- list_data_files(Dirname, WritingFile, MergingFile),
-          not has_setuid_bit(F)].
+    Fs = [F || F <- list_data_files(Dirname, WritingFile, MergingFile)],
+    lists:partition(fun(F) -> not has_setuid_bit(F) end, Fs).
 
 %% Internal put - have validated that the file is opened for write
 %% and looked up the state at this point
