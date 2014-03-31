@@ -94,7 +94,8 @@
                   expiry_grace_time :: integer(),
                   key_transform :: function(),
                   read_write_p :: integer(),    % integer() avoids atom -> NIF
-                  opts :: list() }).
+                  opts :: list(),
+                  delete_files :: [#filestate{}]}).
 
 %% A bitcask is a directory containing:
 %% * One or more data files - {integer_timestamp}.bitcask.data
@@ -599,7 +600,8 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
                       expiry_grace_time = expiry_grace_time(Opts),
                       key_transform = KT,
                       read_write_p = 0,
-                      opts = Opts },
+                      opts = Opts,
+                      delete_files = []},
 
     %% Finally, start the merge process
     ExpiredFilesFinished = expiry_merge(InExpiredFiles, LiveKeyDir, KT, []),
@@ -618,7 +620,7 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
     %% close keydirs, and release our lock
     bitcask_fileops:close_all(State#mstate.input_files ++ ExpiredFilesFinished),
     {_, _, _, {IterGeneration, _, _, _}} = bitcask_nifs:keydir_info(LiveKeyDir),
-    FileNames = [F#filestate.filename || F <- State#mstate.input_files ++ ExpiredFilesFinished],
+    FileNames = [F#filestate.filename || F <- State1#mstate.delete_files ++ ExpiredFilesFinished],
     _ = [catch set_setuid_bit(F) || F <- FileNames],
     bitcask_merge_delete:defer_delete(Dirname, IterGeneration, FileNames),
 
@@ -1076,8 +1078,8 @@ merge_files(#mstate {  dirname = Dirname,
                 merge_single_entry(KT(K), V, Tstamp, FileId, Pos, State0)
         end,
     State2 = try bitcask_fileops:fold(File, F, State) of
-                 State1 ->
-                     State1
+                 #mstate{delete_files = DelFiles} = State1 ->
+                     State1#mstate{delete_files = [File|DelFiles]}
              catch
                  throw:{fold_error, Error, _PartialAcc} ->
                      error_logger:error_msg(
