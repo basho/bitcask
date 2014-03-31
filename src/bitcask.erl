@@ -2389,7 +2389,7 @@ slow_folder(Cask) ->
                           end,
                           receive
                               go -> ok;
-                              go_reply -> O ! reply, ok
+                              go_reply -> Owner ! reply, ok
                           end,
                           [{K, V} | Acc]
                   end,
