@@ -232,6 +232,8 @@ get(Ref, Key, TryNum) ->
                         {error, enoent} ->
                             %% merging deleted file between keydir_get and here
                             get(Ref, Key, TryNum-1);
+                        {error, _} = Else ->
+                            Else;
                         {Filestate, S2} ->
                             put_state(Ref, S2),
                             case bitcask_fileops:read(Filestate,
@@ -266,10 +268,15 @@ put(Ref, Key, Value) ->
             ok
     end,
 
-    {Ret, State1} = do_put(Key, Value, State, 
-                           ?DIABOLIC_BIG_INT, undefined),
-    put_state(Ref, State1),
-    Ret.
+    try
+        {Ret, State1} = do_put(Key, Value, State,
+                               ?DIABOLIC_BIG_INT, undefined),
+        put_state(Ref, State1),
+        Ret
+    catch throw:{unrecoverable, Error, State2} ->
+            put_state(Ref, State2),
+            {error, Error}
+    end.
 
 %% @doc Delete a key from a bitcask datastore.
 -spec delete(reference(), Key::binary()) -> ok.
@@ -423,12 +430,16 @@ pending_epoch(Keydir) ->
 open_fold_files(_Dirname, 0) ->
     {error, max_retries_exceeded_for_fold};
 open_fold_files(Dirname, Count) ->
-    Filenames = list_data_files(Dirname, undefined, undefined),
-    case open_files(Filenames, []) of
-        {ok, Files} ->
-            {ok, Files};
-        error ->
-            open_fold_files(Dirname, Count-1)
+    try
+        Filenames = list_data_files(Dirname, undefined, undefined),
+        case open_files(Filenames, []) of
+            {ok, Files} ->
+                {ok, Files};
+            error ->
+                open_fold_files(Dirname, Count-1)
+        end
+    catch X:Y ->
+            {error, {X,Y}}
     end.
 
 %%
@@ -991,6 +1002,8 @@ init_keydir(Dirname, WaitTime, ReadWriteModeP, KT) ->
                 case Lock of
                     ?POLL_FOR_MERGE_LOCK_PSEUDOFAILURE ->
                         ok;
+                    {error, _} = Error ->
+                        Error;
                     _ ->
                         ok = bitcask_lockops:release(Lock)
                 end
@@ -1059,7 +1072,9 @@ get_filestate(FileId,
                     {error, enoent};
                 {ok, Filestate} ->
                     {Filestate, State#bc_state{read_files =
-                                      [Filestate | State#bc_state.read_files]}}
+                                      [Filestate | State#bc_state.read_files]}};
+                {error, _} = Else ->
+                    Else
             end
     end.
 
@@ -1351,35 +1366,39 @@ do_put(_Key, _Value, State, 0, LastErr) ->
     {{error, LastErr}, State};
 do_put(Key, Value, #bc_state{write_file = WriteFile} = State, 
        Retries, _LastErr) ->
-    case bitcask_fileops:check_write(WriteFile, Key, Value,
-                                     State#bc_state.max_file_size) of
-        wrap ->
-            %% Time to start a new write file. Note that we do not close the old
-            %% one, just transition it. The thinking is that closing/reopening
-            %% for read only access would flush the O/S cache for the file,
-            %% which may be undesirable.
-            State2 = wrap_write_file(State);
-        fresh ->
-            %% Time to start our first write file.
-            case bitcask_lockops:acquire(write, State#bc_state.dirname) of
-                {ok, WriteLock} ->
-                    {ok, NewWriteFile} = bitcask_fileops:create_file(
-                                           State#bc_state.dirname,
-                                           State#bc_state.opts,
-                                           State#bc_state.keydir),
-                    ok = bitcask_lockops:write_activefile(
-                           WriteLock,
-                           bitcask_fileops:filename(NewWriteFile)),
-                    State2 = State#bc_state{ write_file = NewWriteFile,
-                                             write_lock = WriteLock };
-                {error, Reason} ->
-                    State2 = undefined,
-                    throw({error, {write_locked, Reason, State#bc_state.dirname}})
-            end;
-
-        ok ->
-            State2 = State
-    end,
+    State2 =
+        case bitcask_fileops:check_write(WriteFile, Key, Value,
+                                         State#bc_state.max_file_size) of
+            wrap ->
+                %% Time to start a new write file. Note that we do not
+                %% close the old one, just transition it. The thinking
+                %% is that closing/reopening for read only access
+                %% would flush the O/S cache for the file, which may
+                %% be undesirable.
+                wrap_write_file(State);
+            fresh ->
+                %% Time to start our first write file.
+                case bitcask_lockops:acquire(write, State#bc_state.dirname) of
+                    {ok, WriteLock} ->
+                        try
+                            {ok, NewWriteFile} = bitcask_fileops:create_file(
+                                                   State#bc_state.dirname,
+                                                   State#bc_state.opts,
+                                                   State#bc_state.keydir),
+                            ok = bitcask_lockops:write_activefile(
+                                   WriteLock,
+                                   bitcask_fileops:filename(NewWriteFile)),
+                            State#bc_state{ write_file = NewWriteFile,
+                                            write_lock = WriteLock }
+                        catch error:{badmatch,Error} ->
+                                throw({unrecoverable, Error, State})
+                        end;
+                    {error, _} = Error ->
+                        throw({unrecoverable, Error, State})
+                end;
+            ok ->
+                State
+        end,
 
     Tstamp = bitcask_time:tstamp(),
     case Value of

@@ -66,40 +66,43 @@
 %% Called on a Dirname, will open a fresh file in that directory.
 -spec create_file(Dirname :: string(), Opts :: [any()],
                   reference()) -> 
-                         {ok, #filestate{}}.
+                         {ok, #filestate{}} | {error, term()}.
 
 create_file(DirName, Opts0, Keydir) ->
     Opts = [create|Opts0],
-    {ok, Lock} = get_create_lock(DirName),
-    try 
-        {ok, Newest} = bitcask_nifs:increment_file_id(Keydir),
-        
-        Filename = mk_filename(DirName, Newest),
-        ok = ensure_dir(Filename),
-        
-        %% Check for o_sync strategy and add to opts
-        FinalOpts = 
-            case bitcask:get_opt(sync_strategy, Opts) of
-                o_sync ->
-                    [o_sync | Opts];
-                _ ->
-                    Opts
-            end,
-        
-        {ok, FD} = bitcask_io:file_open(Filename, FinalOpts),
-        HintFD = open_hint_file(Filename, FinalOpts),
-        {ok, #filestate{mode = read_write,
-                        filename = Filename,
-                        tstamp = file_tstamp(Filename),
-                        hintfd = HintFD, fd = FD, ofs = 0}}
-    catch Error:Reason ->
-            %% if we fail somehow, do we need to nuke any partial
-            %% state?
-            {Error, Reason}
-    after
-        bitcask_lockops:release(Lock)
-    end.
-        
+    case get_create_lock(DirName) of
+        {ok, Lock} ->
+            try 
+                {ok, Newest} = bitcask_nifs:increment_file_id(Keydir),
+
+                Filename = mk_filename(DirName, Newest),
+                ok = ensure_dir(Filename),
+
+                %% Check for o_sync strategy and add to opts
+                FinalOpts = 
+                    case bitcask:get_opt(sync_strategy, Opts) of
+                        o_sync ->
+                            [o_sync | Opts];
+                        _ ->
+                            Opts
+                    end,
+
+                {ok, FD} = bitcask_io:file_open(Filename, FinalOpts),
+                HintFD = open_hint_file(Filename, FinalOpts),
+                {ok, #filestate{mode = read_write,
+                                filename = Filename,
+                                tstamp = file_tstamp(Filename),
+                                hintfd = HintFD, fd = FD, ofs = 0}}
+            catch Error:Reason ->
+                    %% if we fail somehow, do we need to nuke any partial
+                    %% state?
+                    {Error, Reason}
+            after
+                bitcask_lockops:release(Lock)
+            end;
+        Else ->
+            Else
+    end.            
 
 get_create_lock(DirName) ->
     get_create_lock(DirName, 100).
@@ -112,7 +115,9 @@ get_create_lock(DirName, N) ->
         {ok, Lock} ->
             {ok, Lock};
         {error, locked} ->
-            get_create_lock(DirName, N - 1)
+            get_create_lock(DirName, N - 1);
+        {error, _} = Else ->
+            Else
     end.
    
     
@@ -183,9 +188,7 @@ data_file_tstamps(Dirname) ->
                               Acc
                       end
               end,
-              [], Files);
-        {error, Reason} ->
-            {error, Reason}
+              [], Files)
     end.
 
 %% @doc Use only after merging, to permanently delete a data file.
