@@ -188,7 +188,7 @@ handle_cast(_Msg, State) ->
 
 handle_info({'DOWN', _Ref, _, _Pid, _Status}, State=#state{fd=Fd}) ->
     %% Owner has stopped, close file and shutdown
-    ok = file:close(Fd),
+    _ = file:close(Fd),
     {stop, normal, State};
 handle_info(_Info, State) ->
     {noreply, State}.

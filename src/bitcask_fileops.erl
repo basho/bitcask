@@ -166,9 +166,9 @@ close_hintfile(State = #filestate { hintfd = HintFd, hintcrc = HintCRC }) ->
     %% an older version of bitcask will just reject the record at the end of the
     %% hintfile and otherwise work normally.
     Iolist = hintfile_entry(<<>>, 0, 0, ?MAXOFFSET_V2, HintCRC),
-    ok = bitcask_io:file_write(HintFd, Iolist),
-    bitcask_io:file_sync(HintFd),
-    bitcask_io:file_close(HintFd),
+    _ = bitcask_io:file_write(HintFd, Iolist),
+    _ = bitcask_io:file_sync(HintFd),
+    _ = bitcask_io:file_close(HintFd),
     State#filestate { hintfd = undefined, hintcrc = 0 }.
 
 %% Build a list of {tstamp, filename} for all files in the directory that
@@ -222,23 +222,28 @@ write(Filestate=#filestate{fd = FD, hintfd = HintFD,
               <<ValueSz:?VALSIZEFIELD>>, Key, Value],
     Bytes  = [<<(erlang:crc32(Bytes0)):?CRCSIZEFIELD>> | Bytes0],
     %% Store the full entry in the data file
-    ok = bitcask_io:file_pwrite(FD, Offset, Bytes),
-    %% Create and store the corresponding hint entry
-    TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
-    TombInt = case bitcask:is_tombstone(Value) of
-                  true  -> 1;
-                  false -> 0
-              end,
-    Iolist = hintfile_entry(Key, Tstamp, TombInt, Offset, TotalSz),
-    ok = bitcask_io:file_write(HintFD, Iolist),
-    %% Record our final offset
-    TotalSz = iolist_size(Bytes),
-    HintCRC = erlang:crc32(HintCRC0, Iolist), % compute crc of hint
-    {ok, Filestate#filestate{ofs = Offset + TotalSz,
-                             hintcrc = HintCRC,
-                             l_ofs = Offset,
-                             l_hbytes = iolist_size(Iolist),
-                             l_hintcrc = HintCRC0}, Offset, TotalSz}.
+    try
+        ok = bitcask_io:file_pwrite(FD, Offset, Bytes),
+        %% Create and store the corresponding hint entry
+        TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
+        TombInt = case bitcask:is_tombstone(Value) of
+                      true  -> 1;
+                      false -> 0
+                  end,
+        Iolist = hintfile_entry(Key, Tstamp, TombInt, Offset, TotalSz),
+        ok = bitcask_io:file_write(HintFD, Iolist),
+        %% Record our final offset
+        TotalSz = iolist_size(Bytes),
+        HintCRC = erlang:crc32(HintCRC0, Iolist), % compute crc of hint
+        {ok, Filestate#filestate{ofs = Offset + TotalSz,
+                                 hintcrc = HintCRC,
+                                 l_ofs = Offset,
+                                 l_hbytes = iolist_size(Iolist),
+                                 l_hintcrc = HintCRC0}, Offset, TotalSz}
+    catch
+        error:{badmatch,Error} ->
+            Error
+    end.
 
 %% WARNING: We can only undo the last write.
 un_write(Filestate=#filestate{fd = FD, hintfd = HintFD, 

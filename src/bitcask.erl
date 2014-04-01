@@ -1403,30 +1403,33 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State,
     Tstamp = bitcask_time:tstamp(),
     case Value of
         BinValue when is_binary(BinValue) ->
-            {ok, WriteFile2, Offset, Size} = bitcask_fileops:write(
-                                               State2#bc_state.write_file,
-                                               Key, Value, Tstamp),
-            case bitcask_nifs:keydir_put(State2#bc_state.keydir, Key,
-                                         bitcask_fileops:file_tstamp(WriteFile2),
-                                         Size, Offset, Tstamp,
-                                         bitcask_time:tstamp(), true) of
-                ok ->
-                    {ok, State2#bc_state { write_file = WriteFile2 }};
-                already_exists ->
-                    %% Assuming the timestamps in the keydir are
-                    %% valid, there is an edge case where the merge thread
-                    %% could have rewritten this Key to a file with a greater
-                    %% file_id. Rather than synchronize the merge/writer processes, 
-                    %% wrap to a new file with a greater file_id and rewrite
-                    %% the key there.
-                    %% We must undo the write here so a later partial merge
-                    %% does not see it.
-                    %% Limit the number of recursions in case there is
-                    %% a different issue with the keydir.
-                    {ok, WriteFile3} = bitcask_fileops:un_write(WriteFile2),
-                    State3 = wrap_write_file(
-                               State2#bc_state { write_file = WriteFile3 }),
-                    do_put(Key, Value, State3, Retries - 1, already_exists)
+            case bitcask_fileops:write(State2#bc_state.write_file,
+                                       Key, Value, Tstamp) of
+                {ok, WriteFile2, Offset, Size} ->
+                    case bitcask_nifs:keydir_put(State2#bc_state.keydir, Key,
+                                                 bitcask_fileops:file_tstamp(WriteFile2),
+                                                 Size, Offset, Tstamp,
+                                                 bitcask_time:tstamp(), true) of
+                        ok ->
+                            {ok, State2#bc_state { write_file = WriteFile2 }};
+                        already_exists ->
+                            %% Assuming the timestamps in the keydir are
+                            %% valid, there is an edge case where the merge thread
+                            %% could have rewritten this Key to a file with a greater
+                            %% file_id. Rather than synchronize the merge/writer processes, 
+                            %% wrap to a new file with a greater file_id and rewrite
+                            %% the key there.
+                            %% We must undo the write here so a later partial merge
+                            %% does not see it.
+                            %% Limit the number of recursions in case there is
+                            %% a different issue with the keydir.
+                            {ok, WriteFile3} = bitcask_fileops:un_write(WriteFile2),
+                            State3 = wrap_write_file(
+                                       State2#bc_state { write_file = WriteFile3 }),
+                            do_put(Key, Value, State3, Retries - 1, already_exists)
+                    end;
+                Error2 ->
+                    throw({unrecoverable, Error2, State2})
             end;
         tombstone ->
             WriteFileId = bitcask_fileops:file_tstamp(State2#bc_state.write_file),
@@ -1439,42 +1442,50 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State,
                 #bitcask_entry{tstamp=OldTstamp, file_id=OldFileId,
                                offset=OldOffset} ->
                     Tombstone = ?TOMBSTONE,
-                    {ok, WriteFile2, _, _} =
-                        bitcask_fileops:write(State2#bc_state.write_file,
-                                              Key, Tombstone, Tstamp),
-
-                    case bitcask_nifs:keydir_remove(State2#bc_state.keydir,
-                                                    Key, OldTstamp, OldFileId,
-                                                    OldOffset) of
-                        already_exists ->
-                            {ok, WriteFile3} =
-                                bitcask_fileops:un_write(WriteFile2),
-                            % Merge updated the keydir after tombstone write.
-                            % beat us, so undo and retry in a new file.
-                            State3 = wrap_write_file(
-                                       State2#bc_state {
-                                         write_file = WriteFile3 }),
-                            do_put(Key, Value, State3, 
-                                   Retries - 1, already_exists);
-                        ok ->
-                            {ok, State2#bc_state { write_file = WriteFile2 }}
+                    case bitcask_fileops:write(State2#bc_state.write_file,
+                                               Key, Tombstone, Tstamp) of
+                        {ok, WriteFile2, _, _} ->
+                            case bitcask_nifs:keydir_remove(State2#bc_state.keydir,
+                                                            Key, OldTstamp, OldFileId,
+                                                            OldOffset) of
+                                already_exists ->
+                                    %% Merge updated the keydir after tombstone
+                                    %% write.  beat us, so undo and retry in a
+                                    %% new file.
+                                    {ok, WriteFile3} =
+                                        bitcask_fileops:un_write(WriteFile2),
+                                    State3 = wrap_write_file(
+                                               State2#bc_state {
+                                                 write_file = WriteFile3 }),
+                                    do_put(Key, Value, State3,
+                                           Retries - 1, already_exists);
+                                ok ->
+                                    {ok, State2#bc_state { write_file = WriteFile2 }}
+                            end;
+                        {error, _} = ErrorTomb ->
+                            throw({unrecoverable, ErrorTomb, State2})
                     end
             end
     end.
 
 
 wrap_write_file(#bc_state{write_file = WriteFile} = State) ->
-    LastWriteFile = bitcask_fileops:close_for_writing(WriteFile),
-    {ok, NewWriteFile} = bitcask_fileops:create_file(
-                           State#bc_state.dirname,
-                           State#bc_state.opts,
-                           State#bc_state.keydir),
-    ok = bitcask_lockops:write_activefile(
-           State#bc_state.write_lock,
-           bitcask_fileops:filename(NewWriteFile)),
-    State#bc_state{ write_file = NewWriteFile,
-                    read_files = [LastWriteFile | 
-                                  State#bc_state.read_files]}.
+    try
+        LastWriteFile = bitcask_fileops:close_for_writing(WriteFile),
+        {ok, NewWriteFile} = bitcask_fileops:create_file(
+                               State#bc_state.dirname,
+                               State#bc_state.opts,
+                               State#bc_state.keydir),
+        ok = bitcask_lockops:write_activefile(
+               State#bc_state.write_lock,
+               bitcask_fileops:filename(NewWriteFile)),
+        State#bc_state{ write_file = NewWriteFile,
+                        read_files = [LastWriteFile | 
+                                      State#bc_state.read_files]}
+    catch
+        error:{badmatch,Error} ->
+            throw({unrecoverable, Error, State})
+    end.
 
 set_setuid_bit(File) ->
     %% We're intentionally opinionated about pattern matching here.
