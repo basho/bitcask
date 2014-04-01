@@ -499,20 +499,31 @@ iterator_release(Ref) ->
 
 %% @doc Merge several data files within a bitcask datastore
 %%      into a more compact form.
--spec merge(Dirname::string()) -> ok.
+-spec merge(Dirname::string()) -> ok | {error, any()}.
 merge(Dirname) ->
-    merge(Dirname, [], {readable_files(Dirname), []}).
+    try
+        merge(Dirname, [], {readable_files(Dirname), []})
+    catch
+        Error:Reason ->
+            {error, {Error, Reason}}
+    end.
 
 %% @doc Merge several data files within a bitcask datastore
 %%      into a more compact form.
--spec merge(Dirname::string(), Opts::[_]) -> ok.
+-spec merge(Dirname::string(), Opts::[_]) -> ok | {error, any()}.
 merge(Dirname, Opts) ->
-    merge(Dirname, Opts, {readable_files(Dirname), []}).
+    try
+        merge(Dirname, Opts, {readable_files(Dirname), []})
+    catch
+        Error:Reason ->
+            {error, {Error, Reason}}
+    end.
 
 %% @doc Merge several data files within a bitcask datastore
 %%      into a more compact form.
 -spec merge(Dirname::string(), Opts::[_], 
-            {FilesToMerge::[string()],FilesToDelete::[string()]}) -> ok.
+            {FilesToMerge::[string()],FilesToDelete::[string()]})
+           -> ok | {error, any()}.
 merge(_Dirname, _Opts, []) ->
     ok;
 merge(Dirname,Opts,FilesToMerge) when is_list(FilesToMerge) -> 
@@ -520,25 +531,29 @@ merge(Dirname,Opts,FilesToMerge) when is_list(FilesToMerge) ->
 merge(_Dirname, _Opts, {[],_}) ->
     ok;
 merge(Dirname, Opts, {FilesToMerge0, ExpiredFiles0}) ->
-    %% Make sure bitcask app is started so we can pull defaults from env
-    ok = start_app(),
-    %% Filter the files to merge and ensure that they all exist. It's
-    %% possible in some circumstances that we'll get an out-of-date
-    %% list of files.
-    FilesToMerge = [F || F <- FilesToMerge0,
-                         bitcask_fileops:is_file(F)],
-    ExpiredFiles = [F || F <- ExpiredFiles0,
-                         bitcask_fileops:is_file(F)],
-    merge1(Dirname, Opts, FilesToMerge, ExpiredFiles).
+    try
+        %% Make sure bitcask app is started so we can pull defaults from env
+        ok = start_app(),
+        %% Filter the files to merge and ensure that they all exist. It's
+        %% possible in some circumstances that we'll get an out-of-date
+        %% list of files.
+        FilesToMerge = [F || F <- FilesToMerge0,
+                             bitcask_fileops:is_file(F)],
+        ExpiredFiles = [F || F <- ExpiredFiles0,
+                             bitcask_fileops:is_file(F)],
+        merge1(Dirname, Opts, FilesToMerge, ExpiredFiles)
+    catch
+        throw:Reason ->
+            Reason;
+        _X:_Y ->
+            io:format(user, "X Y = ~p ~p\n", [_X, _Y]),
+            {error, generic_failure}
+    end.
 
 %% Inner merge function, assumes that bitcask is running and all files exist.
 merge1(_Dirname, _Opts, [], []) ->
     ok;
 merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
-    %% Test to see if this is a complete or partial merge
-    Partial = not(lists:usort(readable_files(Dirname)) == 
-                  lists:usort(FilesToMerge)),
-    
     KT = get_key_transform(get_opt(key_transform, Opts)),
 
     %% Try to lock for merging
@@ -589,6 +604,16 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
                                                     {InFilesAcc,[F|InExpiredAcc]}
                                             end
                             end, {[],[]}, InFiles1),
+
+    %% Test to see if this is a complete or partial merge
+    %% We perform this test now because our efforts to open the input files
+    %% in the InFiles0 list comprehension above may have had an open
+    %% failure.  The open(2) shouldn't fail, except, of course, when it
+    %% does, e.g. EMFILE, ENFILE, the OS decides EINTR because "reasons", ...
+    Partial = lists:usort(readable_files(Dirname))
+              /=
+              lists:usort([F#filestate.filename || F <- InFiles2]),
+
     % This sort is very important. The merge expects to visit files in order
     % to properly detect current values, and could resurrect old values if not.
     InFiles = lists:sort(fun(#filestate{tstamp=FTL}, #filestate{tstamp=FTR}) ->
