@@ -44,6 +44,7 @@
          increment_file_id/1,
          increment_file_id/2,
          keydir_trim_fstats/2,
+         update_fstats/7,
          lock_acquire/2,
          lock_release/1,
          lock_readdata/1,
@@ -136,6 +137,9 @@
         ok.
 -spec keydir_trim_fstats(reference(), [integer()]) ->
         {ok, integer()} | {error, atom()}.
+-spec update_fstats(reference(), non_neg_integer(), non_neg_integer(),
+                    integer(), integer(), integer(), integer() ) ->
+    ok.
 -spec lock_acquire(string(), integer()) ->
         {ok, reference()} | {error, atom()}.
 -spec lock_release(reference()) ->
@@ -355,6 +359,10 @@ keydir_release(_Ref) ->
 keydir_trim_fstats(_Ref, _IDList) ->
     erlang:nif_error({error, not_loaded}).
 
+update_fstats(_Ref, _FileId, _Tstamp,
+              _LiveKeyIncr, _TotalKeyIncr,
+              _LiveIncr, _TotalIncr) ->
+    erlang:nif_error({error, not_loaded}).
 
 lock_acquire(Filename, IsWriteLock) ->
     bitcask_bump:big(),

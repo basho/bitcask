@@ -359,6 +359,8 @@ ERL_NIF_TERM bitcask_nifs_file_position(ErlNifEnv* env, int argc, const ERL_NIF_
 ERL_NIF_TERM bitcask_nifs_file_seekbof(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_file_truncate(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
+ERL_NIF_TERM bitcask_nifs_update_fstats(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+
 ERL_NIF_TERM errno_atom(ErlNifEnv* env, int error);
 ERL_NIF_TERM errno_error_tuple(ErlNifEnv* env, ERL_NIF_TERM key, int error);
 
@@ -407,7 +409,8 @@ static ErlNifFunc nif_funcs[] =
     {"file_write_int",  2, bitcask_nifs_file_write},
     {"file_position_int",  2, bitcask_nifs_file_position},
     {"file_seekbof_int", 1, bitcask_nifs_file_seekbof},
-    {"file_truncate_int", 1, bitcask_nifs_file_truncate}
+    {"file_truncate_int", 1, bitcask_nifs_file_truncate},
+    {"update_fstats", 7, bitcask_nifs_update_fstats}
 };
 
 ERL_NIF_TERM bitcask_nifs_keydir_new0(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -586,6 +589,35 @@ static void update_fstats(ErlNifEnv* env, bitcask_keydir* keydir,
         entry->newest_tstamp == 0)
     {
         entry->newest_tstamp = tstamp;
+    }
+}
+
+// NIF wrapper around update_fstats().
+ERL_NIF_TERM bitcask_nifs_update_fstats(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_keydir_handle* handle;
+    uint32_t file_id, tstamp;
+    int32_t live_increment, total_increment;
+    int32_t live_bytes_increment, total_bytes_increment;
+
+    if (argc == 7
+            && enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE,
+                (void**)&handle)
+            && enif_get_uint(env, argv[1], &file_id)
+            && enif_get_uint(env, argv[2], &tstamp)
+            && enif_get_int(env, argv[3], &live_increment)
+            && enif_get_int(env, argv[4], &total_increment)
+            && enif_get_int(env, argv[5], &live_bytes_increment)
+            && enif_get_int(env, argv[6], &total_bytes_increment))
+    {
+        update_fstats(env, handle->keydir, file_id, tstamp,
+                live_increment, total_increment,
+                live_bytes_increment, total_bytes_increment);
+        return ATOM_OK;
+    }
+    else
+    {
+        return enif_make_badarg(env);
     }
 }
 
@@ -2225,7 +2257,7 @@ ERL_NIF_TERM bitcask_nifs_lock_writedata(ErlNifEnv* env, int argc, const ERL_NIF
 
 int get_file_open_flags(ErlNifEnv* env, ERL_NIF_TERM list)
 {
-    int flags = -1;
+    int flags = O_RDWR | O_APPEND;
     ERL_NIF_TERM head, tail;
     while (enif_get_list_cell(env, list, &head, &tail))
     {

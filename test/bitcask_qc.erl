@@ -71,7 +71,7 @@ apply_kv_ops([{delete, K, _} | Rest], Ref, KVs0, Fstats0) ->
         OldVal ->
             apply_kv_ops(Rest, Ref, orddict:store(K, deleted, KVs0),
                          update_fstats(delete, K, OldVal,
-                                       ?TOMBSTONE, Fstats0))
+                                       ?TOMBSTONE0, Fstats0))
     end;
 apply_kv_ops([{itr, _K, _} | Rest], Ref, KVs, Fstats) ->
     %% Don't care about result, just want to intermix with get/put
@@ -136,7 +136,7 @@ check_fstats(Ref, Expect) ->
     ?assertEqual(Expect#m_fstats.live_keys, LiveCount),
     ?assertEqual(Expect#m_fstats.live_bytes, LiveBytes),
     ?assertEqual(Expect#m_fstats.total_keys, TotalCount),
-    ?assertEqual(Expect#m_fstats.total_bytes, TotalBytes).
+    ?assert(Expect#m_fstats.total_bytes =< TotalBytes).
 
 check_model(Ref, Model) ->
     F = fun({K, deleted}) ->
@@ -158,7 +158,6 @@ prop_merge() ->
          ?FORALL({Ops, M1, M2}, {eqc_gen:non_empty(list(ops(Keys, Values))),
                                  choose(1,128), choose(1,128)},
                  begin
-		     bitcask_merge_delete:testonly__delete_trigger(),
                      ?cmd("rm -rf /tmp/bc.prop.merge"),
 
                      %% Open a bitcask, dump the ops into it and build
