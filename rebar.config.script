@@ -11,9 +11,10 @@ case PulseBuild of
              {pulse_side_effect,
               [ {bitcask_nifs, keydir_new, 0}
               , {bitcask_nifs, keydir_new, 1}
+              , {bitcask_nifs, maybe_keydir_new, 1}
               , {bitcask_nifs, keydir_mark_ready, 1}
               , {bitcask_nifs, keydir_put_int, 10}
-              , {bitcask_nifs, keydir_get_int, 4}
+              , {bitcask_nifs, keydir_get_int, 3}
               , {bitcask_nifs, keydir_remove, 3}
               , {bitcask_nifs, keydir_remove_int, 6}
               , {bitcask_nifs, keydir_copy, 1}
