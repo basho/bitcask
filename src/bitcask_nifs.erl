@@ -328,7 +328,12 @@ keydir_wait_ready(N) ->
         error ->
             {error, shutdown}
     after 1000 ->
-            erlang:display({?MODULE,?LINE,keydir_wait_ready,retry,N}),
+            case N =< 99 of
+                true ->
+                    erlang:display({?MODULE,?LINE,keydir_wait_ready,retry,N});
+                false ->
+                    ok
+            end,
             keydir_wait_ready(N-1)
     end.
 -else.
