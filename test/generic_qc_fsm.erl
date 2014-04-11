@@ -22,6 +22,38 @@
 -module(generic_qc_fsm).
 %% Borrowed heavily from bitcask_qc_fsm.erl
 
+%% Example usage:
+%%
+%%   make clean
+%%   make
+%%   rebar skip_deps=true eunit suites=XX
+%%   cp ebin/*app* .eunit
+%%   erlc -I deps/faulterl/include -o deps/faulterl/ebin priv/scenario/*erl && deps/faulterl/ebin/make_intercept_c.escript trigger_commonpaths yo && env `deps/faulterl/ebin/example_environment.sh $PWD/yo` erl -sname foo -pz .eunit deps/*/ebin
+
+%% You should now have an Erlang shell.
+
+%%   eqc:quickcheck(eqc:testing_time(1, generic_qc_fsm:prop(false, false))).
+
+%% This will run without fault injection for 1 second, to allow the VM to
+%% auto-load the BEAM & shared lib files that we need.
+
+%% Additional output on the console:
+%%
+%%   "{" is an open
+%%   "}" is a close
+%%   "<f>" is a fold operation, start & finish
+%%   "<i>" is an add filler operation, start & finish
+
+%%   eqc:quickcheck(eqc:testing_time(15*60, generic_qc_fsm:prop(true, false))).
+
+%% Run with fault injection on for 15 minutes.
+%%
+%% When FI is enabled, there is a lot of additional output on the console.
+%%
+%%   "," is a failed open or close
+%%   "pm" is a put operation that maybe-succeeded
+%%   "dm" is a delete operation that maybe-succeeded
+
 -ifdef(EQC).
 
 -include_lib("eqc/include/eqc.hrl").
@@ -207,7 +239,7 @@ verify_trace([{set_keys, Keys}|TraceTail]) ->
              ({put, yes, K, V}, {true, D}) ->
                   {true, dict:store(K, [V], D)};
              ({put, maybe, K, V, _Err}, {true, D}) ->
-                  io:format(user, "pm,", []),
+                  io:format(user, "pm", []),
                   case dict:find (K, D) of
                       {ok, Vs} ->
                           {true, dict:store(K, [V|Vs], D)};
@@ -217,7 +249,7 @@ verify_trace([{set_keys, Keys}|TraceTail]) ->
              ({delete, yes, K}, {true, D}) ->
                   {true, dict:store(K, [not_found], D)};
              ({delete, maybe, K, _Err}, {true, D}) ->
-                  io:format(user, "dm,", []),
+                  io:format(user, "dm", []),
                   Vs = dict:fetch(K, D),
                   {true, dict:store(K, [not_found|Vs], D)};
              ({fold, start, _ID}, Acc) ->
