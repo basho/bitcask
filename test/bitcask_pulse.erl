@@ -296,7 +296,7 @@ mute(false, Fun) -> mute:run(Fun).
 %%
 %% The actual code of the property, run on remote node via rpc:call above
 %%
-run_commands_on_node(LocalOrSlave, Cmds, Seed, Verbose, KeepFlies) ->
+run_commands_on_node(LocalOrSlave, Cmds, Seed, Verbose, KeepFiles) ->
   mute(Verbose, fun() ->
     AfterTime = if LocalOrSlave == local -> 50000;
                    LocalOrSlave == slave -> 1000000
@@ -335,8 +335,8 @@ run_commands_on_node(LocalOrSlave, Cmds, Seed, Verbose, KeepFlies) ->
         {'EXIT', Err}
     end,
     case KeepFiles of
-        true -> really_delete_bitcask();
-        false -> ok
+        false -> really_delete_bitcask();
+        true  -> ok
     end,
     X end).
 
