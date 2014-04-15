@@ -545,9 +545,8 @@ merge(Dirname, Opts, {FilesToMerge0, ExpiredFiles0}) ->
     catch
         throw:Reason ->
             Reason;
-        _X:_Y ->
-            io:format(user, "X Y = ~p ~p\n", [_X, _Y]),
-            {error, generic_failure}
+        X:Y ->
+            {error, {generic_failure, X, Y}}
     end.
 
 %% Inner merge function, assumes that bitcask is running and all files exist.
