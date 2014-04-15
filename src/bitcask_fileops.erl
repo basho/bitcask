@@ -66,40 +66,43 @@
 %% Called on a Dirname, will open a fresh file in that directory.
 -spec create_file(Dirname :: string(), Opts :: [any()],
                   reference()) -> 
-                         {ok, #filestate{}}.
+                         {ok, #filestate{}} | {error, term()}.
 
 create_file(DirName, Opts0, Keydir) ->
     Opts = [create|Opts0],
-    {ok, Lock} = get_create_lock(DirName),
-    try 
-        {ok, Newest} = bitcask_nifs:increment_file_id(Keydir),
-        
-        Filename = mk_filename(DirName, Newest),
-        ok = ensure_dir(Filename),
-        
-        %% Check for o_sync strategy and add to opts
-        FinalOpts = 
-            case bitcask:get_opt(sync_strategy, Opts) of
-                o_sync ->
-                    [o_sync | Opts];
-                _ ->
-                    Opts
-            end,
-        
-        {ok, FD} = bitcask_io:file_open(Filename, FinalOpts),
-        HintFD = open_hint_file(Filename, FinalOpts),
-        {ok, #filestate{mode = read_write,
-                        filename = Filename,
-                        tstamp = file_tstamp(Filename),
-                        hintfd = HintFD, fd = FD, ofs = 0}}
-    catch Error:Reason ->
-            %% if we fail somehow, do we need to nuke any partial
-            %% state?
-            {Error, Reason}
-    after
-        bitcask_lockops:release(Lock)
-    end.
-        
+    case get_create_lock(DirName) of
+        {ok, Lock} ->
+            try 
+                {ok, Newest} = bitcask_nifs:increment_file_id(Keydir),
+
+                Filename = mk_filename(DirName, Newest),
+                ok = ensure_dir(Filename),
+
+                %% Check for o_sync strategy and add to opts
+                FinalOpts = 
+                    case bitcask:get_opt(sync_strategy, Opts) of
+                        o_sync ->
+                            [o_sync | Opts];
+                        _ ->
+                            Opts
+                    end,
+
+                {ok, FD} = bitcask_io:file_open(Filename, FinalOpts),
+                HintFD = open_hint_file(Filename, FinalOpts),
+                {ok, #filestate{mode = read_write,
+                                filename = Filename,
+                                tstamp = file_tstamp(Filename),
+                                hintfd = HintFD, fd = FD, ofs = 0}}
+            catch Error:Reason ->
+                    %% if we fail somehow, do we need to nuke any partial
+                    %% state?
+                    {Error, Reason}
+            after
+                bitcask_lockops:release(Lock)
+            end;
+        Else ->
+            Else
+    end.            
 
 get_create_lock(DirName) ->
     get_create_lock(DirName, 100).
@@ -112,7 +115,9 @@ get_create_lock(DirName, N) ->
         {ok, Lock} ->
             {ok, Lock};
         {error, locked} ->
-            get_create_lock(DirName, N - 1)
+            get_create_lock(DirName, N - 1);
+        {error, _} = Else ->
+            Else
     end.
    
     
@@ -161,9 +166,9 @@ close_hintfile(State = #filestate { hintfd = HintFd, hintcrc = HintCRC }) ->
     %% an older version of bitcask will just reject the record at the end of the
     %% hintfile and otherwise work normally.
     Iolist = hintfile_entry(<<>>, 0, 0, ?MAXOFFSET_V2, HintCRC),
-    ok = bitcask_io:file_write(HintFd, Iolist),
-    bitcask_io:file_sync(HintFd),
-    bitcask_io:file_close(HintFd),
+    _ = bitcask_io:file_write(HintFd, Iolist),
+    _ = bitcask_io:file_sync(HintFd),
+    _ = bitcask_io:file_close(HintFd),
     State#filestate { hintfd = undefined, hintcrc = 0 }.
 
 %% Build a list of {tstamp, filename} for all files in the directory that
@@ -183,9 +188,7 @@ data_file_tstamps(Dirname) ->
                               Acc
                       end
               end,
-              [], Files);
-        {error, Reason} ->
-            {error, Reason}
+              [], Files)
     end.
 
 %% @doc Use only after merging, to permanently delete a data file.
@@ -219,23 +222,28 @@ write(Filestate=#filestate{fd = FD, hintfd = HintFD,
               <<ValueSz:?VALSIZEFIELD>>, Key, Value],
     Bytes  = [<<(erlang:crc32(Bytes0)):?CRCSIZEFIELD>> | Bytes0],
     %% Store the full entry in the data file
-    ok = bitcask_io:file_pwrite(FD, Offset, Bytes),
-    %% Create and store the corresponding hint entry
-    TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
-    TombInt = case bitcask:is_tombstone(Value) of
-                  true  -> 1;
-                  false -> 0
-              end,
-    Iolist = hintfile_entry(Key, Tstamp, TombInt, Offset, TotalSz),
-    ok = bitcask_io:file_write(HintFD, Iolist),
-    %% Record our final offset
-    TotalSz = iolist_size(Bytes),
-    HintCRC = erlang:crc32(HintCRC0, Iolist), % compute crc of hint
-    {ok, Filestate#filestate{ofs = Offset + TotalSz,
-                             hintcrc = HintCRC,
-                             l_ofs = Offset,
-                             l_hbytes = iolist_size(Iolist),
-                             l_hintcrc = HintCRC0}, Offset, TotalSz}.
+    try
+        ok = bitcask_io:file_pwrite(FD, Offset, Bytes),
+        %% Create and store the corresponding hint entry
+        TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
+        TombInt = case bitcask:is_tombstone(Value) of
+                      true  -> 1;
+                      false -> 0
+                  end,
+        Iolist = hintfile_entry(Key, Tstamp, TombInt, Offset, TotalSz),
+        ok = bitcask_io:file_write(HintFD, Iolist),
+        %% Record our final offset
+        TotalSz = iolist_size(Bytes),
+        HintCRC = erlang:crc32(HintCRC0, Iolist), % compute crc of hint
+        {ok, Filestate#filestate{ofs = Offset + TotalSz,
+                                 hintcrc = HintCRC,
+                                 l_ofs = Offset,
+                                 l_hbytes = iolist_size(Iolist),
+                                 l_hintcrc = HintCRC0}, Offset, TotalSz}
+    catch
+        error:{badmatch,Error} ->
+            Error
+    end.
 
 %% WARNING: We can only undo the last write.
 un_write(Filestate=#filestate{fd = FD, hintfd = HintFD, 
