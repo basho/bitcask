@@ -336,8 +336,8 @@ fold_keys(#filestate{fd=Fd}=State, Fun, Acc, recovery, _, true) ->
             Acc0;
         {error, Reason} ->
             HintFile = hintfile_name(State),
-            error_logger:error_msg("Hintfile '~s' failed fold: ~p\n",
-                                   [HintFile, Reason]),
+            error_logger:warning_msg("Hintfile '~s' failed fold: ~p\n",
+                                     [HintFile, Reason]),
             fold_keys_loop(Fd, 0, Fun, Acc);
         Acc1 ->
             Acc1
@@ -590,9 +590,9 @@ fold_hintfile_loop(<<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
             fold_hintfile_loop(Rest, Fun, Acc, 
                                Consumed, Args, EOI);
         false ->
-            error_logger:error_msg("Hintfile '~s' contains pointer ~p ~p "
-                                   "that is greater than total data size ~p\n",
-                                   [HintFile, Offset, TotalSz, DataSize]),
+            error_logger:warning_msg("Hintfile '~s' contains pointer ~p ~p "
+                                     "that is greater than total data size ~p\n",
+                                     [HintFile, Offset, TotalSz, DataSize]),
             {error, {trunc_hintfile, Acc0}}
     end;
 %% error case where we've gotten to the end of the file without the CRC match
