@@ -344,8 +344,8 @@ fold_keys(#filestate{fd=Fd}=State, Fun, Acc, recovery, _, true) ->
     end;
 fold_keys(#filestate{fd=Fd}=State, Fun, Acc, recovery, _, false) ->
     HintFile = hintfile_name(State),
-    error_logger:error_msg("Hintfile '~s' invalid\n",
-                           [HintFile]),
+    error_logger:warning_msg("Hintfile '~s' invalid\n",
+                             [HintFile]),
     fold_keys_loop(Fd, 0, Fun, Acc).
 
 -spec mk_filename(string(), integer()) -> string().
