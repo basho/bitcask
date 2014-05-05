@@ -69,6 +69,15 @@ not_commands(Module, State) ->
   ?LET(Cmds, commands(Module, State),
     uncommand(Cmds)).
 
+gen_make_merge_file() ->
+    %% {true|false, Seed, Probability}
+    {
+      frequency([{100, false}, {109999, true}]),
+      noshrink({choose(0, 500), choose(0, 500), choose(0, 500)}),
+      %% weighting: use either 100% or 1-100%
+      frequency([{2, 100}, {8, choose(1, 100)}])
+    }.
+
 %% Command generator. S is the state.
 command(S) ->
   frequency(
@@ -94,7 +103,7 @@ command(S) ->
     %% race bugs, so keep doing it.
     [ {50, {call, ?MODULE, delete, [S#state.handle, key()]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
-    [ {2, {call, ?MODULE, bc_open, [S#state.is_writer]}}
+    [ {2, {call, ?MODULE, bc_open, [S#state.is_writer, gen_make_merge_file()]}}
       || S#state.handle == undefined ] ++
     [ {2, {call, ?MODULE, sync, [S#state.handle]}}
       || S#state.handle /= undefined ] ++
@@ -156,7 +165,7 @@ precondition(S, {call, _, kill, [Pid]}) ->
   (Pid == bitcask_merge_worker orelse lists:member(Pid, S#state.readers));
 precondition(S, {call, _, bc_close, [H]}) ->
   S#state.handle == H;
-precondition(S, {call, _, bc_open, [Writer]}) ->
+precondition(S, {call, _, bc_open, [Writer, _MakeMergeFile]}) ->
   %% The writer can open for reading but not the other way around.
   S#state.is_writer >= Writer andalso S#state.handle == undefined.
 
@@ -223,7 +232,7 @@ postcondition(_S, {call, _, needs_merge, _}, V) ->
     false          -> true;
     _              -> {needs_merge, V}
   end;
-postcondition(_S, {call, _, bc_open, [IsWriter]}, V) ->
+postcondition(_S, {call, _, bc_open, [IsWriter, _MakeMergeFile]}, V) ->
   case V of
     _ when is_reference(V) andalso IsWriter -> check_no_tombstones(V, true);
     _ when is_reference(V)                  -> true;
@@ -361,7 +370,9 @@ prop_pulse(LocalOrSlave, Verbose, KeepFiles) ->
       {badrpc, timeout} = Bad ->
         io:format(user, "GOT ~p, aborting.  Stop PULSE and restart!\n", [Bad]),
         exit({stopping, Bad});
-      {H, S, Res, PidRs, Trace, Schedule, Errors} ->
+      {H, S, Res, PidRs, Trace, Schedule, Errors0} ->
+        Errors = [E || E <- Errors0,
+                       re:run(element(2, E), "Invalid merge input") == nomatch],
         ?WHENFAIL(
           ?QC_FMT("\nState: ~p\n", [S]),
           aggregate(zipwith(fun command_data/2, Cmds, H),
@@ -422,7 +433,7 @@ prop_pulse_test_() ->
     end,
     io:format(user, "prop_pulse_test time: ~p + ~p seconds\n",
               [Timeout, ExtraTO]),
-    {timeout, (Timeout+ExtraTO),
+    {timeout, (Timeout+ExtraTO+30),             % 30 = a bit more fudge time
      fun() ->
              copy_bitcask_app(),
              ?assert(eqc:quickcheck(eqc:testing_time(Timeout,
@@ -785,8 +796,13 @@ fold_keys(H) ->
   ?LOG({fold_keys, H},
   ?CHECK_HANDLE(H, [], bitcask:fold_keys(H, fun(#bitcask_entry{key = Kb}, Ks) -> [un_nice_key(Kb)|Ks] end, []))).
 
-bc_open(Writer) ->
+bc_open(Writer, {MakeMergeFileP, Seed, Probability}) ->
   erlang:put(?BITCASK_TESTING_KEY, ?MODULE),
+    if MakeMergeFileP ->
+            make_merge_file(?BITCASK, Seed, Probability);
+       true ->
+            ok
+    end,
   ?LOG({open, Writer},
   case Writer of
     true  -> catch bitcask:open(?BITCASK, [read_write, {max_file_size, ?FILE_SIZE}, {open_timeout, 1234}]);
@@ -1089,6 +1105,23 @@ check_no_tombstones(Ref, Good) ->
             Good;
         Else ->
             {check_no_tombstones, Else}
+    end.
+
+make_merge_file(Dir, Seed, Probability) ->
+    random:seed(Seed),
+    case filelib:is_dir(Dir) of
+        true ->
+            DataFiles = filelib:wildcard("*.data", Dir),
+            {ok, FH} = file:open(Dir ++ "/merge.txt", [write]),
+            [case random:uniform(100) < Probability of
+                 true ->
+                     io:format(FH, "~s\n", [DF]);
+                 false ->
+                     ok
+             end || DF <- DataFiles],
+            ok = file:close(FH);
+        false ->
+            ok
     end.
 
 -endif.

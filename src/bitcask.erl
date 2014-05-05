@@ -608,8 +608,12 @@ merge1(Dirname, Opts, FilesToMerge0, ExpiredFiles) ->
                          end, InFiles2),
     InFileIds = sets:from_list([bitcask_fileops:file_tstamp(InFile)
                                || InFile <- InFiles]),
-    MinFileId = lists:min([bitcask_fileops:file_tstamp(F) ||
-                           F <- ReadableFiles]),
+    MinFileId = if ReadableFiles == [] ->
+                        1;
+                   true ->
+                        lists:min([bitcask_fileops:file_tstamp(F) ||
+                                      F <- ReadableFiles])
+                end,
 
     %% Initialize the other keydirs we need.
     {ok, DelKeyDir} = bitcask_nifs:keydir_new(),
@@ -679,7 +683,7 @@ consider_for_merge(FragTrigger, DeadBytesTrigger, ExpirationGraceTime) ->
 needs_merge(Ref) ->
     needs_merge(Ref, []).
 
--spec needs_merge(reference(), proplist:proplist()) -> {true, {[string()], [string()]}} | false.
+-spec needs_merge(reference(), proplists:proplist()) -> {true, {[string()], [string()]}} | false.
 needs_merge(Ref, Opts) ->
     State = get_state(Ref),
     {_KeyCount, Summary} = summary_info(Ref),
@@ -2977,7 +2981,10 @@ total_byte_stats_test() ->
     ?assertEqual(ExpFiles1, Files1),
     bitcask:close(B).
 
-merge_batch_test() ->
+merge_batch_test_() ->
+    {timeout, 100, fun merge_batch_test2/0}.
+
+merge_batch_test2() ->
     Dir = "/tmp/bc.merge.batch",
     % Create a valid Bitcask dir with files 10-20 present only
     DataSet = [{integer_to_binary(N), <<"data">>} || N <- lists:seq(1,20)],
