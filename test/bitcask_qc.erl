@@ -46,10 +46,10 @@ qc(P, TestTime) ->
     ?assert(eqc:quickcheck(?QC_OUT(eqc:testing_time(TestTime, P)))).
 
 keys() ->
-    eqc_gen:non_empty(list(eqc_gen:non_empty(binary()))).
+    eqc_gen:non_empty(list(noshrink(eqc_gen:non_empty(binary())))).
 
 values() ->
-    eqc_gen:non_empty(list(binary())).
+    eqc_gen:non_empty(list(noshrink(binary()))).
 
 ops(Keys, Values) ->
     {oneof([put, delete, itr, itr_next, itr_release]), oneof(Keys), oneof(Values)}.
@@ -158,11 +158,15 @@ prop_merge() ->
          ?FORALL({Ops, M1, M2}, {eqc_gen:non_empty(list(ops(Keys, Values))),
                                  choose(1,128), choose(1,128)},
                  begin
-                     ?cmd("rm -rf /tmp/bc.prop.merge"),
+                     Tm = tuple_to_list(now()),
+                     Dir = lists:flatten(
+                             io_lib:format(
+                               "/tmp/bc.prop.merge.~w.~w.~w", Tm)),
+                     ?cmd("rm -rf " ++ Dir),
 
                      %% Open a bitcask, dump the ops into it and build
                      %% a model of what SHOULD be in the data.
-                     Ref = bitcask:open("/tmp/bc.prop.merge",
+                     Ref = bitcask:open(Dir,
                                         [read_write, {max_file_size, M1}]),
                      try
                          {Model, Fstats} = apply_kv_ops(Ops, Ref, [], #m_fstats{}),
@@ -178,7 +182,7 @@ prop_merge() ->
                          proc_lib:spawn(
                            fun() ->
                                    try
-                                       Me ! bitcask:merge("/tmp/bc.prop.merge",
+                                       Me ! bitcask:merge(Dir,
                                                           [{max_file_size, M2}])
                                    catch
                                        _:Err ->
@@ -217,7 +221,8 @@ prop_merge() ->
                                         end
                                 end,
                      [Validate(Fname) || {_Ts, Fname} <-
-                                             bitcask_fileops:data_file_tstamps("/tmp/bc.prop.merge")],
+                                             bitcask_fileops:data_file_tstamps(Dir)],
+                     ?cmd("rm -rf " ++ Dir),
                      true
                  end)).
 
