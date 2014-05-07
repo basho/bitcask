@@ -78,6 +78,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
+-type errno_atom() :: atom().                   % POSIX errno as atom
+
 -spec init() ->
         ok | {error, any()}.
 -spec keydir_new() -> {ok, reference()}.
@@ -150,7 +152,7 @@
         {pread_error, integer()}.
 -spec lock_writedata(reference(), binary()) ->
         ok |
-        {ftruncate_error, integer()} | {pwrite_error, integer()} |
+        {ftruncate_error, errno_atom()} | {pwrite_error, errno_atom()} |
         {error, lock_not_writable}.
 
 init() ->
