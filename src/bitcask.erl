@@ -1633,7 +1633,7 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State,
                 size(Value)
         end,
     State2 =
-        case bitcask_fileops:check_write(WriteFile, Key, Value,
+        case bitcask_fileops:check_write(WriteFile, Key, ValSize,
                                          State#bc_state.max_file_size) of
             wrap ->
                 %% Time to start a new write file. Note that we do not
