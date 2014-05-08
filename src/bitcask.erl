@@ -518,12 +518,7 @@ merge(Dirname) ->
 %%      into a more compact form.
 -spec merge(Dirname::string(), Opts::[_]) -> ok | {error, any()}.
 merge(Dirname, Opts) ->
-    try
-        merge(Dirname, Opts, {readable_files(Dirname), []})
-    catch
-        Error:Reason ->
-            {error, {Error, Reason}}
-    end.
+    merge(Dirname, Opts, {readable_files(Dirname), []}).
 
 %% @doc Merge several data files within a bitcask datastore
 %%      into a more compact form.
@@ -552,13 +547,13 @@ merge(Dirname, Opts, {FilesToMerge0, ExpiredFiles0}) ->
         throw:Reason ->
             Reason;
         X:Y ->
-            {error, {generic_failure, X, Y}}
+            {error, {generic_failure, X, Y, erlang:get_stacktrace()}}
     end.
 
 %% Inner merge function, assumes that bitcask is running and all files exist.
 merge1(_Dirname, _Opts, [], []) ->
     ok;
-merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
+merge1(Dirname, Opts, FilesToMerge0, ExpiredFiles) ->
     KT = get_key_transform(get_opt(key_transform, Opts)),
 
     %% Try to lock for merging
@@ -585,7 +580,7 @@ merge1(Dirname, Opts, FilesToMerge, ExpiredFiles) ->
                                 {error, _}      -> skip
                             end
                         end
-                        || F <- FilesToMerge],
+                        || F <- FilesToMerge0],
             InFiles1 = [F || F <- InFiles0, F /= skip];
         {error, not_ready} ->
             %% Someone else is loading the keydir, or this cask isn't open. 
