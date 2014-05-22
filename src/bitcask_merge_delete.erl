@@ -165,7 +165,7 @@ multiple_merges_during_fold_body() ->
     CountSetuids = fun() ->
                            Fs = filelib:wildcard(Dir ++ "/*"),
                            length([F || F <- Fs,
-                                        bitcask:has_setuid_bit(F)])
+                                        bitcask:has_pending_delete_bit(F)])
                    end,
     PutSome(),
     Count1 = merge_until(Dir, 0, CountSetuids),

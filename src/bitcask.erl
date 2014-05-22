@@ -41,7 +41,7 @@
 -export([get_opt/2,
          get_filestate/2,
          is_tombstone/1]).
--export([has_setuid_bit/1]).                    % For EUnit tests
+-export([has_pending_delete_bit/1]).                    % For EUnit tests
 
 -include_lib("kernel/include/file.hrl").
 -include("bitcask.hrl").
@@ -684,7 +684,7 @@ merge1(Dirname, Opts, FilesToMerge0, ExpiredFiles) ->
     bitcask_fileops:close_all(State#mstate.input_files ++ ExpiredFilesFinished),
     {_, _, _, {IterGeneration, _, _, _}} = bitcask_nifs:keydir_info(LiveKeyDir),
     FileNames = [F#filestate.filename || F <- State1#mstate.delete_files ++ ExpiredFilesFinished],
-    _ = [catch set_setuid_bit(F) || F <- FileNames],
+    _ = [catch set_pending_delete_bit(F) || F <- FileNames],
     bitcask_merge_delete:defer_delete(Dirname, IterGeneration, FileNames),
 
     %% Explicitly release our keydirs instead of waiting for GC
@@ -1612,7 +1612,7 @@ readable_and_setuid_files(Dirname) ->
     %% Filter out files with setuid bit set: they've been marked for
     %% deletion by an earlier *successful* merge.
     Fs = [F || F <- list_data_files(Dirname, WritingFile, MergingFile)],
-    lists:partition(fun(F) -> not has_setuid_bit(F) end, Fs).
+    lists:partition(fun(F) -> not has_pending_delete_bit(F) end, Fs).
 
 %% Internal put - have validated that the file is opened for write
 %% and looked up the state at this point
@@ -1777,16 +1777,31 @@ wrap_write_file(#bc_state{write_file = WriteFile} = State) ->
             throw({unrecoverable, Error, State})
     end.
 
-set_setuid_bit(File) ->
+%% Versions of Bitcask prior to
+%% https://github.com/basho/bitcask/pull/156 used the setuid bit to
+%% indicate that the data file has been deleted logically and is
+%% waiting for a physical delete from the 'bitcask_merge_delete' server.
+%%
+%% However, with PR 156, we change the lifecycle of a .data file: it's
+%% possible to append tombstones during a merge to a file that is
+%% pending deletion.  If that happens, the file system will clear the
+%% setuid bit when the first append happens.  That's not good.
+%%
+%% Going forward, instead of using the setuid bit for pending delete
+%% status, we'll use the 8#001 execution permission bit.
+%% For backward compatibility, has_pending_delete_bit() will check for
+%% both the old pending bit, 8#40000 (setuid), as well as 8#0001.
+
+set_pending_delete_bit(File) ->
     %% We're intentionally opinionated about pattern matching here.
     {ok, FI} = bitcask_fileops:read_file_info(File),
-    NewFI = FI#file_info{mode = FI#file_info.mode bor 8#4000},
+    NewFI = FI#file_info{mode = FI#file_info.mode bor 8#0001},
     ok = bitcask_fileops:write_file_info(File, NewFI).
 
-has_setuid_bit(File) ->
+has_pending_delete_bit(File) ->
     try
         {ok, FI} = bitcask_fileops:read_file_info(File),
-        FI#file_info.mode band 8#4000 == 8#4000
+        FI#file_info.mode band 8#4001 /= 0
     catch _:_ ->
             false
     end.
@@ -1797,7 +1812,7 @@ purge_setuid_files(Dirname) ->
             try
                 StaleFs = [F || F <- list_data_files(Dirname,
                                                      undefined, undefined),
-                                has_setuid_bit(F)],
+                                has_pending_delete_bit(F)],
                 _ = [bitcask_fileops:delete(#filestate{filename = F}) ||
                         F <- StaleFs],
                 if StaleFs == [] ->
