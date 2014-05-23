@@ -34,7 +34,7 @@ pr156_regression2_test_() ->
      end}.
 
 pr156_regression1(X) ->
-    io:format(user, "pr156_regression1 ~p at ~p\n", [X, now()]),
+    io:format("pr156_regression1 ~p at ~p\n", [X, now()]),
     os:cmd("rm -rf " ++ ?BITCASK),
     V3 = goo({call,bitcask_pulse,bc_open,[true]}),
     _V7 = goo({call,bitcask_pulse,puts,[V3,{1,6},<<0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0>>]}),
@@ -53,8 +53,15 @@ pr156_regression1(X) ->
     ?assertEqual([3,4,5,6,7,8,9], Res),
     ok.
 
+%% !@#$!@%!, this is really irritating.  pr156_regression2() fails
+%% consistently on my MBP + SSD if bitcask:merge_single_entry() is
+%% buggy.  But if that same bug is present, pr156_regression2() passes
+%% on a slower machine.  Ditto for buildbot.  {sigh}
+%% My MBP executes each of the N iterations in about 200-300 msec.
+%% r1s11.bos1 executes each of N iterations in about 1500 msec.
+
 pr156_regression2(X) ->
-    io:format(user, "pr156_regression1 ~p at ~p\n", [X, now()]),
+    io:format("pr156_regression2 ~p at ~p\n", [X, now()]),
     os:cmd("rm -rf " ++ ?BITCASK),
     V1 = goo({call,bitcask_pulse,bc_open,[true,{true,{413,255,375},100}]}),
     _V3 = goo({call,bitcask_pulse,puts,[V1,{1,8},<<0,0,0,0,0>>]}),
@@ -74,6 +81,7 @@ pr156_regression2(X) ->
     _V93 = goo({call,bitcask_pulse,bc_close,[V84]}),
     V95 = goo({call,bitcask_pulse,bc_open,[true,{true,{190,6,52},1}]}),
     [not_found,not_found] = goo({call,bitcask_pulse,gets,[V95,{1,2}]}),
+    _V100 = goo({call,bitcask_pulse,bc_close,[V95]}),
     ok.
 
 nice_key(K) ->

@@ -1328,8 +1328,11 @@ merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
                      false,
                      [State#mstate.live_keydir, State#mstate.del_keydir]) of
         true ->
-            % Value in keydir is newer, so drop
-            State;
+            %% Value in keydir is newer, so drop ... except! ...
+            %% We aren't done yet: V might be a tombstone, which means
+            %% that we might have to merge it forward.  The func below
+            %% is safe (does nothing) if V is not really a tombstone.
+            merge_single_tombstone(K,V, Tstamp, FileId, Offset, State);
         expired ->
             %% Note: we drop a tombstone if it expired. Under normal
             %% circumstances it's OK as any value older than that has expired
@@ -1345,71 +1348,8 @@ merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
                                        Tstamp, FileId, Offset),
             State;
         not_found ->
-            % First tombstone seen for this key during this merge
-            case tombstone_context(V) of
-                undefined ->
-                    % Version 1 tombstone, no info on deleted value
-                    % Not in keydir and not already deleted.
-                    % Remember we deleted this already during this merge.
-                    ok = bitcask_nifs:keydir_put(State#mstate.del_keydir, K,
-                                                 FileId, 0, Offset, Tstamp,
-                                                 bitcask_time:tstamp()),
-                    case State#mstate.merge_coverage of
-                        partial ->
-                            V2 = <<?TOMBSTONE1_STR, FileId:32>>,
-                            % Merging only some files, forward tombstone
-                            inner_merge_write(K, V2, Tstamp, FileId, Offset,
-                                              State);
-                        _ ->
-                            % Full or prefix merge, so safe to drop tombstone
-                            State
-                    end;
-                {before, OldFileId} ->
-                    case State#mstate.min_file_id > OldFileId of
-                        true ->
-                            State;
-                        false ->
-                            inner_merge_write(K, V, Tstamp, FileId, Offset,
-                                              State)
-                    end;
-                {at, OldFileId} ->
-                    % Tombstone has info on deleted value
-                    case sets:is_element(OldFileId,
-                                         State#mstate.input_file_ids) of
-                        true ->
-                            % Merge will waste the original value too. Drop it.
-                            State;
-                        false ->
-                            % Append to original file
-                            case get_filestate(OldFileId, State) of
-                                {error, enoent} ->
-                                    % Original file is gone, safe to drop
-                                    State;
-                                {TFile,
-                                 State2 = #mstate{tombstone_write_files=TFiles}} ->
-                                    % Original file still around, append to it
-                                    {ok, TFile2, _, TSize} =
-                                        bitcask_fileops:write(TFile, K, V,
-                                                              Tstamp),
-                                    ok = bitcask_nifs:update_fstats(
-                                           State#mstate.live_keydir,
-                                           OldFileId, Tstamp,
-                                           _LiveKeys = 0,
-                                           _TotalKeysIncr = 0,
-                                           _LiveIncr = 0,
-                                           _TotalIncr = TSize),
-                                    TFiles2 = lists:keyreplace(
-                                                TFile#filestate.filename,
-                                                #filestate.filename,
-                                                TFiles,
-                                                TFile2),
-                                    State2#mstate{tombstone_write_files=TFiles2}
-                            end
-                    end;
-                no_tombstone ->
-                    % Regular value not currently in keydir, ignore
-                    State
-            end;
+            %% First tombstone seen for this key during this merge
+            merge_single_tombstone(K,V, Tstamp, FileId, Offset, State);
         false ->
             % Either a current value or a tombstone with nothing in the keydir
             % but an entry in the del keydir because we've seen another during
@@ -1433,6 +1373,72 @@ merge_single_entry(K, V, Tstamp, FileId, {_, _, Offset, _} = Pos, State) ->
                     ok = bitcask_nifs:keydir_remove(State#mstate.del_keydir, K),
                     inner_merge_write(K, V, Tstamp, FileId, Offset, State)
             end
+    end.
+
+merge_single_tombstone(K,V, Tstamp, FileId, Offset, State) ->
+    case tombstone_context(V) of
+        undefined ->
+            %% Version 1 tombstone, no info on deleted value
+            %% Not in keydir and not already deleted.
+            %% Remember we deleted this already during this merge.
+            ok = bitcask_nifs:keydir_put(State#mstate.del_keydir, K,
+                                         FileId, 0, Offset, Tstamp,
+                                         bitcask_time:tstamp()),
+            case State#mstate.merge_coverage of
+                partial ->
+                    V2 = <<?TOMBSTONE1_STR, FileId:32>>,
+                    %% Merging only some files, forward tombstone
+                    inner_merge_write(K, V2, Tstamp, FileId, Offset,
+                                      State);
+                _ ->
+                    %% Full or prefix merge, so safe to drop tombstone
+                    State
+            end;
+        {before, OldFileId} ->
+            case State#mstate.min_file_id > OldFileId of
+                true ->
+                    State;
+                false ->
+                    inner_merge_write(K, V, Tstamp, FileId, Offset,
+                                      State)
+            end;
+        {at, OldFileId} ->
+            %% Tombstone has info on deleted value
+            case sets:is_element(OldFileId,
+                                 State#mstate.input_file_ids) of
+                true ->
+                    %% Merge will waste the original value too. Drop it.
+                    State;
+                false ->
+                    %% Append to original file
+                    case get_filestate(OldFileId, State) of
+                        {error, enoent} ->
+                            %% Original file is gone, safe to drop
+                            State;
+                        {TFile,
+                         State2 = #mstate{tombstone_write_files=TFiles}} ->
+                            %% Original file still around, append to it
+                            {ok, TFile2, _, TSize} =
+                                bitcask_fileops:write(TFile, K, V,
+                                                      Tstamp),
+                            ok = bitcask_nifs:update_fstats(
+                                   State#mstate.live_keydir,
+                                   OldFileId, Tstamp,
+                                   _LiveKeys = 0,
+                                   _TotalKeysIncr = 0,
+                                   _LiveIncr = 0,
+                                   _TotalIncr = TSize),
+                            TFiles2 = lists:keyreplace(
+                                        TFile#filestate.filename,
+                                        #filestate.filename,
+                                        TFiles,
+                                        TFile2),
+                            State2#mstate{tombstone_write_files=TFiles2}
+                    end
+            end;
+        no_tombstone ->
+            %% Regular value not currently in keydir, ignore
+            State
     end.
 
 -spec inner_merge_write(binary(), binary(), integer(), integer(), integer(),
