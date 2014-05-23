@@ -24,10 +24,17 @@ pr156_regression1_test_() ->
     %% unlikely race with the 'bitcask_merge_delete' server.
     {timeout, 120,
      fun() ->
-             [ok = pr156_regression1() || _ <- lists:seq(1,5)]
+             [ok = pr156_regression1(X) || X <- lists:seq(1,5)]
      end}.
 
-pr156_regression1() ->
+pr156_regression2_test_() ->
+    {timeout, 120,
+     fun() ->
+             [ok = pr156_regression2(X) || X <- lists:seq(1,5)]
+     end}.
+
+pr156_regression1(X) ->
+    io:format(user, "pr156_regression1 ~p at ~p\n", [X, now()]),
     os:cmd("rm -rf " ++ ?BITCASK),
     V3 = goo({call,bitcask_pulse,bc_open,[true]}),
     _V7 = goo({call,bitcask_pulse,puts,[V3,{1,6},<<0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0>>]}),
@@ -46,6 +53,29 @@ pr156_regression1() ->
     ?assertEqual([3,4,5,6,7,8,9], Res),
     ok.
 
+pr156_regression2(X) ->
+    io:format(user, "pr156_regression1 ~p at ~p\n", [X, now()]),
+    os:cmd("rm -rf " ++ ?BITCASK),
+    V1 = goo({call,bitcask_pulse,bc_open,[true,{true,{413,255,375},100}]}),
+    _V3 = goo({call,bitcask_pulse,puts,[V1,{1,8},<<0,0,0,0,0>>]}),
+    _V8 = goo({call,bitcask_pulse,bc_close,[V1]}),
+    V15 = goo({call,bitcask_pulse,bc_open,[true,{true,{133,23,388},1}]}),
+    _V21 = goo({call,bitcask_pulse,puts,[V15,{1,20},<<0,0,0,0,0>>]}),
+    _V43 = goo({call,bitcask_pulse,merge,[V15]}),
+    _V46 = goo({call,bitcask_pulse,puts,[V15,{1,2},<<0,0,0,0,0,0,0,0,0,0,0,0>>]}),
+    _V49 = goo({call,bitcask_pulse,bc_close,[V15]}),
+    V50 = goo({call,bitcask_pulse,bc_open,[true,{true,{414,120,104},4}]}),
+    _V51 = goo({call,bitcask_pulse,delete,[V50,1]}),
+    _V52 = goo({call,bitcask_pulse,merge,[V50]}),
+    _V56 = goo({call,bitcask_pulse,delete,[V50,2]}),
+    _V60 = goo({call,bitcask_pulse,bc_close,[V50]}),
+    V84 = goo({call,bitcask_pulse,bc_open,[true,{true,{291,81,8},40}]}),
+    _V90 = goo({call,bitcask_pulse,merge,[V84]}),
+    _V93 = goo({call,bitcask_pulse,bc_close,[V84]}),
+    V95 = goo({call,bitcask_pulse,bc_open,[true,{true,{190,6,52},1}]}),
+    [not_found,not_found] = goo({call,bitcask_pulse,gets,[V95,{1,2}]}),
+    ok.
+
 nice_key(K) ->
     list_to_binary(io_lib:format("kk~2.2.0w", [K])).
 
@@ -54,6 +84,9 @@ un_nice_key(<<"kk", Num:2/binary>>) ->
 
 put(H, K, V) ->
   ok = bitcask:put(H, nice_key(K), V).
+
+get(H, K) ->
+  bitcask:get(H, nice_key(K)).
 
 needs_merge_wrapper(H) ->
     case check_no_tombstones(H, ok) of
@@ -92,6 +125,13 @@ make_merge_txt(Dir, Seed, Probability) ->
 
 goo({_, _, bc_open, [_ReadWrite]}) ->
     bitcask:open(?BITCASK, [read_write, {max_file_size, ?FILE_SIZE}, {open_timeout, 1234}]);
+goo({_, _, bc_open, [_ReadWrite,{DoMergeP,X,Y}]}) ->
+    if DoMergeP ->
+            make_merge_txt(?BITCASK, X, Y);
+       true ->
+            ok
+    end,
+    bitcask:open(?BITCASK, [read_write, {max_file_size, ?FILE_SIZE}, {open_timeout, 1234}]);
 goo({_, _, bc_close, [H]}) ->
     bitcask:close(H);
 goo({_, _, puts, [H, {K1, K2}, V]}) ->
@@ -99,6 +139,8 @@ goo({_, _, puts, [H, {K1, K2}, V]}) ->
     [ok]  -> ok;
     Other -> throw({line, ?LINE, Other})
   end;
+goo({_, _, gets, [H, {Start, End}]}) ->
+    [get(H, K) || K <- lists:seq(Start, End)];
 goo({_, _, delete, [H, K]}) ->
     ok = bitcask:delete(H, nice_key(K));
 goo({_, _, merge, [H]}) ->
