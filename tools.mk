@@ -1,5 +1,6 @@
-test: compile
-	./rebar eunit skip_deps=true
+# For Bitcask's use, don't include 'test' target here in tools.mk
+#test: compile
+#	./rebar eunit skip_deps=true
 
 docs:
 	./rebar doc skip_deps=true
