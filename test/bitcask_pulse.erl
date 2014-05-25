@@ -70,13 +70,13 @@ not_commands(Module, State) ->
     uncommand(Cmds)).
 
 gen_make_merge_file() ->
-    %% {true|false, Seed, Probability}
-    {
-      frequency([{100, false}, {109999, true}]),
-      noshrink({choose(0, 500), choose(0, 500), choose(0, 500)}),
-      %% weighting: use either 100% or 1-100%
-      frequency([{2, 100}, {8, choose(1, 100)}])
-    }.
+    noshrink(
+      %% {true|false, Seed, Probability}
+      {frequency([{100, false}, {109999, true}]),
+       {choose(0, 500), choose(0, 500), choose(0, 500)},
+       %% weighting: use either 100% or 1-100%
+       frequency([{2, 100}, {8, choose(1, 100)}])
+      }).
 
 %% Command generator. S is the state.
 command(S) ->
@@ -433,7 +433,7 @@ prop_pulse_test_() ->
     end,
     io:format(user, "prop_pulse_test time: ~p + ~p seconds\n",
               [Timeout, ExtraTO]),
-    {timeout, (Timeout+ExtraTO+30),             % 30 = a bit more fudge time
+    {timeout, (Timeout+ExtraTO+120),     % 120 = a bit more fudge time
      fun() ->
              copy_bitcask_app(),
              ?assert(eqc:quickcheck(eqc:testing_time(Timeout,
