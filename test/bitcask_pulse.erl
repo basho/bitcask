@@ -234,7 +234,7 @@ postcondition(_S, {call, _, needs_merge, _}, V) ->
   end;
 postcondition(_S, {call, _, bc_open, [IsWriter, _MakeMergeFile]}, V) ->
   case V of
-    _ when is_reference(V) andalso IsWriter -> check_no_tombstones(V, true);
+    _ when is_reference(V) andalso IsWriter -> true; %% check_no_tombstones(V, true);
     _ when is_reference(V)                  -> true;
     {'EXIT', {{badmatch,{error,enoent}},_}} -> true;
     %% If we manage to get a timeout, there's a pathological scheduling
@@ -673,7 +673,8 @@ command_data({set, _, {call, _, bc_open, _}}, {_S, V}) ->
 command_data({set, _, {call, _, needs_merge, _}}, {_S, V}) ->
   case V of
     {true, _} -> {needs_merge, true};
-    false     -> {needs_merge, false}
+    false     -> {needs_merge, false};
+    Else      -> {needs_merge, Else}
   end;
 command_data({set, _, {call, _, kill, [Pid]}}, {_S, _V}) ->
   case Pid of
@@ -772,7 +773,7 @@ needs_merge(H) ->
   ?CHECK_HANDLE(H, false, needs_merge_wrapper(H))).
 
 needs_merge_wrapper(H) ->
-    case check_no_tombstones(H, ok) of
+    case ok of %% check_no_tombstones(H, ok) of
         ok ->
             bitcask:needs_merge(H);
         Else ->
@@ -1097,15 +1098,38 @@ mangle_temporal_relation_with_finite_time([{Start, infinity, [_|_]=L}]) ->
 mangle_temporal_relation_with_finite_time([H|T]) ->
     [H|mangle_temporal_relation_with_finite_time(T)].
 
-check_no_tombstones(Ref, Good) ->
-    Res = bitcask:fold_keys(Ref, fun(K, Acc0) -> [K|Acc0] end,
-                            [], -1, -1, true),
-    case [X || {tombstone, _} = X <- Res] of
-        [] ->
-            Good;
-        Else ->
-            {check_no_tombstones, Else}
-    end.
+%% This version of check_no_tombstones() plus the fold_keys
+%% implementation has a flaw that this QuickCheck model isn't smart
+%% enough to figure out:
+%% * if there's another fold/fold_keys that's happening in parallel
+%%   to this fold, and
+%% * if key K already exists with some value V
+%% * if they keydir has been frozen, and
+%% * if key K has later been deleted,
+%%
+%% ... then this fold will return {K, V} in its results, and the
+%% fold's SeeTombstonesP will cause it to do a get(V) which
+%% will return not_found, then fold/fold_keys will invent a
+%% {tombstone, ...} tuple to be folded.
+%%
+%% Once upon a time, a version of bitcask_pulse.erl checked to see
+%% (after the test case had finished) if there were folds running in
+%% parallel: if so, then certain model failures were ignored because
+%% they were assumed to be caused by a frozen keydir plus multiple
+%% folds.  I've elected not to put that kind of check back into this
+%% model.  Instead, I believe that Bitcask's internal use of the
+%% keydir is now at a good point where check_no_tombstones() isn't
+%% necessary now.
+
+%% check_no_tombstones(Ref, Good) ->
+%%     Res = bitcask:fold_keys(Ref, fun(K, Acc0) -> [K|Acc0] end,
+%%                             [], -1, -1, true),
+%%     case [X || {tombstone, _} = X <- Res] of
+%%         [] ->
+%%             Good;
+%%         Else ->
+%%             {check_no_tombstones, Else}
+%%     end.
 
 make_merge_file(Dir, Seed, Probability) ->
     random:seed(Seed),
