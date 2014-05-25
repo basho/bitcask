@@ -140,6 +140,8 @@ precondition(_S, {call, _, incr_clock, _}) ->
   true;
 precondition(S, {call, _, gets, [H, _]}) ->
   S#state.handle == H;
+precondition(S, {call, _, get, [H, _]}) ->
+  S#state.handle == H;
 precondition(S, {call, _, puts, [H, _, _]}) ->
   S#state.is_writer andalso S#state.handle == H;
 precondition(S, {call, _, put, [H, _, _]}) ->
