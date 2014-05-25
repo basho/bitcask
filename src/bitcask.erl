@@ -1679,18 +1679,19 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State,
                     State3 = wrap_write_file(State2),
                     do_put(Key, Value, State3, Retries - 1, already_exists);
                     
-                #bitcask_entry{file_id=OldFileId}
-                  when OldFileId < WriteFileId ->
+                #bitcask_entry{file_id=OldFileId,offset=OldOffset}
+                  when OldFileId =< WriteFileId ->
                     PrevTombstone = <<?TOMBSTONE2_STR, OldFileId:32>>,
                     {ok, WriteFile1, _, _} =
                         bitcask_fileops:write(WriteFile0, Key, PrevTombstone,
                                               Tstamp),
                     State3 = State2#bc_state{write_file = WriteFile1},
-                    write_and_keydir_put(State3, Key, Value, Tstamp, Retries);
-
+                    write_and_keydir_put(State3, Key, Value, Tstamp, Retries,
+                                         bitcask_time:tstamp(), OldFileId, OldOffset);
                 _ ->
                     State3 = State2#bc_state{write_file = WriteFile0},
-                    write_and_keydir_put(State3, Key, Value, Tstamp, Retries)
+                    write_and_keydir_put(State3, Key, Value, Tstamp, Retries,
+                                         bitcask_time:tstamp(), 0, 0)
             end;
 
         tombstone ->
@@ -1735,14 +1736,15 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State,
             end
     end.
 
-write_and_keydir_put(State2, Key, Value, Tstamp, Retries) ->
+write_and_keydir_put(State2, Key, Value, Tstamp, Retries, NowTstamp, OldFileId, OldOffset) ->
     case bitcask_fileops:write(State2#bc_state.write_file,
                                Key, Value, Tstamp) of
         {ok, WriteFile2, Offset, Size} ->
             case bitcask_nifs:keydir_put(State2#bc_state.keydir, Key,
                                          bitcask_fileops:file_tstamp(WriteFile2),
                                          Size, Offset, Tstamp,
-                                         bitcask_time:tstamp(), true) of
+                                         NowTstamp, true,
+                                         OldFileId, OldOffset) of
                 ok ->
                     {ok, State2#bc_state { write_file = WriteFile2 }};
                 already_exists ->

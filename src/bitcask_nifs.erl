@@ -28,6 +28,7 @@
          keydir_put/7,
          keydir_put/8,
          keydir_put/9,
+         keydir_put/10,
          keydir_get/2,
          keydir_get/3,
          keydir_get_epoch/1,
