@@ -802,7 +802,7 @@ fold_keys(H) ->
 bc_open(Writer, {MakeMergeFileP, Seed, Probability}) ->
   erlang:put(?BITCASK_TESTING_KEY, ?MODULE),
     if MakeMergeFileP ->
-            make_merge_file(?BITCASK, Seed, Probability);
+            bitcask:make_merge_file(?BITCASK, Seed, Probability);
        true ->
             ok
     end,
@@ -1132,22 +1132,5 @@ mangle_temporal_relation_with_finite_time([H|T]) ->
 %%         Else ->
 %%             {check_no_tombstones, Else}
 %%     end.
-
-make_merge_file(Dir, Seed, Probability) ->
-    random:seed(Seed),
-    case filelib:is_dir(Dir) of
-        true ->
-            DataFiles = filelib:wildcard("*.data", Dir),
-            {ok, FH} = file:open(Dir ++ "/merge.txt", [write]),
-            [case random:uniform(100) < Probability of
-                 true ->
-                     io:format(FH, "~s\n", [DF]);
-                 false ->
-                     ok
-             end || DF <- DataFiles],
-            ok = file:close(FH);
-        false ->
-            ok
-    end.
 
 -endif.

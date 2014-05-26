@@ -3178,4 +3178,21 @@ legacy_tombstones_test() ->
     bitcask:close(B),
     ?assertEqual([Last], AllFiles3).
 
+make_merge_file(Dir, Seed, Probability) ->
+    random:seed(Seed),
+    case filelib:is_dir(Dir) of
+        true ->
+            DataFiles = filelib:wildcard("*.data", Dir),
+            {ok, FH} = file:open(Dir ++ "/merge.txt", [write]),
+            [case random:uniform(100) < Probability of
+                 true ->
+                     io:format(FH, "~s\n", [DF]);
+                 false ->
+                     ok
+             end || DF <- DataFiles],
+            ok = file:close(FH);
+        false ->
+            ok
+    end.
+
 -endif.
