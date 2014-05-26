@@ -132,7 +132,7 @@ postcondition(_OldSt, _NewSt, _S, {call, _, _Func, _Args}, _Res) ->
 
 qc_test_() ->
     TestTime = 45,
-    {timeout, TestTime*2,
+    {timeout, TestTime*4,
      {setup, fun prepare/0, fun cleanup/1,
       %% Run for one second without FI to allow code loader to load everything
       %% without interference from artificial faults.
