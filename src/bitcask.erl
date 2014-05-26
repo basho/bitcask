@@ -1946,7 +1946,8 @@ write_lock_perms_test() ->
     B = bitcask:open("/tmp/bc.test.writelockperms", [read_write]),
     ok = bitcask:put(B, <<"k">>, <<"v">>),
     {ok, Info} = file:read_file_info("/tmp/bc.test.writelockperms/bitcask.write.lock"),
-    ?assertEqual(8#00600, Info#file_info.mode band 8#00600).
+    ?assertEqual(8#00600, Info#file_info.mode band 8#00600),
+    ok = bitcask:close(B).
 
 list_data_files_test() ->
     os:cmd("rm -rf /tmp/bc.test.list; mkdir -p /tmp/bc.test.list"),
@@ -2225,7 +2226,8 @@ open_test() ->
     B = bitcask:open("/tmp/bc.test.open"),
     lists:foldl(fun({K, V}, _) ->
                         {ok, V} = bitcask:get(B, K)
-                end, undefined, default_dataset()).
+                end, undefined, default_dataset()),
+    ok = bitcask:close(B).
 
 wrap_test() ->
     %% Initialize dataset with max_file_size set to 1 so that each file will
@@ -2242,8 +2244,8 @@ wrap_test() ->
 
     %% Finally, verify that there are 3 files currently opened for read
     %% (one for each key)
-    3 = length(readable_files("/tmp/bc.test.wrap")).
-
+    3 = length(readable_files("/tmp/bc.test.wrap")),
+    ok = bitcask:close(B).
 
 merge_test() ->
     %% Initialize dataset with max_file_size set to 1 so that each file will
@@ -2270,7 +2272,8 @@ merge_test() ->
     lists:foldl(fun({K, V}, _) ->
                         R = bitcask:get(B, K),
                         ?assertEqual({K, {ok, V}}, {K, R})
-                end, undefined, default_dataset()).
+                end, undefined, default_dataset()),
+    ok = bitcask:close(B).
 
 bitfold_test() ->
     os:cmd("rm -rf /tmp/bc.test.bitfold"),
@@ -2576,6 +2579,7 @@ frag_status_test() ->
     B2 = bitcask:open("/tmp/bc.test.fragtest", [read_write]),
     {1,[{_,50,16,32}]} = bitcask:status(B2),
     %% 1 key, 50% frag, 16 dead bytes, 32 total bytes
+    ok = bitcask:close(B2),
     ok.
 
 truncated_datafile_test() ->
@@ -2588,12 +2592,13 @@ truncated_datafile_test() ->
     ok = bitcask:close(B1),
 
     [DataFile|_] = filelib:wildcard(Dir ++ "/*.data"),
-    truncate_file(DataFile, 512),
+    truncate_file(DataFile, 540),
 
     % close and reopen so that status can reflect a closed file
     B2 = bitcask:open(Dir, [read_write]),
 
-    {1, [{_, _, _, 513}]} = bitcask:status(B2),
+    {1, [{_, _, _, _}]} = bitcask:status(B2),
+    ok = bitcask:close(B2),
     ok.
 
 trailing_junk_big_datafile_test() ->
@@ -2677,7 +2682,8 @@ truncated_merge_test() ->
                 end, undefined, BadData),
     lists:foldl(fun({K, V} = KV, _) ->
                         {KV, {ok, V}} = {KV, bitcask:get(B, K)}
-                end, undefined, GoodData).
+                end, undefined, GoodData),
+    ok = bitcask:close(B).
 
 truncate_file(Path, Offset) ->
     {ok, FH} = file:open(Path, [read, write]),
@@ -3002,7 +3008,8 @@ no_tombstones_after_reopen_test2(DeleteHintFilesP) ->
     ?assertNotEqual([], [X || {tombstone, _} = X <- Res1]),
 
     Res2 = bitcask:fold_keys(B2, fun(K, Acc0) -> [K|Acc0] end, [], -1, -1, true),
-    ?assertEqual([], [X || {tombstone, _} = X <- Res2]).
+    ?assertEqual([], [X || {tombstone, _} = X <- Res2]),
+    ok = bitcask:close(B2).
 
 update_tstamp_stats_test() ->
     Dir = "/tmp/bc.tstamp.stats",
