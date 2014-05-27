@@ -871,12 +871,11 @@ static void find_keydir_entry(bitcask_keydir* keydir, ErlNifBinary* key,
 
 static void update_kd_entry_list(bitcask_keydir_entry *old,
                                  bitcask_keydir_entry_proxy *new,
-                                 uint64_t newest_folder) {
+                                 int iterating_p) {
     bitcask_keydir_entry_head* h = GET_ENTRY_LIST_POINTER(old);
     bitcask_keydir_entry_sib* new_sib;
 
-    //if we're a write newer than the newest folder, just fold in
-    if (newest_folder < h->sibs->epoch)
+    if (! iterating_p)
     {
         new_sib = h->sibs;
 
@@ -951,8 +950,8 @@ void print_entry_list(bitcask_keydir_entry *e)
     bitcask_keydir_entry_sib
         *s = h->sibs;
     while (s != NULL) {
-        fprintf(stderr, "sib %d \r\n\t%u\t\t%u\r\n\t%llu\t\t%u\r\n\r\n",
-                sib_count, s->file_id, s->total_sz, (unsigned long long)s->offset, s->tstamp);
+        fprintf(stderr, "sib %d \r\n\t%u\t\t%u\r\n\t%llu\t\t%u\tepoch=%u\r\n\r\n",
+                sib_count, s->file_id, s->total_sz, (unsigned long long)s->offset, s->tstamp, s->epoch);
         sib_count++;
         s = s->next;
         if( s == NULL )
@@ -971,8 +970,8 @@ void print_entry(bitcask_keydir_entry *e)
     fprintf(stderr, "entry %p key: %d keylen %d\r\n",
             e, (int)e->key[3], e->key_sz);
 
-    fprintf(stderr, "\r\n\t%u\t\t%u\r\n\t%llu\t\t%u\r\n\r\n",
-            e->file_id, e->total_sz, (unsigned long long)e->offset, e->tstamp);
+    fprintf(stderr, "\r\n\t%u\t\t%u\r\n\t%llu\t\t%u\tepoch=%u\r\n\r\n",
+            e->file_id, e->total_sz, (unsigned long long)e->offset, e->tstamp, e->epoch);
 }
 
 void print_keydir(bitcask_keydir* keydir)
@@ -1093,7 +1092,7 @@ static void update_entry(bitcask_keydir* keydir,
         if (is_entry_list)
         {
             // Add to list of values during iteration
-            update_kd_entry_list(cur_entry, upd_entry, keydir->newest_folder);
+            update_kd_entry_list(cur_entry, upd_entry, iterating);
         }
         else
         {
@@ -1238,7 +1237,7 @@ static void set_entry_tombstone(bitcask_keydir* keydir, khiter_t itr,
     else
     {
         //need to update the entry list with a tombstone
-        update_kd_entry_list(entry, &tombstone, keydir->newest_folder);
+        update_kd_entry_list(entry, &tombstone, keydir->keyfolders > 0);
     }
 }
 
