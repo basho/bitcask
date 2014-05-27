@@ -3104,7 +3104,10 @@ merge_batch_test2() ->
         bitcask:close(B)
     end.
 
-max_merge_size_test() ->
+max_merge_size_test_() ->
+    {timeout, 120, fun max_merge_size_test2/0}.
+
+max_merge_size_test2() ->
     Dir = "/tmp/bc.max.merge.size",
     % Generate 10 objects roughly 100 bytes each, one per file
     DataSet = [{<<N:32>>, <<0:100/integer-unit:8>>} || N <- lists:seq(1, 10)],
