@@ -3186,10 +3186,10 @@ make_merge_file(Dir, Seed, Probability) ->
     case filelib:is_dir(Dir) of
         true ->
             DataFiles = filelib:wildcard("*.data", Dir),
-            {ok, FH} = file:open(Dir ++ "/merge.txt", [write]),
+            {ok, FH} = file:open(Dir ++ "/merge.txt", [write,raw]),
             [case random:uniform(100) < Probability of
                  true ->
-                     io:format(FH, "~s\n", [DF]);
+                     file:write(FH, io_lib:format("~s\n", [DF]));
                  false ->
                      ok
              end || DF <- DataFiles],
