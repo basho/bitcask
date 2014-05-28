@@ -278,30 +278,48 @@ prop_fold() ->
                  end)).
 
 
-merge1_test() ->
+merge1_test_() ->
+    {timeout, 60, fun merge1_test2/0}.
+
+merge1_test2() ->
     ?assert(eqc:check(prop_merge(),
                       [{[{put,<<0>>,<<>>},{delete,<<0>>,<<>>}],1,1}])).
 
-merge2_test() ->
+merge2_test_() ->
+    {timeout, 60, fun merge2_test2/0}.
+
+merge2_test2() ->
     ?assert(eqc:check(prop_merge(),
                       [{[{put,<<1>>,<<>>},{delete,<<0>>,<<>>}],1,1}])).
 
-merge3_test() ->
+merge3_test_() ->
+    {timeout, 60, fun merge3_test2/0}.
+
+merge3_test2() ->
     ?assert(eqc:check(prop_merge(),
                       [{[{put,<<0>>,<<>>},
                          {delete,<<0>>,<<>>},
                          {delete,<<1>>,<<>>}],
                         1,1}])).
-merge4_test() ->
+merge4_test_() ->
+    {timeout, 60, fun merge4_test2/0}.
+
+merge4_test2() ->
     ?assert(eqc:check(prop_merge(),
                       [{[{itr,<<1>>,<<>>},{delete,<<0>>,<<>>}],1,1}])).
 
-merge5_test() ->
+merge5_test_() ->
+    {timeout, 60, fun merge5_test2/0}.
+
+merge5_test2() ->
     ?assert(eqc:check(prop_merge(),
                       [{[{put,<<"test">>,<<>>},{itr,<<"test">>,<<>>},
                          {delete,<<"test">>,<<>>},{delete,<<"test">>,<<>>}],1,1}])).
 
-merge6_test() ->
+merge6_test_() ->
+    {timeout, 60, fun merge6_test2/0}.
+
+merge6_test2() ->
     ?assert(eqc:check(prop_merge(),
                       [{[{itr,<<"test">>,<<>>},{put,<<"test">>,<<>>},
                          {delete,<<"test">>,<<>>},{delete,<<"test">>,<<>>}],
@@ -311,7 +329,10 @@ prop_merge_test_() ->
     {timeout, ?TEST_TIME*2, fun() -> qc(prop_merge()) end}.
 
 
-fold1_test() ->
+fold1_test_() ->
+    {timeout, 60, fun fold1_test2/0}.
+
+fold1_test2() ->
     ?assert(eqc:check(prop_fold(),
                       [{[{put,<<0>>,<<>>},
                          {itr,<<0>>,<<>>},
@@ -319,7 +340,10 @@ fold1_test() ->
                          {itr_release,<<0>>,<<>>},
                          {put,<<0>>,<<>>}],1}])).
 
-fold2_test() ->
+fold2_test_() ->
+    {timeout, 60, fun fold2_test2/0}.
+
+fold2_test2() ->
     ?assert(eqc:check(prop_fold(),
                       [{[{put,<<1>>,<<>>},
                          {itr,<<0>>,<<0>>},

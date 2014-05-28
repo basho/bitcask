@@ -50,7 +50,7 @@ set_tstamp(Tstamp) ->
 set_tstamp_step(Step) ->
     erlang:put(meck_tstamp_step, Step).
 
-timeshift_test() ->
+timeshift_test_() ->
     {timeout, 60, fun() -> timeshift_test2() end}.
 
 timeshift_test2() ->

@@ -481,7 +481,10 @@ keydir_fold_cont(Curr, Ref, Fun, Acc0) ->
 %% ===================================================================
 -ifdef(TEST).
 
-keydir_basic_test() ->
+keydir_basic_test_() ->
+    {timeout, 60, fun keydir_basic_test2/0}.
+
+keydir_basic_test2() ->
     {ok, Ref} = keydir_new(),
     ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1, bitcask_time:tstamp()),
 
@@ -499,11 +502,17 @@ keydir_basic_test() ->
     ok = keydir_remove(Ref, <<"abc">>),
     not_found = keydir_get(Ref, <<"abc">>).
 
-keydir_itr_anon_test() ->
+keydir_itr_anon_test_() ->
+    {timeout, 60, fun keydir_itr_anon_test2/0}.
+
+keydir_itr_anon_test2() ->
     {ok, Ref} = keydir_new(),
     keydir_itr_test_base(Ref).
 
-keydir_itr_named_test() ->
+keydir_itr_named_test_() ->
+    {timeout, 60, fun keydir_itr_named_test2/0}.
+
+keydir_itr_named_test2() ->
     {not_ready, Ref} = keydir_new("keydir_itr_named_test"),
     keydir_mark_ready(Ref),
     keydir_itr_test_base(Ref).
@@ -522,7 +531,10 @@ keydir_itr_test_base(Ref) ->
     true = lists:keymember(<<"def">>, #bitcask_entry.key, List),
     true = lists:keymember(<<"hij">>, #bitcask_entry.key, List).
 
-keydir_copy_test() ->
+keydir_copy_test_() ->
+    {timeout, 60, fun keydir_copy_test2/0}.
+
+keydir_copy_test2() ->
     {ok, Ref1} = keydir_new(),
     ok = keydir_put(Ref1, <<"abc">>, 0, 1234, 0, 1, bitcask_time:tstamp()),
     ok = keydir_put(Ref1, <<"def">>, 0, 4567, 1234, 2, bitcask_time:tstamp()),
@@ -531,7 +543,10 @@ keydir_copy_test() ->
     {ok, Ref2} = keydir_copy(Ref1),
     #bitcask_entry { key = <<"abc">>} = keydir_get(Ref2, <<"abc">>).
 
-keydir_named_test() ->
+keydir_named_test_() ->
+    {timeout, 60, fun keydir_named_test2/0}.
+
+keydir_named_test2() ->
     {not_ready, Ref} = keydir_new("k1"),
     ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1, bitcask_time:tstamp()),
     keydir_mark_ready(Ref),
@@ -539,13 +554,19 @@ keydir_named_test() ->
     {ready, Ref2} = keydir_new("k1"),
     #bitcask_entry { key = <<"abc">> } = keydir_get(Ref2, <<"abc">>).
 
-keydir_named_not_ready_test() ->
+keydir_named_not_ready_test_() ->
+    {timeout, 60, fun keydir_named_not_ready_test2/0}.
+
+keydir_named_not_ready_test2() ->
     {not_ready, Ref} = keydir_new("k2"),
     ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1, bitcask_time:tstamp()),
 
     {error, not_ready} = keydir_new("k2").
 
-keydir_itr_while_itr_error_test() ->
+keydir_itr_while_itr_error_test_() ->
+    {timeout, 60, fun keydir_itr_while_itr_error_test2/0}.
+
+keydir_itr_while_itr_error_test2() ->
     {ok, Ref1} = keydir_new(),
     ok = keydir_itr(Ref1, -1, -1),
     try
@@ -555,17 +576,26 @@ keydir_itr_while_itr_error_test() ->
         keydir_itr_release(Ref1)
     end.
 
-keydir_double_itr_test() -> % check iterating flag is cleared
+keydir_double_itr_test_() -> % check iterating flag is cleared
+    {timeout, 60, fun keydir_double_itr_test2/0}.
+
+keydir_double_itr_test2() ->
     {ok, Ref1} = keydir_new(),
     Folder = fun(_,Acc) -> Acc end,
     ?assertEqual(acc, keydir_fold(Ref1, Folder, acc, -1, -1)),
     ?assertEqual(acc, keydir_fold(Ref1, Folder, acc, -1, -1)).
 
-keydir_next_notstarted_error_test() ->
+keydir_next_notstarted_error_test_() ->
+    {timeout, 60, fun keydir_next_notstarted_error_test2/0}.
+
+keydir_next_notstarted_error_test2() ->
     {ok, Ref1} = keydir_new(),
     ?assertEqual({error, iteration_not_started}, keydir_itr_next(Ref1)).
 
-keydir_del_while_pending_test() ->
+keydir_del_while_pending_test_() ->
+    {timeout, 60, fun keydir_del_while_pending_test2/0}.
+
+keydir_del_while_pending_test2() ->
     Name = "k_del_while_pending_test",
     {not_ready, Ref1} = keydir_new(Name),
     Key = <<"abc">>,
@@ -595,7 +625,10 @@ keydir_del_while_pending_test() ->
     %% Check key is deleted
     ?assertEqual(not_found, keydir_get(Ref1, Key)).
 
-keydir_create_del_while_pending_test() ->
+keydir_create_del_while_pending_test_() ->
+    {timeout, 60, fun keydir_create_del_while_pending_test2/0}.
+
+keydir_create_del_while_pending_test2() ->
     Name = "k_create_del_while_pending_test",
     {not_ready, Ref1} = keydir_new(Name),
     Key = <<"abc">>,
@@ -625,7 +658,10 @@ keydir_create_del_while_pending_test() ->
     keydir_release(Ref2),
     ok.
 
-keydir_del_put_while_pending_test() ->
+keydir_del_put_while_pending_test_() ->
+    {timeout, 60, fun keydir_del_put_while_pending_test2/0}.
+
+keydir_del_put_while_pending_test2() ->
     Name = "k_del_put_while_pending_test",
     {not_ready, Ref1} = keydir_new(Name),
     Key = <<"abc">>,
@@ -654,7 +690,10 @@ keydir_del_put_while_pending_test() ->
                                 offset = <<0:64/unsigned-native>>, tstamp = T+2}, 
                  keydir_get_int(Ref1, Key, 16#ffffffffffffffff)).
 
-keydir_multi_put_during_itr_test() ->
+keydir_multi_put_during_itr_test_() ->
+    {timeout, 60, fun keydir_multi_put_during_itr_test2/0}.
+
+keydir_multi_put_during_itr_test2() ->
     {not_ready, Ref} = bitcask_nifs:keydir_new("t"),
     bitcask_nifs:keydir_mark_ready(Ref),
     bitcask_nifs:keydir_put(Ref, <<"k">>, 123, 1, 0, 1, bitcask_time:tstamp()),
@@ -664,7 +703,10 @@ keydir_multi_put_during_itr_test() ->
     bitcask_nifs:keydir_put(Ref, <<"k">>, 123, 4, 30, 4, bitcask_time:tstamp()),
     bitcask_nifs:keydir_itr_release(Ref).
 
-keydir_itr_out_of_date_test() ->
+keydir_itr_out_of_date_test_() ->
+    {timeout, 60, fun keydir_itr_out_of_date_test2/0}.
+
+keydir_itr_out_of_date_test2() ->
     Name = "keydir_itr_out_of_date_test",
     {not_ready, Ref1} = bitcask_nifs:keydir_new(Name),
     bitcask_nifs:keydir_mark_ready(Ref1),
@@ -699,7 +741,10 @@ put_till_frozen(R, Name) ->
             ok
     end.
 
-keydir_itr_many_pending_test() ->
+keydir_itr_many_pending_test_() ->
+    {timeout, 60, fun keydir_itr_many_pending_test2/0}.
+
+keydir_itr_many_pending_test2() ->
     Name = "keydir_itr_many_out_of_date_test",
     {not_ready, Ref1} = bitcask_nifs:keydir_new(Name),
     bitcask_nifs:keydir_mark_ready(Ref1),
@@ -736,7 +781,10 @@ clear_recv_buffer(Ct) ->
             ok %%?debugFmt("cleared ~p msgs", [Ct])
     end.
 
-keydir_wait_pending_test() ->
+keydir_wait_pending_test_() ->
+    {timeout, 60, fun keydir_wait_pending_test2/0}.
+
+keydir_wait_pending_test2() ->
     clear_recv_buffer(0),
     Name = "keydir_wait_pending_test",
     {not_ready, Ref1} = keydir_new(Name),
