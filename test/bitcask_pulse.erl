@@ -45,6 +45,8 @@
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) -> ?QC_FMT(Str, Args) end, P)).
 
+%% 2-tuple prefix for local process dictionary hackery
+-define(NAME_KEY, local_proc_hack).
 
 -record(state,
   { handle :: reference() | tuple()
@@ -463,6 +465,10 @@ check_trace(Trace) ->
   %% convert pids and refs into something the reader won't choke on,
   %% and is easier to read, for ease of debugging the test.
   Events = clean_events(Events0),
+  %% Clean up the process dictionary from clean_events()to avoid
+  %% leaking memory on very long runs.
+  [erase(K) || {K = {?NAME_KEY, _}, _} <- get()],
+
   %% The Calls relation contains {call, Pid, Call} whenever Call by Pid is in
   %% progress.
   Calls  = eqc_temporal:stateful(
@@ -620,10 +626,10 @@ recursive_clean(E) ->
     E.
 
 get_name(E, Base) ->
-    case get(E) of
+    case get({?NAME_KEY, E}) of
         undefined ->
             Name = fresh_name(Base),
-            put(E, Name),
+            put({?NAME_KEY, E}, Name),
             Name;
         Name ->
             Name
@@ -631,15 +637,15 @@ get_name(E, Base) ->
 
 fresh_name(Base) ->
     Num =
-        case get(Base) of
+        case get({?NAME_KEY, Base}) of
             undefined ->
-                put(Base, 1),
+                put({?NAME_KEY ,Base}, 1),
                 1;
             N ->
-                put(Base, N+1),
+                put({?NAME_KEY, Base}, N+1),
                 N+1
         end,
-    list_to_atom(atom_to_list(Base)++"_"++integer_to_list(Num)).
+    list_to_binary(atom_to_list(Base)++"_"++integer_to_list(Num)).
 
 check_fold_result([{K, Vs}|Expected], [{K, V}|Actual]) ->
   lists:member(V, Vs) andalso check_fold_result(Expected, Actual);
