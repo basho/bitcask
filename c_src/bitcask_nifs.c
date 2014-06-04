@@ -359,6 +359,8 @@ ERL_NIF_TERM bitcask_nifs_file_position(ErlNifEnv* env, int argc, const ERL_NIF_
 ERL_NIF_TERM bitcask_nifs_file_seekbof(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM bitcask_nifs_file_truncate(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
 
+ERL_NIF_TERM bitcask_nifs_update_fstats(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+
 ERL_NIF_TERM errno_atom(ErlNifEnv* env, int error);
 ERL_NIF_TERM errno_error_tuple(ErlNifEnv* env, ERL_NIF_TERM key, int error);
 
@@ -407,7 +409,8 @@ static ErlNifFunc nif_funcs[] =
     {"file_write_int",  2, bitcask_nifs_file_write},
     {"file_position_int",  2, bitcask_nifs_file_position},
     {"file_seekbof_int", 1, bitcask_nifs_file_seekbof},
-    {"file_truncate_int", 1, bitcask_nifs_file_truncate}
+    {"file_truncate_int", 1, bitcask_nifs_file_truncate},
+    {"update_fstats", 7, bitcask_nifs_update_fstats}
 };
 
 ERL_NIF_TERM bitcask_nifs_keydir_new0(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -586,6 +589,35 @@ static void update_fstats(ErlNifEnv* env, bitcask_keydir* keydir,
         entry->newest_tstamp == 0)
     {
         entry->newest_tstamp = tstamp;
+    }
+}
+
+// NIF wrapper around update_fstats().
+ERL_NIF_TERM bitcask_nifs_update_fstats(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    bitcask_keydir_handle* handle;
+    uint32_t file_id, tstamp;
+    int32_t live_increment, total_increment;
+    int32_t live_bytes_increment, total_bytes_increment;
+
+    if (argc == 7
+            && enif_get_resource(env, argv[0], bitcask_keydir_RESOURCE,
+                (void**)&handle)
+            && enif_get_uint(env, argv[1], &file_id)
+            && enif_get_uint(env, argv[2], &tstamp)
+            && enif_get_int(env, argv[3], &live_increment)
+            && enif_get_int(env, argv[4], &total_increment)
+            && enif_get_int(env, argv[5], &live_bytes_increment)
+            && enif_get_int(env, argv[6], &total_bytes_increment))
+    {
+        update_fstats(env, handle->keydir, file_id, tstamp,
+                live_increment, total_increment,
+                live_bytes_increment, total_bytes_increment);
+        return ATOM_OK;
+    }
+    else
+    {
+        return enif_make_badarg(env);
     }
 }
 
@@ -839,12 +871,11 @@ static void find_keydir_entry(bitcask_keydir* keydir, ErlNifBinary* key,
 
 static void update_kd_entry_list(bitcask_keydir_entry *old,
                                  bitcask_keydir_entry_proxy *new,
-                                 uint64_t newest_folder) {
+                                 int iterating_p) {
     bitcask_keydir_entry_head* h = GET_ENTRY_LIST_POINTER(old);
     bitcask_keydir_entry_sib* new_sib;
 
-    //if we're a write newer than the newest folder, just fold in
-    if (newest_folder < h->sibs->epoch)
+    if (! iterating_p)
     {
         new_sib = h->sibs;
 
@@ -919,8 +950,8 @@ void print_entry_list(bitcask_keydir_entry *e)
     bitcask_keydir_entry_sib
         *s = h->sibs;
     while (s != NULL) {
-        fprintf(stderr, "sib %d \r\n\t%u\t\t%u\r\n\t%llu\t\t%u\r\n\r\n",
-                sib_count, s->file_id, s->total_sz, (unsigned long long)s->offset, s->tstamp);
+        fprintf(stderr, "sib %d \r\n\t%u\t\t%u\r\n\t%llu\t\t%u\tepoch=%u\r\n\r\n",
+                sib_count, s->file_id, s->total_sz, (unsigned long long)s->offset, s->tstamp, s->epoch);
         sib_count++;
         s = s->next;
         if( s == NULL )
@@ -939,8 +970,8 @@ void print_entry(bitcask_keydir_entry *e)
     fprintf(stderr, "entry %p key: %d keylen %d\r\n",
             e, (int)e->key[3], e->key_sz);
 
-    fprintf(stderr, "\r\n\t%u\t\t%u\r\n\t%llu\t\t%u\r\n\r\n",
-            e->file_id, e->total_sz, (unsigned long long)e->offset, e->tstamp);
+    fprintf(stderr, "\r\n\t%u\t\t%u\r\n\t%llu\t\t%u\tepoch=%u\r\n\r\n",
+            e->file_id, e->total_sz, (unsigned long long)e->offset, e->tstamp, e->epoch);
 }
 
 void print_keydir(bitcask_keydir* keydir)
@@ -1061,7 +1092,7 @@ static void update_entry(bitcask_keydir* keydir,
         if (is_entry_list)
         {
             // Add to list of values during iteration
-            update_kd_entry_list(cur_entry, upd_entry, keydir->newest_folder);
+            update_kd_entry_list(cur_entry, upd_entry, iterating);
         }
         else
         {
@@ -1206,7 +1237,7 @@ static void set_entry_tombstone(bitcask_keydir* keydir, khiter_t itr,
     else
     {
         //need to update the entry list with a tombstone
-        update_kd_entry_list(entry, &tombstone, keydir->newest_folder);
+        update_kd_entry_list(entry, &tombstone, keydir->keyfolders > 0);
     }
 }
 
@@ -2225,7 +2256,7 @@ ERL_NIF_TERM bitcask_nifs_lock_writedata(ErlNifEnv* env, int argc, const ERL_NIF
 
 int get_file_open_flags(ErlNifEnv* env, ERL_NIF_TERM list)
 {
-    int flags = -1;
+    int flags = O_RDWR | O_APPEND;
     ERL_NIF_TERM head, tail;
     while (enif_get_list_cell(env, list, &head, &tail))
     {

@@ -9,39 +9,7 @@ case PulseBuild of
         PulseOpts =
             [{pulse_no_side_effect,[{erlang,display,1}]},
              {pulse_side_effect,
-              [ {bitcask_nifs, keydir_new, 0}
-              , {bitcask_nifs, keydir_new, 1}
-              , {bitcask_nifs, maybe_keydir_new, 1}
-              , {bitcask_nifs, keydir_mark_ready, 1}
-              , {bitcask_nifs, keydir_put_int, 10}
-              , {bitcask_nifs, keydir_get_int, 3}
-              , {bitcask_nifs, keydir_remove, 3}
-              , {bitcask_nifs, keydir_remove_int, 6}
-              , {bitcask_nifs, keydir_copy, 1}
-              , {bitcask_nifs, keydir_itr_int, 4}
-              , {bitcask_nifs, keydir_itr_next_int, 1}
-              , {bitcask_nifs, keydir_itr_release, 1}
-              , {bitcask_nifs, keydir_info, 1}
-              , {bitcask_nifs, keydir_release, 1}
-              , {bitcask_nifs, keydir_trim_fstats, 2}
-
-              , {bitcask_nifs, increment_file_id, 1}
-              , {bitcask_nifs, increment_file_id, 2}
-
-              , {bitcask_nifs, lock_acquire_int,   2}
-              , {bitcask_nifs, lock_release_int,   1}
-              , {bitcask_nifs, lock_readdata_int,  1}
-              , {bitcask_nifs, lock_writedata_int, 2}
-
-              , {bitcask_nifs, file_open_int,   2}
-              , {bitcask_nifs, file_close_int,  1}
-              , {bitcask_nifs, file_sync_int,   1}
-              , {bitcask_nifs, file_pread_int,  3}
-              , {bitcask_nifs, file_pwrite_int, 3}
-              , {bitcask_nifs, file_read_int,   2}
-              , {bitcask_nifs, file_write_int,  2}
-              , {bitcask_nifs, file_position_int, 2}
-              , {bitcask_nifs, file_seekbof_int, 1}
+              [ {bitcask_nifs, '_', '_'}
 
               , {bitcask_file, '_', '_'}
               , {bitcask_time, tstamp, 0}

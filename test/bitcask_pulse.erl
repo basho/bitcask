@@ -45,12 +45,14 @@
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) -> ?QC_FMT(Str, Args) end, P)).
 
+%% 2-tuple prefix for local process dictionary hackery
+-define(NAME_KEY, local_proc_hack).
 
 -record(state,
-  { handle :: term()
-  , is_writer = true :: term()
-  , did_fork_merge = false :: term()
-  , readers = [] :: term()
+  { handle :: reference() | tuple()
+  , is_writer = true :: boolean()
+  , did_fork_merge = false :: boolean()
+  , readers = [] :: list()
   }).
 
 %% The initial state.
@@ -68,6 +70,15 @@ key_pair() ->
 not_commands(Module, State) ->
   ?LET(Cmds, commands(Module, State),
     uncommand(Cmds)).
+
+gen_make_merge_file() ->
+    noshrink(
+      %% {true|false, Seed, Probability}
+      {frequency([{100, false}, {109999, true}]),
+       {choose(0, 500), choose(0, 500), choose(0, 500)},
+       %% weighting: use either 100% or 1-100%
+       frequency([{2, 100}, {8, choose(1, 100)}])
+      }).
 
 %% Command generator. S is the state.
 command(S) ->
@@ -94,7 +105,7 @@ command(S) ->
     %% race bugs, so keep doing it.
     [ {50, {call, ?MODULE, delete, [S#state.handle, key()]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
-    [ {2, {call, ?MODULE, bc_open, [S#state.is_writer]}}
+    [ {2, {call, ?MODULE, bc_open, [S#state.is_writer, gen_make_merge_file()]}}
       || S#state.handle == undefined ] ++
     [ {2, {call, ?MODULE, sync, [S#state.handle]}}
       || S#state.handle /= undefined ] ++
@@ -131,6 +142,8 @@ precondition(_S, {call, _, incr_clock, _}) ->
   true;
 precondition(S, {call, _, gets, [H, _]}) ->
   S#state.handle == H;
+precondition(S, {call, _, get, [H, _]}) ->
+  S#state.handle == H;
 precondition(S, {call, _, puts, [H, _, _]}) ->
   S#state.is_writer andalso S#state.handle == H;
 precondition(S, {call, _, put, [H, _, _]}) ->
@@ -156,7 +169,7 @@ precondition(S, {call, _, kill, [Pid]}) ->
   (Pid == bitcask_merge_worker orelse lists:member(Pid, S#state.readers));
 precondition(S, {call, _, bc_close, [H]}) ->
   S#state.handle == H;
-precondition(S, {call, _, bc_open, [Writer]}) ->
+precondition(S, {call, _, bc_open, [Writer, _MakeMergeFile]}) ->
   %% The writer can open for reading but not the other way around.
   S#state.is_writer >= Writer andalso S#state.handle == undefined.
 
@@ -223,9 +236,9 @@ postcondition(_S, {call, _, needs_merge, _}, V) ->
     false          -> true;
     _              -> {needs_merge, V}
   end;
-postcondition(_S, {call, _, bc_open, [IsWriter]}, V) ->
+postcondition(_S, {call, _, bc_open, [IsWriter, _MakeMergeFile]}, V) ->
   case V of
-    _ when is_reference(V) andalso IsWriter -> check_no_tombstones(V, true);
+    _ when is_reference(V) andalso IsWriter -> true; %% check_no_tombstones(V, true);
     _ when is_reference(V)                  -> true;
     {'EXIT', {{badmatch,{error,enoent}},_}} -> true;
     %% If we manage to get a timeout, there's a pathological scheduling
@@ -361,7 +374,9 @@ prop_pulse(LocalOrSlave, Verbose, KeepFiles) ->
       {badrpc, timeout} = Bad ->
         io:format(user, "GOT ~p, aborting.  Stop PULSE and restart!\n", [Bad]),
         exit({stopping, Bad});
-      {H, S, Res, PidRs, Trace, Schedule, Errors} ->
+      {H, S, Res, PidRs, Trace, Schedule, Errors0} ->
+        Errors = [E || E <- Errors0,
+                       re:run(element(2, E), "Invalid merge input") == nomatch],
         ?WHENFAIL(
           ?QC_FMT("\nState: ~p\n", [S]),
           aggregate(zipwith(fun command_data/2, Cmds, H),
@@ -422,7 +437,7 @@ prop_pulse_test_() ->
     end,
     io:format(user, "prop_pulse_test time: ~p + ~p seconds\n",
               [Timeout, ExtraTO]),
-    {timeout, (Timeout+ExtraTO) + 60,
+    {timeout, (Timeout+ExtraTO+120),     % 120 = a bit more fudge time
      fun() ->
              copy_bitcask_app(),
              ?assert(eqc:quickcheck(eqc:testing_time(Timeout,
@@ -450,6 +465,10 @@ check_trace(Trace) ->
   %% convert pids and refs into something the reader won't choke on,
   %% and is easier to read, for ease of debugging the test.
   Events = clean_events(Events0),
+  %% Clean up the process dictionary from clean_events()to avoid
+  %% leaking memory on very long runs.
+  [erase(K) || {K = {?NAME_KEY, _}, _} <- get()],
+
   %% The Calls relation contains {call, Pid, Call} whenever Call by Pid is in
   %% progress.
   Calls  = eqc_temporal:stateful(
@@ -607,10 +626,10 @@ recursive_clean(E) ->
     E.
 
 get_name(E, Base) ->
-    case get(E) of
+    case get({?NAME_KEY, E}) of
         undefined ->
             Name = fresh_name(Base),
-            put(E, Name),
+            put({?NAME_KEY, E}, Name),
             Name;
         Name ->
             Name
@@ -618,15 +637,15 @@ get_name(E, Base) ->
 
 fresh_name(Base) ->
     Num =
-        case get(Base) of
+        case get({?NAME_KEY, Base}) of
             undefined ->
-                put(Base, 1),
+                put({?NAME_KEY ,Base}, 1),
                 1;
             N ->
-                put(Base, N+1),
+                put({?NAME_KEY, Base}, N+1),
                 N+1
         end,
-    list_to_atom(atom_to_list(Base)++"_"++integer_to_list(Num)).
+    list_to_binary(atom_to_list(Base)++"_"++integer_to_list(Num)).
 
 check_fold_result([{K, Vs}|Expected], [{K, V}|Actual]) ->
   lists:member(V, Vs) andalso check_fold_result(Expected, Actual);
@@ -662,7 +681,8 @@ command_data({set, _, {call, _, bc_open, _}}, {_S, V}) ->
 command_data({set, _, {call, _, needs_merge, _}}, {_S, V}) ->
   case V of
     {true, _} -> {needs_merge, true};
-    false     -> {needs_merge, false}
+    false     -> {needs_merge, false};
+    Else      -> {needs_merge, Else}
   end;
 command_data({set, _, {call, _, kill, [Pid]}}, {_S, _V}) ->
   case Pid of
@@ -761,7 +781,7 @@ needs_merge(H) ->
   ?CHECK_HANDLE(H, false, needs_merge_wrapper(H))).
 
 needs_merge_wrapper(H) ->
-    case check_no_tombstones(H, ok) of
+    case ok of %% check_no_tombstones(H, ok) of
         ok ->
             bitcask:needs_merge(H);
         Else ->
@@ -785,8 +805,13 @@ fold_keys(H) ->
   ?LOG({fold_keys, H},
   ?CHECK_HANDLE(H, [], bitcask:fold_keys(H, fun(#bitcask_entry{key = Kb}, Ks) -> [un_nice_key(Kb)|Ks] end, []))).
 
-bc_open(Writer) ->
+bc_open(Writer, {MakeMergeFileP, Seed, Probability}) ->
   erlang:put(?BITCASK_TESTING_KEY, ?MODULE),
+    if MakeMergeFileP ->
+            bitcask:make_merge_file(?BITCASK, Seed, Probability);
+       true ->
+            ok
+    end,
   ?LOG({open, Writer},
   case Writer of
     true  -> catch bitcask:open(?BITCASK, [read_write, {max_file_size, ?FILE_SIZE}, {open_timeout, 1234}]);
@@ -1081,14 +1106,37 @@ mangle_temporal_relation_with_finite_time([{Start, infinity, [_|_]=L}]) ->
 mangle_temporal_relation_with_finite_time([H|T]) ->
     [H|mangle_temporal_relation_with_finite_time(T)].
 
-check_no_tombstones(Ref, Good) ->
-    Res = bitcask:fold_keys(Ref, fun(K, Acc0) -> [K|Acc0] end,
-                            [], -1, -1, true),
-    case [X || {tombstone, _} = X <- Res] of
-        [] ->
-            Good;
-        Else ->
-            {check_no_tombstones, Else}
-    end.
+%% This version of check_no_tombstones() plus the fold_keys
+%% implementation has a flaw that this QuickCheck model isn't smart
+%% enough to figure out:
+%% * if there's another fold/fold_keys that's happening in parallel
+%%   to this fold, and
+%% * if key K already exists with some value V
+%% * if they keydir has been frozen, and
+%% * if key K has later been deleted,
+%%
+%% ... then this fold will return {K, V} in its results, and the
+%% fold's SeeTombstonesP will cause it to do a get(V) which
+%% will return not_found, then fold/fold_keys will invent a
+%% {tombstone, ...} tuple to be folded.
+%%
+%% Once upon a time, a version of bitcask_pulse.erl checked to see
+%% (after the test case had finished) if there were folds running in
+%% parallel: if so, then certain model failures were ignored because
+%% they were assumed to be caused by a frozen keydir plus multiple
+%% folds.  I've elected not to put that kind of check back into this
+%% model.  Instead, I believe that Bitcask's internal use of the
+%% keydir is now at a good point where check_no_tombstones() isn't
+%% necessary now.
+
+%% check_no_tombstones(Ref, Good) ->
+%%     Res = bitcask:fold_keys(Ref, fun(K, Acc0) -> [K|Acc0] end,
+%%                             [], -1, -1, true),
+%%     case [X || {tombstone, _} = X <- Res] of
+%%         [] ->
+%%             Good;
+%%         Else ->
+%%             {check_no_tombstones, Else}
+%%     end.
 
 -endif.

@@ -46,10 +46,10 @@ qc(P, TestTime) ->
     ?assert(eqc:quickcheck(?QC_OUT(eqc:testing_time(TestTime, P)))).
 
 keys() ->
-    eqc_gen:non_empty(list(eqc_gen:non_empty(binary()))).
+    eqc_gen:non_empty(list(noshrink(eqc_gen:non_empty(binary())))).
 
 values() ->
-    eqc_gen:non_empty(list(binary())).
+    eqc_gen:non_empty(list(noshrink(binary()))).
 
 ops(Keys, Values) ->
     {oneof([put, delete, itr, itr_next, itr_release]), oneof(Keys), oneof(Values)}.
@@ -71,7 +71,7 @@ apply_kv_ops([{delete, K, _} | Rest], Ref, KVs0, Fstats0) ->
         OldVal ->
             apply_kv_ops(Rest, Ref, orddict:store(K, deleted, KVs0),
                          update_fstats(delete, K, OldVal,
-                                       ?TOMBSTONE, Fstats0))
+                                       ?TOMBSTONE0, Fstats0))
     end;
 apply_kv_ops([{itr, _K, _} | Rest], Ref, KVs, Fstats) ->
     %% Don't care about result, just want to intermix with get/put
@@ -136,7 +136,7 @@ check_fstats(Ref, Expect) ->
     ?assertEqual(Expect#m_fstats.live_keys, LiveCount),
     ?assertEqual(Expect#m_fstats.live_bytes, LiveBytes),
     ?assertEqual(Expect#m_fstats.total_keys, TotalCount),
-    ?assertEqual(Expect#m_fstats.total_bytes, TotalBytes).
+    ?assert(Expect#m_fstats.total_bytes =< TotalBytes).
 
 check_model(Ref, Model) ->
     F = fun({K, deleted}) ->
@@ -158,12 +158,15 @@ prop_merge() ->
          ?FORALL({Ops, M1, M2}, {eqc_gen:non_empty(list(ops(Keys, Values))),
                                  choose(1,128), choose(1,128)},
                  begin
-		     bitcask_merge_delete:testonly__delete_trigger(),
-                     ?cmd("rm -rf /tmp/bc.prop.merge"),
+                     Tm = tuple_to_list(now()),
+                     Dir = lists:flatten(
+                             io_lib:format(
+                               "/tmp/bc.prop.merge.~w.~w.~w", Tm)),
+                     ?cmd("rm -rf " ++ Dir),
 
                      %% Open a bitcask, dump the ops into it and build
                      %% a model of what SHOULD be in the data.
-                     Ref = bitcask:open("/tmp/bc.prop.merge",
+                     Ref = bitcask:open(Dir,
                                         [read_write, {max_file_size, M1}]),
                      try
                          {Model, Fstats} = apply_kv_ops(Ops, Ref, [], #m_fstats{}),
@@ -179,7 +182,7 @@ prop_merge() ->
                          proc_lib:spawn(
                            fun() ->
                                    try
-                                       Me ! bitcask:merge("/tmp/bc.prop.merge",
+                                       Me ! bitcask:merge(Dir,
                                                           [{max_file_size, M2}])
                                    catch
                                        _:Err ->
@@ -218,7 +221,8 @@ prop_merge() ->
                                         end
                                 end,
                      [Validate(Fname) || {_Ts, Fname} <-
-                                             bitcask_fileops:data_file_tstamps("/tmp/bc.prop.merge")],
+                                             bitcask_fileops:data_file_tstamps(Dir)],
+                     ?cmd("rm -rf " ++ Dir),
                      true
                  end)).
 
@@ -274,30 +278,48 @@ prop_fold() ->
                  end)).
 
 
-merge1_test() ->
+merge1_test_() ->
+    {timeout, 60, fun merge1_test2/0}.
+
+merge1_test2() ->
     ?assert(eqc:check(prop_merge(),
                       [{[{put,<<0>>,<<>>},{delete,<<0>>,<<>>}],1,1}])).
 
-merge2_test() ->
+merge2_test_() ->
+    {timeout, 60, fun merge2_test2/0}.
+
+merge2_test2() ->
     ?assert(eqc:check(prop_merge(),
                       [{[{put,<<1>>,<<>>},{delete,<<0>>,<<>>}],1,1}])).
 
-merge3_test() ->
+merge3_test_() ->
+    {timeout, 60, fun merge3_test2/0}.
+
+merge3_test2() ->
     ?assert(eqc:check(prop_merge(),
                       [{[{put,<<0>>,<<>>},
                          {delete,<<0>>,<<>>},
                          {delete,<<1>>,<<>>}],
                         1,1}])).
-merge4_test() ->
+merge4_test_() ->
+    {timeout, 60, fun merge4_test2/0}.
+
+merge4_test2() ->
     ?assert(eqc:check(prop_merge(),
                       [{[{itr,<<1>>,<<>>},{delete,<<0>>,<<>>}],1,1}])).
 
-merge5_test() ->
+merge5_test_() ->
+    {timeout, 60, fun merge5_test2/0}.
+
+merge5_test2() ->
     ?assert(eqc:check(prop_merge(),
                       [{[{put,<<"test">>,<<>>},{itr,<<"test">>,<<>>},
                          {delete,<<"test">>,<<>>},{delete,<<"test">>,<<>>}],1,1}])).
 
-merge6_test() ->
+merge6_test_() ->
+    {timeout, 60, fun merge6_test2/0}.
+
+merge6_test2() ->
     ?assert(eqc:check(prop_merge(),
                       [{[{itr,<<"test">>,<<>>},{put,<<"test">>,<<>>},
                          {delete,<<"test">>,<<>>},{delete,<<"test">>,<<>>}],
@@ -307,7 +329,10 @@ prop_merge_test_() ->
     {timeout, ?TEST_TIME*2, fun() -> qc(prop_merge()) end}.
 
 
-fold1_test() ->
+fold1_test_() ->
+    {timeout, 60, fun fold1_test2/0}.
+
+fold1_test2() ->
     ?assert(eqc:check(prop_fold(),
                       [{[{put,<<0>>,<<>>},
                          {itr,<<0>>,<<>>},
@@ -315,7 +340,10 @@ fold1_test() ->
                          {itr_release,<<0>>,<<>>},
                          {put,<<0>>,<<>>}],1}])).
 
-fold2_test() ->
+fold2_test_() ->
+    {timeout, 60, fun fold2_test2/0}.
+
+fold2_test2() ->
     ?assert(eqc:check(prop_fold(),
                       [{[{put,<<1>>,<<>>},
                          {itr,<<0>>,<<0>>},

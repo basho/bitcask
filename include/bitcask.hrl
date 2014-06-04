@@ -28,9 +28,21 @@
 
 -define(FMT(Str, Args), lists:flatten(io_lib:format(Str, Args))).
 
--define(TOMBSTONE, <<"bitcask_tombstone">>).
--define(TOMBSTONE_SIZE, size(?TOMBSTONE)).
--define(MAX_TOMBSTONE_SIZE, ?TOMBSTONE_SIZE).
+-define(TOMBSTONE_PREFIX, "bitcask_tombstone").
+-define(TOMBSTONE0_STR, ?TOMBSTONE_PREFIX).
+-define(TOMBSTONE0, <<?TOMBSTONE0_STR>>).
+-define(TOMBSTONE1_STR, ?TOMBSTONE_PREFIX "1").
+-define(TOMBSTONE1_BIN, <<?TOMBSTONE1_STR>>).
+-define(TOMBSTONE2_STR, ?TOMBSTONE_PREFIX "2").
+-define(TOMBSTONE2_BIN, <<?TOMBSTONE2_STR>>).
+-define(TOMBSTONE0_SIZE, size(?TOMBSTONE0)).
+% Size of tombstone + 32 bit file id
+-define(TOMBSTONE1_SIZE, (size(?TOMBSTONE1_BIN)+4)).
+-define(TOMBSTONE2_SIZE, (size(?TOMBSTONE2_BIN)+4)).
+% Change this to the largest size a tombstone value can have if more added.
+-define(MAX_TOMBSTONE_SIZE, ?TOMBSTONE2_SIZE).
+% Notice that tombstone version 1 and 2 are the same size, so not tested below
+-define(IS_TOMBSTONE_SIZE(S), (S == ?TOMBSTONE0_SIZE orelse S == ?TOMBSTONE1_SIZE)).
 
 -define(OFFSETFIELD_V1,  64).
 -define(TOMBSTONEFIELD_V2, 1).

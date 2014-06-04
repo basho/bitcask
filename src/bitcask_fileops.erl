@@ -25,6 +25,7 @@
 
 -export([create_file/3,
          open_file/1,
+         open_file/2,
          close/1,
          close_all/1,
          close_for_writing/1,
@@ -59,8 +60,8 @@
 -include_lib("eqc/include/eqc_fsm.hrl").
 -endif.
 -compile(export_all).
--include_lib("eunit/include/eunit.hrl").
 -endif.
+-include_lib("eunit/include/eunit.hrl").
 
 %% @doc Open a new file for writing.
 %% Called on a Dirname, will open a fresh file in that directory.
@@ -125,6 +126,41 @@ get_create_lock(DirName, N) ->
 %% Called with fully-qualified filename.
 -spec open_file(Filename :: string()) -> {ok, #filestate{}} | {error, any()}.
 open_file(Filename) ->
+    open_file(Filename, readonly).
+
+open_file(Filename, append) ->
+    case bitcask_io:file_open(Filename, []) of
+        {ok, FD} ->
+            case bitcask_io:file_position(FD, {eof, 0}) of
+                {ok, 0} ->
+                    % File was deleted and we just opened a new one, undo.
+                    bitcask_io:file_close(FD),
+                    _ = file:delete(Filename),
+                    {error, enoent};
+                {ok, Ofs} ->
+                    case reopen_hintfile(Filename) of
+                        {error, enoent} ->
+                            bitcask_io:file_close(FD),
+                            {error, enoent};
+                        {undefined, _} ->
+                            bitcask_io:file_close(FD),
+                            {error, enoent};
+                        {HintFD, HintCRC} ->
+                            {ok,
+                             #filestate{mode = read_write,
+                                        filename = Filename,
+                                        tstamp = file_tstamp(Filename),
+                                        fd = FD,
+                                        hintfd = HintFD,
+                                        hintcrc = HintCRC,
+                                        ofs = Ofs
+                                       }}
+                    end
+            end;
+        {error, _Reason} = Err ->
+            Err
+    end;
+open_file(Filename, readonly) ->
     case bitcask_io:file_open(Filename, [readonly]) of
         {ok, FD} ->
             {ok, #filestate{mode = read_only,
@@ -132,6 +168,49 @@ open_file(Filename) ->
                             fd = FD, ofs = 0}};
         {error, Reason} ->
             {error, Reason}
+    end.
+
+% Re-open hintfile for appending.
+-spec reopen_hintfile(string() | #filestate{}) ->
+    {error, enoent} | {HintFD::port() | undefined, CRC :: non_neg_integer()}.
+reopen_hintfile(Filename) ->
+    case  (catch open_hint_file(Filename, [])) of
+        couldnt_open_hintfile ->
+            {undefined, 0};
+        HintFD ->
+            HintFilename = hintfile_name(Filename),
+            {ok, HintI} = read_file_info(HintFilename),
+            HintSize = HintI#file_info.size,
+            case bitcask_io:file_position(HintFD, HintSize) of
+                {ok, 0} ->
+                    bitcask_io:file_close(HintFD),
+                    _ = file:delete(HintFilename),
+                    {error, enoent};
+                {ok, _FileSize} ->
+                    prepare_hintfile_for_append(HintFD)
+            end
+    end.
+
+% Removes the final CRC record so more records can be added to the file.
+-spec prepare_hintfile_for_append(HintFD :: port()) ->
+    {HintFD :: port() | undefined, CRC :: non_neg_integer()}.
+prepare_hintfile_for_append(HintFD) ->
+    case bitcask_io:file_position(HintFD,
+                                  {eof, -?HINT_RECORD_SZ}) of
+        {ok, _} ->
+            case read_crc(HintFD) of
+                error ->
+                    bitcask_io:file_close(HintFD),
+                    {undefined, 0};
+                HintCRC ->
+                    bitcask_io:file_position(HintFD,
+                                             {eof, -?HINT_RECORD_SZ}),
+                    bitcask_io:file_truncate(HintFD),
+                    {HintFD, HintCRC}
+            end;
+        _ ->
+            bitcask_io:file_close(HintFD),
+            {undefined, 0}
     end.
 
 %% @doc Use when done writing a file.  (never open for writing again)
@@ -225,15 +304,19 @@ write(Filestate=#filestate{fd = FD, hintfd = HintFD,
     try
         ok = bitcask_io:file_pwrite(FD, Offset, Bytes),
         %% Create and store the corresponding hint entry
-        TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
+        TotalSz = iolist_size(Bytes),
         TombInt = case bitcask:is_tombstone(Value) of
                       true  -> 1;
                       false -> 0
                   end,
         Iolist = hintfile_entry(Key, Tstamp, TombInt, Offset, TotalSz),
-        ok = bitcask_io:file_write(HintFD, Iolist),
+        case HintFD of
+            undefined ->
+                ok;
+            _ ->
+                ok = bitcask_io:file_write(HintFD, Iolist)
+        end,
         %% Record our final offset
-        TotalSz = iolist_size(Bytes),
         HintCRC = erlang:crc32(HintCRC0, Iolist), % compute crc of hint
         {ok, Filestate#filestate{ofs = Offset + TotalSz,
                                  hintcrc = HintCRC,
@@ -377,16 +460,12 @@ file_tstamp(#filestate{tstamp=Tstamp}) ->
 file_tstamp(Filename) when is_list(Filename) ->
     list_to_integer(filename:basename(Filename, ".bitcask.data")).
 
--spec check_write(fresh | #filestate{}, binary(), binary()|tombstone, integer()) ->
+-spec check_write(fresh | #filestate{}, binary(), non_neg_integer(), integer()) ->
       fresh | wrap | ok.
-check_write(fresh, _Key, _Value, _MaxSize) ->
+check_write(fresh, _Key, _ValSize, _MaxSize) ->
     %% for the very first write, special-case
     fresh;
-check_write(#filestate { ofs = Offset }, Key, Value, MaxSize) ->
-    ValSize = case Value of
-                  tombstone -> ?TOMBSTONE_SIZE;
-                  _ -> size(Value)
-              end,
+check_write(#filestate { ofs = Offset }, Key, ValSize, MaxSize) ->
     Size = ?HEADER_SIZE + size(Key) + ValSize,
     case (Offset + Size) > MaxSize of
         true ->

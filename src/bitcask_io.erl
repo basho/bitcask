@@ -110,7 +110,10 @@ determine_file_module() ->
 
 -ifdef(TEST).
 
-truncate_test() ->
+truncate_test_() ->
+    {timeout, 60, fun truncate_test2/0}.
+
+truncate_test2() ->
     Dir = "/tmp/bc.test.bitcask_io/",
     one_truncate(filename:join(Dir, "truncate_test1.dat"), 50, 50),
     one_truncate(filename:join(Dir, "truncate_test2.dat"), {bof, 50}, 50),

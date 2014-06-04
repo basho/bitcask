@@ -107,18 +107,30 @@ postcondition(opened, opened, S, {call, _, get, [_, Key]}, {ok, Value}) ->
             {expected, Exp, got, Value}
     end;
 postcondition(opened, opened, _S, {call, _, merge, [_TestDir]}, Res) ->
-    Res == ok;
+    case Res == ok of
+        true ->
+            true;
+        false ->
+            erlang:display({bad_merge_return, Res}),
+            {expected, ok, got, Res}
+    end;
 postcondition(_From,_To,_S,{call,_,_,_},_Res) ->
     true.
 
 qc_test_() ->
     TestTime = 45,
-    {timeout, TestTime*2,
+    ShrinkTime = 600,
+    qc_test_(TestTime, ShrinkTime).
+
+qc_test_(TestTime, ShrinkTime) ->
+    Timeout = TestTime + ShrinkTime,
+    {timeout, Timeout,
      {setup, fun prepare/0, fun cleanup/1,
-      [{timeout, TestTime*2, ?_assertEqual(true,
+      [{timeout, Timeout, ?_assertEqual(true,
                 eqc:quickcheck(eqc:testing_time(TestTime, ?QC_OUT(prop_bitcask()))))}]}}.
 
 prepare() ->
+    error_logger:tty(false),
     application:load(bitcask),
     application:start(bitcask),
     application:set_env(bitcask, require_hint_crc, true).

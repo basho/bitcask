@@ -1,7 +1,7 @@
 {application, bitcask,
  [
   {description, ""},
-  {vsn, "1.6.3"},
+  {vsn, "1.7.0"},
   {modules, []},
   {registered, []},
   {applications, [
@@ -12,6 +12,8 @@
   {env, [
          %% Default max file size (in bytes)
          {max_file_size, 16#80000000}, % 2GB default
+
+         {tombstone_version, 2},
 
          %% Wait time to open a keydir (in seconds)
          {open_timeout, 4},
