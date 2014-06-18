@@ -1939,6 +1939,36 @@ truncated_datafile_test() ->
     {1, [{_, _, _, 513}]} = bitcask:status(B2),
     ok.
 
+truncated_hintfile_test() ->
+    Dir = "/tmp/bc.test.trunchint",
+    os:cmd("rm -rf " ++ Dir),
+    os:cmd("mkdir " ++ Dir),
+    B1 = bitcask:open(Dir, [read_write]),
+    [ok = bitcask:put(B1, <<"k">>, <<X:32>>) || X <- lists:seq(1, 100)],
+    ok = bitcask:close(B1),
+
+    [HintFile|_] = filelib:wildcard(Dir ++ "/*.hint"),
+    %% 18 + 4 * 100 should chomp the CRC bit
+    HintFileInfo = file:read_file_info(HintFile),
+    ?debugFmt("hint ~p~n", [HintFileInfo]),
+    truncate_file(HintFile, 1900),
+    HintFileInfo1 = file:read_file_info(HintFile),
+    ?debugFmt("hint ~p~n", [HintFileInfo1]),
+    % close and reopen so that status can reflect a closed file
+    B2 = bitcask:open(Dir, [read_write]),
+    {FS, _} = get_filestate(1, get(B2)),
+
+    application:set_env(bitcask, require_hint_crc, true),
+    {error, {incomplete_hint, 4}} = bitcask_fileops:fold_keys(
+                                     FS, fun(_, _, _, Acc) -> Acc + 1 end,
+                                     0, hintfile),
+
+    application:set_env(bitcask, require_hint_crc, false),
+
+    100 = bitcask_fileops:fold_keys(FS, fun(_, _, _, Acc) -> Acc + 1 end,
+                                    0, hintfile),
+    ok.
+
 trailing_junk_big_datafile_test() ->
     Dir = "/tmp/bc.test.trailingdata",
     NumKeys = 400,
