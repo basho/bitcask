@@ -1949,25 +1949,30 @@ truncated_hintfile_test() ->
 
     [HintFile|_] = filelib:wildcard(Dir ++ "/*.hint"),
     %% 18 + 4 * 100 should chomp the CRC bit
-    HintFileInfo = file:read_file_info(HintFile),
-    ?debugFmt("hint ~p~n", [HintFileInfo]),
+    _HintFileInfo = file:read_file_info(HintFile),
+    %% ?debugFmt("hint ~p~n", [HintFileInfo]),
     truncate_file(HintFile, 1900),
-    HintFileInfo1 = file:read_file_info(HintFile),
-    ?debugFmt("hint ~p~n", [HintFileInfo1]),
+    _HintFileInfo1 = file:read_file_info(HintFile),
+    %% ?debugFmt("hint ~p~n", [HintFileInfo1]),
     % close and reopen so that status can reflect a closed file
     B2 = bitcask:open(Dir, [read_write]),
     {FS, _} = get_filestate(1, get(B2)),
 
-    application:set_env(bitcask, require_hint_crc, true),
-    {error, {incomplete_hint, 4}} = bitcask_fileops:fold_keys(
-                                     FS, fun(_, _, _, Acc) -> Acc + 1 end,
-                                     0, hintfile),
+    {ok, OldVal} = application:get_env(bitcask, require_hint_crc),
+    try
+        application:set_env(bitcask, require_hint_crc, true),
+        {error, {incomplete_hint, 4}} = bitcask_fileops:fold_keys(
+                                          FS, fun(_, _, _, Acc) -> Acc + 1 end,
+                                          0, hintfile),
 
-    application:set_env(bitcask, require_hint_crc, false),
+        application:set_env(bitcask, require_hint_crc, false),
 
-    100 = bitcask_fileops:fold_keys(FS, fun(_, _, _, Acc) -> Acc + 1 end,
-                                    0, hintfile),
-    ok.
+        100 = bitcask_fileops:fold_keys(FS, fun(_, _, _, Acc) -> Acc + 1 end,
+                                        0, hintfile),
+        ok
+    after
+        application:set_env(bitcask, require_hint_crc, OldVal)
+    end.
 
 trailing_junk_big_datafile_test() ->
     Dir = "/tmp/bc.test.trailingdata",
