@@ -1948,13 +1948,9 @@ truncated_hintfile_test() ->
     ok = bitcask:close(B1),
 
     [HintFile|_] = filelib:wildcard(Dir ++ "/*.hint"),
-    %% 18 + 4 * 100 should chomp the CRC bit
-    _HintFileInfo = file:read_file_info(HintFile),
-    %% ?debugFmt("hint ~p~n", [HintFileInfo]),
+    %% 1900 was determined via file inspection, may drift with version
     truncate_file(HintFile, 1900),
-    _HintFileInfo1 = file:read_file_info(HintFile),
-    %% ?debugFmt("hint ~p~n", [HintFileInfo1]),
-    % close and reopen so that status can reflect a closed file
+
     B2 = bitcask:open(Dir, [read_write]),
     {FS, _} = get_filestate(1, get(B2)),
 
