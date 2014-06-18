@@ -677,7 +677,7 @@ fold_hintfile_loop(_Bytes, _Fun, Acc0, Consumed0, Args) ->
 %% commented example
 -spec fold_file_loop(port(), atom(),
                      fun((binary(), fun(), any(), integer(),
-                          any(), true | false) -> 
+                          any()) -> 
                                 {more, any(), integer(), any()} |
                                 {done, any()} |
                                 {done, any(), integer()} |
