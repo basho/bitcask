@@ -35,6 +35,7 @@
          merge/1, merge/2, merge/3,
          needs_merge/1,
          needs_merge/2,
+         is_frozen/1,
          is_empty_estimate/1,
          status/1]).
 
@@ -383,11 +384,10 @@ fold(State, Fun, Acc0, MaxAge, MaxPut, SeeTombstonesP) ->
     KT = State#bc_state.key_transform,
     FrozenFun = 
         fun() ->
-                CurrentEpoch = bitcask_nifs:keydir_get_epoch(State#bc_state.keydir),
-                PendingEpoch = pending_epoch(State#bc_state.keydir),
-                FoldEpoch = min(CurrentEpoch, PendingEpoch),
-                case open_fold_files(State#bc_state.dirname, ?OPEN_FOLD_RETRIES) of
-                    {ok, Files} ->
+                case open_fold_files(State#bc_state.dirname,
+                                     State#bc_state.keydir,
+                                     ?OPEN_FOLD_RETRIES) of
+                    {ok, Files, FoldEpoch} ->
                         ExpiryTime = expiry_time(State#bc_state.opts),
                         SubFun = fun(K0,V,TStamp,{_FN,FTS,Offset,_Sz},Acc) ->
                                          K = KT(K0),
@@ -430,27 +430,24 @@ fold(State, Fun, Acc0, MaxAge, MaxPut, SeeTombstonesP) ->
     KeyDir = State#bc_state.keydir,
     bitcask_nifs:keydir_frozen(KeyDir, FrozenFun, MaxAge, MaxPut).
 
-pending_epoch(Keydir) ->
-    {_, _, _, {_, _, _, Epoch}} = bitcask_nifs:keydir_info(Keydir),
-    Epoch.
-
 %%
 %% Get a list of readable files and attempt to open them for a fold. If we can't
 %% open any one of the files, get a fresh list of files and try again.
 %%
-open_fold_files(_Dirname, 0) ->
+open_fold_files(_Dirname, _Keydir, 0) ->
     {error, max_retries_exceeded_for_fold};
-open_fold_files(Dirname, Count) ->
+open_fold_files(Dirname, Keydir, Count) ->
     try
-        Filenames = list_data_files(Dirname, undefined, undefined),
+        {Epoch, CurrentFiles} = current_files(Dirname, Keydir),
+        Filenames = [F#file_status.filename || F <- CurrentFiles],
         case open_files(Filenames, []) of
             {ok, Files} ->
-                {ok, Files};
+                {ok, Files, Epoch};
             error ->
-                open_fold_files(Dirname, Count-1)
+                open_fold_files(Dirname, Keydir, Count-1)
         end
     catch X:Y ->
-            {error, {X,Y}}
+            {error, {X,Y, erlang:get_stacktrace()}}
     end.
 
 %%
@@ -682,8 +679,11 @@ merge1(Dirname, Opts, FilesToMerge0, ExpiredFiles) ->
     %% Close the original input files, schedule them for deletion,
     %% close keydirs, and release our lock
     bitcask_fileops:close_all(State#mstate.input_files ++ ExpiredFilesFinished),
-    {_, _, _, {IterGeneration, _, _, _}} = bitcask_nifs:keydir_info(LiveKeyDir),
-    FileNames = [F#filestate.filename || F <- State1#mstate.delete_files ++ ExpiredFilesFinished],
+    {_, _, _, {IterGeneration, _, _, _}, _} = bitcask_nifs:keydir_info(LiveKeyDir),
+    DelFiles = [F || F <- State1#mstate.delete_files ++ ExpiredFilesFinished],
+    FileNames = [F#filestate.filename || F <- DelFiles],
+    DelIds = [F#filestate.tstamp || F <- DelFiles],
+    _ = [bitcask_nifs:set_pending_delete(LiveKeyDir, DelId) || DelId <- DelIds],
     _ = [catch set_pending_delete_bit(F) || F <- FileNames],
     bitcask_merge_delete:defer_delete(Dirname, IterGeneration, FileNames),
 
@@ -971,8 +971,14 @@ expired_threshold(Cutoff) ->
 -spec is_empty_estimate(reference()) -> boolean().
 is_empty_estimate(Ref) ->
     State = get_state(Ref),
-    {KeyCount, _, _, _} = bitcask_nifs:keydir_info(State#bc_state.keydir),
+    {KeyCount, _, _, _, _} = bitcask_nifs:keydir_info(State#bc_state.keydir),
     KeyCount == 0.
+
+-spec is_frozen(reference()) -> boolean().
+is_frozen(Ref) ->
+    #bc_state{keydir=Keydir} = get_state(Ref),
+    {_, _, _, {_, _, Frozen, _}, _} = bitcask_nifs:keydir_info(Keydir),
+    Frozen.
 
 -spec status(reference()) -> {integer(), [{string(), integer(), integer(), integer()}]}.
 status(Ref) ->
@@ -983,6 +989,14 @@ status(Ref) ->
     {KeyCount, [{F#file_status.filename, F#file_status.fragmented,
                  F#file_status.dead_bytes, F#file_status.total_bytes} || F <- Summary]}.
 
+current_files(Dirname, Keydir) ->
+    {_, _, Fstats, {_, _, _, PendingEpoch}, Epoch} =
+        bitcask_nifs:keydir_info(Keydir),
+    CappedEpoch = min(PendingEpoch, Epoch),
+    FStatus = [summarize(Dirname, F) || F <- Fstats],
+    CurrentFiles = [F || F <- FStatus,
+                         CappedEpoch < F#file_status.expiration_epoch],
+    {CappedEpoch, CurrentFiles}.
 
 -spec summary_info(reference()) -> {integer(), [#file_status{}]}.
 summary_info(Ref) ->
@@ -992,9 +1006,10 @@ summary_info(Ref) ->
     %% the file stats so we can determine how much fragmentation
     %% is present
     %%
-    %% Fstat has form: [{FileId, LiveCount, TotalCount, LiveBytes, TotalBytes, OldestTstamp, NewestTstamp}]
+    %% Fstat has form: [{FileId, LiveCount, TotalCount, LiveBytes, TotalBytes,
+    %% OldestTstamp, NewestTstamp, ExpirationEpoch}]
     %% and is only an estimate/snapshot.
-    {KeyCount, _KeyBytes, Fstats, _IterStatus} =
+    {KeyCount, _KeyBytes, Fstats, _IterStatus, _Epoch} =
         bitcask_nifs:keydir_info(State#bc_state.keydir),
 
     %% We want to ignore the file currently being written when
@@ -1018,12 +1033,11 @@ summary_info(Ref) ->
                                      bitcask_fileops:is_file(element(2, S))]),
     {KeyCount, Summary}.
 
-
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
 
-summarize(Dirname, {FileId, LiveCount, TotalCount, LiveBytes, TotalBytes, OldestTstamp, NewestTstamp}) ->
+summarize(Dirname, {FileId, LiveCount, TotalCount, LiveBytes, TotalBytes, OldestTstamp, NewestTstamp, ExpirationEpoch}) ->
     LiveRatio =
         case TotalCount > 0 of
             true ->
@@ -1036,7 +1050,8 @@ summarize(Dirname, {FileId, LiveCount, TotalCount, LiveBytes, TotalBytes, Oldest
                    dead_bytes = TotalBytes - LiveBytes,
                    total_bytes = TotalBytes,
                    oldest_tstamp = OldestTstamp,
-                   newest_tstamp = NewestTstamp}.
+                   newest_tstamp = NewestTstamp,
+                   expiration_epoch = ExpirationEpoch }.
 
 expiry_time(Opts) ->
     ExpirySecs = get_opt(expiry_secs, Opts),
@@ -2035,21 +2050,19 @@ fold_corrupt_file_test2() ->
     close(B4),
     ok.
 
-put_till_frozen(R, Name) ->
-    bitcask_nifs:keydir_put(R, crypto:rand_bytes(32), 0, 1234, 0, 1,
-                            bitcask_time:tstamp()),
-    {ready, Ref2} = bitcask_nifs:keydir_new(Name),
-    %%?debugFmt("Putting", []),
-    case bitcask_nifs:keydir_itr_int(Ref2, 2000001,
-                                     0, 0) of
-        ok ->
-            %%?debugFmt("keydir still OK", []),
-            bitcask_nifs:keydir_itr_release(Ref2),
-            put_till_frozen(R, Name);
-        out_of_date -> 
-            %%?debugFmt("keydir now frozen", []),
-            bitcask_nifs:keydir_itr_release(Ref2),
-            ok
+% Issue puts until the entries hash in the keydir can not be updated anymore
+% and a pending hash is created. There *has* to be an iterator open when you
+% call this or it will loop for ever and ever. Don't try this at home.
+put_till_frozen(B) ->
+    Key = crypto:rand_bytes(32),
+    bitcask:put(B, Key, <<>>),
+    bitcask:delete(B, Key),
+
+    case bitcask:is_frozen(B) of
+        true ->
+            ok;
+        false ->
+            put_till_frozen(B)
     end.
 
 %%
@@ -2061,7 +2074,7 @@ fold_visits_frozen_test_() ->
      {timeout, 60, ?_test(fold_visits_frozen_test2(true))}].
 
 fold_visits_frozen_test2(RollOver) ->
-    Cask = "/tmp/bc.test.frozenfold",
+    Cask = "/tmp/bc.test.frozenfold." ++ atom_to_list(RollOver),
     os:cmd("rm -r " ++ Cask),
     B = init_dataset(Cask, default_dataset()),
     try
@@ -2094,7 +2107,7 @@ fold_visits_frozen_test2(RollOver) ->
         end,
 
         %% make sure that it's actually frozen
-        put_till_frozen(Ref, Cask),
+        put_till_frozen(B),
 
         %% If checking file rollover, update the state so the next write will 
         %% trigger a 'wrap' return.
@@ -2590,7 +2603,7 @@ invalid_data_size_test2() ->
 
 testhelper_keydir_count(B) ->
     KD = (get_state(B))#bc_state.keydir,
-    {KeyCount,_,_,_} = bitcask_nifs:keydir_info(KD),
+    {KeyCount,_,_,_,_} = bitcask_nifs:keydir_info(KD),
     KeyCount.
     
 expire_keydir_test_() ->
@@ -3012,7 +3025,7 @@ fold_itercount_test2() ->
 
         KD = (get_state(Ref))#bc_state.keydir,
         Info = bitcask_nifs:keydir_info(KD),
-        {_,_,_,{_,Count,_,_}} = Info,
+        {_,_,_,{_,Count,_,_},_} = Info,
 
         ?assertEqual(length(Pids), Count),
 
@@ -3024,7 +3037,7 @@ fold_itercount_test2() ->
         %% collect the iterator information and make sure that the
         %% count is still 0
         Info2 = bitcask_nifs:keydir_info(KD),
-        {_,_,_,{_,Count2,_,_}} = Info2,
+        {_,_,_,{_,Count2,_,_},_} = Info2,
         ?assertEqual(0, Count2)
     after
         ok = bitcask:close(Ref),

@@ -23,7 +23,8 @@
                       dead_bytes :: integer(),
                       total_bytes :: integer(),
                       oldest_tstamp :: integer(),
-                      newest_tstamp :: integer() }).
+                      newest_tstamp :: integer(),
+                      expiration_epoch :: non_neg_integer() }).
 
 
 -define(FMT(Str, Args), lists:flatten(io_lib:format(Str, Args))).
