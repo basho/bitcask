@@ -445,9 +445,9 @@ ERL_NIF_TERM bitcask_nifs_maybe_keydir_new1(ErlNifEnv* env, int argc, const ERL_
         
         enif_mutex_lock(priv->global_keydirs_lock);
         khiter_t itr = kh_get(global_keydirs, priv->global_keydirs, name);
+        khiter_t table_end = kh_end(priv->global_keydirs); /* get end while lock is held! */
         enif_mutex_unlock(priv->global_keydirs_lock);
-
-        if (itr != kh_end(priv->global_keydirs))
+        if (itr != table_end)
         {
             return bitcask_nifs_keydir_new1(env, argc, argv);
         } 
