@@ -443,12 +443,35 @@ open_fold_files(Dirname, Keydir, Count) ->
         case open_files(Filenames, []) of
             {ok, Files} ->
                 {ok, Files, Epoch};
-            error ->
+            {error, ErrFile, Err} ->
+                maybe_log_missing_file(Dirname, Keydir, ErrFile, Err),
                 open_fold_files(Dirname, Keydir, Count-1)
         end
     catch X:Y ->
             {error, {X,Y, erlang:get_stacktrace()}}
     end.
+
+maybe_log_missing_file(Dirname, Keydir, ErrFile, enoent) ->
+    case is_current_file(Dirname, Keydir, ErrFile) of
+        true ->
+            error_logger:error_msg("Unexpectedly missing file ~s", [ErrFile]),
+            FileId = bitcask_fileops:file_tstamp(ErrFile),
+            %% Forget it to avoid retrying opening it
+            bitcask_nifs:keydir_trim_fstats(Keydir, [FileId]),
+            ok;
+        false ->
+            ok
+    end;
+maybe_log_missing_file(_, _, _, _) ->
+    ok.
+
+is_current_file(Dirname, Keydir, Filename) ->
+    FileId = bitcask_fileops:file_tstamp(Filename),
+    {_Epoch, CurrentFiles} = current_files(Dirname, Keydir),
+    lists:any(fun(F) ->
+                      bitcask_fileops:file_tstamp(F#file_status.filename) ==
+                      FileId
+              end, CurrentFiles).
 
 %%
 %% Open a list of filenames; if any one of them fails to open, error out.
@@ -459,9 +482,9 @@ open_files([Filename | Rest], Acc) ->
     case bitcask_fileops:open_file(Filename) of
         {ok, Fd} ->
             open_files(Rest, [Fd | Acc]);
-        {error, _} ->
+        {error, Err} ->
             bitcask_fileops:close_all(Acc),
-            error
+            {error, Filename, Err}
     end.
 
 %%
