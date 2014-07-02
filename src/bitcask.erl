@@ -1466,7 +1466,8 @@ merge_single_tombstone(K,V, Tstamp, FileId, Offset, State) ->
                                    _LiveKeys = 0,
                                    _TotalKeysIncr = 0,
                                    _LiveIncr = 0,
-                                   _TotalIncr = TSize),
+                                   _TotalIncr = TSize,
+                                   _ShouldCreate = 0),
                             TFiles2 = lists:keyreplace(
                                         TFile#filestate.filename,
                                         #filestate.filename,
@@ -1558,7 +1559,8 @@ inner_merge_write(K, V, Tstamp, OldFileId, OldOffset, State) ->
                                State1#mstate.live_keydir,
                                OutFileId,
                                Tstamp,
-                               0, 0, 0, Size),
+                               0, 0, 0, Size,
+                               _ShouldCreate = 1),
                         % Still not there, tombstone write is cool
                         Outfile;
                     #bitcask_entry{} ->
@@ -1751,7 +1753,7 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State,
                             ok = bitcask_nifs:update_fstats(
                                    State2#bc_state.keydir,
                                    bitcask_fileops:file_tstamp(WriteFile2), Tstamp,
-                                   0, 0, 0, TSize),
+                                   0, 0, 0, TSize, _ShouldCreate = 1),
                             case bitcask_nifs:keydir_remove(State2#bc_state.keydir,
                                                             Key, OldTstamp, OldFileId,
                                                             OldOffset) of
