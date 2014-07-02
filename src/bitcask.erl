@@ -457,7 +457,7 @@ maybe_log_missing_file(Dirname, Keydir, ErrFile, enoent) ->
             error_logger:error_msg("Unexpectedly missing file ~s", [ErrFile]),
             FileId = bitcask_fileops:file_tstamp(ErrFile),
             %% Forget it to avoid retrying opening it
-            bitcask_nifs:keydir_trim_fstats(Keydir, [FileId]),
+            _ = bitcask_nifs:keydir_trim_fstats(Keydir, [FileId]),
             ok;
         false ->
             ok
