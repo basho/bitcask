@@ -135,8 +135,8 @@
 -spec keydir_info(reference()) ->
         {integer(), integer(),
          [{integer(), integer(), integer(), integer(), integer(),
-           integer(), integer()}],
-         {integer(), integer(), boolean(), integer()},
+           integer(), integer(), integer()}],
+         {integer(), integer(), boolean(), 'undefined'|integer()},
         non_neg_integer()}.
 -spec keydir_release(reference()) ->
         ok.
