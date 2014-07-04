@@ -696,7 +696,7 @@ command_data({set, _, {call, _, Fun, _}}, {_S, _V}) ->
 fork_results(Pids) ->
   [ receive
       {Pid, done, R} -> {I, R}
-    after 99*1000 -> {I, timeout_fork_results}
+    after 99999*1000 -> {I, timeout_fork_results}
     end || {I, Pid} <- lists:zip(lists:seq(1, length(Pids)), Pids) ].
 
 %% Implementation of a the commands
