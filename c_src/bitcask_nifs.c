@@ -2877,7 +2877,7 @@ static void bitcask_nifs_keydir_resource_cleanup(ErlNifEnv* env, void* arg)
         }
         the_biggest = (global_biggest > keydir->biggest_file_id) ? \
             global_biggest : keydir->biggest_file_id;
-        the_biggest += 100;
+        the_biggest++;
         kh_put2(global_biggest_file_id, priv->global_biggest_file_id, strdup(keydir->name), the_biggest);
 
         keydir->refcount--;
