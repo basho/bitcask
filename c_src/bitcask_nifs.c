@@ -840,7 +840,7 @@ static void find_keydir_entry(bitcask_keydir* keydir, ErlNifBinary* key,
     {
         if (get_entries_hash(keydir->pending, key,
                              &ret->itr, &ret->pending_entry)
-            && (epoch > ret->pending_entry->epoch))
+            && (epoch >= ret->pending_entry->epoch))
         {
             DEBUG("Found in pending %llu > %llu", epoch, ret->pending_entry->epoch);
             ret->hash = keydir->pending;
