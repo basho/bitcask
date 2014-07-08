@@ -45,7 +45,8 @@
          increment_file_id/1,
          increment_file_id/2,
          keydir_trim_fstats/2,
-         update_fstats/7,
+         update_fstats/8,
+         set_pending_delete/2,
          lock_acquire/2,
          lock_release/1,
          lock_readdata/1,
@@ -134,14 +135,17 @@
 -spec keydir_info(reference()) ->
         {integer(), integer(),
          [{integer(), integer(), integer(), integer(), integer(),
-           integer(), integer()}],
-         {integer(), integer(), boolean(), integer()}}.
+           integer(), integer(), integer()}],
+         {integer(), integer(), boolean(), 'undefined'|integer()},
+        non_neg_integer()}.
 -spec keydir_release(reference()) ->
         ok.
 -spec keydir_trim_fstats(reference(), [integer()]) ->
         {ok, integer()} | {error, atom()}.
 -spec update_fstats(reference(), non_neg_integer(), non_neg_integer(),
-                    integer(), integer(), integer(), integer() ) ->
+                    integer(), integer(), integer(), integer(), integer() ) ->
+    ok.
+-spec set_pending_delete(reference(), non_neg_integer()) ->
     ok.
 -spec lock_acquire(string(), integer()) ->
         {ok, reference()} | {error, atom()}.
@@ -364,7 +368,10 @@ keydir_trim_fstats(_Ref, _IDList) ->
 
 update_fstats(_Ref, _FileId, _Tstamp,
               _LiveKeyIncr, _TotalKeyIncr,
-              _LiveIncr, _TotalIncr) ->
+              _LiveIncr, _TotalIncr, _ShouldCreate) ->
+    erlang:nif_error({error, not_loaded}).
+
+set_pending_delete(_Ref, _FileId) ->
     erlang:nif_error({error, not_loaded}).
 
 lock_acquire(Filename, IsWriteLock) ->
@@ -488,8 +495,8 @@ keydir_basic_test2() ->
     {ok, Ref} = keydir_new(),
     ok = keydir_put(Ref, <<"abc">>, 0, 1234, 0, 1, bitcask_time:tstamp()),
 
-    {1, 3, [{0, 1, 1, 1234, 1234, 1, 1}],
-     {0, 0, false, _}} = keydir_info(Ref),
+    {1, 3, [{0, 1, 1, 1234, 1234, 1, 1, _}],
+     {0, 0, false, _},_} = keydir_info(Ref),
 
     E = keydir_get(Ref, <<"abc">>),
     0 = E#bitcask_entry.file_id,
@@ -523,7 +530,7 @@ keydir_itr_test_base(Ref) ->
     ok = keydir_put(Ref, <<"def">>, 0, 4567, 1234, 2, bitcask_time:tstamp()),
     ok = keydir_put(Ref, <<"hij">>, 1, 7890, 0, 3, bitcask_time:tstamp()),
 
-    {3, 9, _, _} = keydir_info(Ref),
+    {3, 9, _, _, _} = keydir_info(Ref),
 
     List = keydir_fold(Ref, fun(E, Acc) -> [ E | Acc] end, [], -1, -1),
     3 = length(List),

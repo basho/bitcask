@@ -107,7 +107,7 @@ check_status(S) ->
             {_, KeyDir} = bitcask_nifs:keydir_new(Dirname),
             try
 
-                {_,_,_,IterStatus} = bitcask_nifs:keydir_info(KeyDir),
+                {_,_,_,IterStatus,_} = bitcask_nifs:keydir_info(KeyDir),
                 CleanAndGo = fun() ->
                                      delete_files(Files),
                                      bitcask_nifs:keydir_release(KeyDir),
