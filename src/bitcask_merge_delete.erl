@@ -544,5 +544,52 @@ fold_keys(H) ->
 fold(H) ->
   bitcask:fold(H, fun(KBin, V, Acc) -> [{un_nice_key(KBin),V}|Acc] end, []).
 
+merge_delete_race_pr156_regression_test_() ->
+    {timeout, 60, fun merge_delete_race_pr156_regression_test2/0}.
+
+merge_delete_race_pr156_regression_test2() ->
+    %% Heart of the problem:
+    %% 1. delete a key: this creates 1.bitcask.data
+    %% 2. merge.  input files is [1.data.bitcask]
+    %% 3. merge defer delete file_id 1.
+    %% 4. Close the cask.
+    %% 5. Open the cask.  file_id 1 is marked for deferred deletion,
+    %%    so delete it immediately.
+    %% 6. Cask open finishes.  The largest file_id is 1.
+    %% 7. Write some data.  It is written to file_id 1.
+    %% 8. The merge_delete_worker now deletes file_id 1, but
+    %%    it's far too late and deletes a new incarnation of
+    %%    file_id 1.
+
+    Dir = "/tmp/bc.merge_delete_race_pr156_regression",
+
+    os:cmd("rm -rf " ++ Dir),
+    _ = application:start(bitcask),
+    try
+        Ref1 = bitcask:open(Dir, [read_write]),
+        bitcask:delete(Ref1, <<"does_not_exist">>),
+        bitcask_merge_delete ! timeout,
+        timer:sleep(10),
+        ok = bitcask:merge(Dir),
+        ok = bitcask:close(Ref1),
+
+        Ref2 = bitcask:open(Dir, [read_write]),
+        ok = bitcask:merge(Dir),
+        ok = bitcask:close(Ref2),
+
+        Ref3 = bitcask:open(Dir, [read_write]),
+        Val = <<"val!">>,
+        NumKeys = 7,
+        [ok = bitcask:put(Ref3, nice_key(K), Val) || K <- lists:seq(1,NumKeys)],
+        bitcask_merge_delete ! timeout,
+        timer:sleep(2000),
+
+        XX = bitcask:fold(Ref3, fun(KBin, V, Acc) -> [{un_nice_key(KBin),V}|Acc] end, []),
+        ?assertEqual(NumKeys, length(XX)),
+
+        ok = bitcask:close(Ref3)
+    after
+        ok % application:stop(bitcask)
+    end.
 
 -endif. %% TEST

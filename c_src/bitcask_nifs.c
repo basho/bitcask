@@ -263,10 +263,12 @@ typedef struct
     char  filename[0];
 } bitcask_lock_handle;
 
+KHASH_INIT(global_biggest_file_id, char*, uint32_t, 1, kh_str_hash_func, kh_str_hash_equal);
 KHASH_INIT(global_keydirs, char*, bitcask_keydir*, 1, kh_str_hash_func, kh_str_hash_equal);
 
 typedef struct
 {
+    khash_t(global_biggest_file_id)* global_biggest_file_id;
     khash_t(global_keydirs)* global_keydirs;
     ErlNifMutex*             global_keydirs_lock;
 } bitcask_priv_data;
@@ -445,9 +447,9 @@ ERL_NIF_TERM bitcask_nifs_maybe_keydir_new1(ErlNifEnv* env, int argc, const ERL_
         
         enif_mutex_lock(priv->global_keydirs_lock);
         khiter_t itr = kh_get(global_keydirs, priv->global_keydirs, name);
+        khiter_t table_end = kh_end(priv->global_keydirs); /* get end while lock is held! */
         enif_mutex_unlock(priv->global_keydirs_lock);
-
-        if (itr != kh_end(priv->global_keydirs))
+        if (itr != table_end)
         {
             return bitcask_nifs_keydir_new1(env, argc, argv);
         } 
@@ -511,6 +513,12 @@ ERL_NIF_TERM bitcask_nifs_keydir_new1(ErlNifEnv* env, int argc, const ERL_NIF_TE
 
             // Finally, register this new keydir in the globals
             kh_put2(global_keydirs, priv->global_keydirs, keydir->name, keydir);
+
+            khiter_t itr_biggest_file_id = kh_get(global_biggest_file_id, priv->global_biggest_file_id, name);
+            if (itr_biggest_file_id != kh_end(priv->global_biggest_file_id)) {
+                uint32_t old_biggest_file_id = kh_val(priv->global_biggest_file_id, itr_biggest_file_id);
+                keydir->biggest_file_id = old_biggest_file_id;
+            }
         }
 
         enif_mutex_unlock(priv->global_keydirs_lock);
@@ -2861,6 +2869,17 @@ static void bitcask_nifs_keydir_resource_cleanup(ErlNifEnv* env, void* arg)
         bitcask_priv_data* priv = (bitcask_priv_data*)enif_priv_data(env);
         enif_mutex_lock(priv->global_keydirs_lock);
 
+        // Remember biggest_file_id in case someone re-opens the same name
+        uint32_t global_biggest = 0, the_biggest = 0;
+        khiter_t itr_biggest_file_id = kh_get(global_biggest_file_id, priv->global_biggest_file_id, keydir->name);
+        if (itr_biggest_file_id != kh_end(priv->global_biggest_file_id)) {
+            global_biggest = kh_val(priv->global_biggest_file_id, itr_biggest_file_id);
+        }
+        the_biggest = (global_biggest > keydir->biggest_file_id) ? \
+            global_biggest : keydir->biggest_file_id;
+        the_biggest++;
+        kh_put2(global_biggest_file_id, priv->global_biggest_file_id, strdup(keydir->name), the_biggest);
+
         keydir->refcount--;
         if (keydir->refcount == 0)
         {
@@ -2951,6 +2970,7 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
 
     // Initialize shared keydir hashtable
     bitcask_priv_data* priv = malloc(sizeof(bitcask_priv_data));
+    priv->global_biggest_file_id = kh_init(global_biggest_file_id);
     priv->global_keydirs = kh_init(global_keydirs);
     priv->global_keydirs_lock = enif_mutex_create("bitcask_global_handles_lock");
     *priv_data = priv;
