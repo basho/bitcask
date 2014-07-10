@@ -6,3 +6,4 @@ priv/*.so
 *.beam
 *~
 .local_dialyzer_plt
+log/
