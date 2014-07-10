@@ -12,6 +12,8 @@ PULSE_TESTS = bitcask_pulse
 
 .PHONY: rel deps package pkgclean
 
+include tools.mk
+
 all: deps compile
 
 compile:
@@ -23,10 +25,9 @@ deps:
 clean:
 	$(REBAR_BIN) clean
 
-test: deps compile eunit_erlang eunit_nif
+BITCASK_IO_MODE=erlang
 
-eunit_erlang:
-	BITCASK_IO_MODE="erlang" $(REBAR_BIN) skip_deps=true eunit
+test: deps compile eunit_nif
 
 eunit_nif:
 	BITCASK_IO_MODE="nif" $(REBAR_BIN) skip_deps=true eunit
@@ -90,4 +91,3 @@ DIALYZER_APPS = kernel stdlib sasl erts ssl tools os_mon runtime_tools \
 				crypto inets xmerl webtool snmp public_key mnesia eunit \
 				syntax_tools compiler
 
-include tools.mk
