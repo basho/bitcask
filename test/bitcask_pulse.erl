@@ -459,7 +459,10 @@ copy_bitcask_app() ->
 %% or the new value until the operation has finished. Likewise, a get
 %% (or a fold/fold_keys) may see any of the potential values if the
 %% operation overlaps with a put/delete.
-check_trace(Trace) ->
+check_trace(Trace0) ->
+  %% Amend the trace to include future return value for keydir_mutate
+  Trace = add_keydir_mutate_results_to_trace(lists:sort(Trace0)),
+
   %% Turn the trace into a temporal relation
   Events0 = eqc_temporal:from_timed_list(Trace),
   %% convert pids and refs into something the reader won't choke on,
@@ -613,10 +616,10 @@ check_trace(Trace) ->
   FoldingR = eqc_temporal:map(fun({folding,_}) -> folding_N_in_progress end,
                               FoldOps),
   Mutations = eqc_temporal:stateful(
-      fun({call, Pid, {keydir_mutate, _How, K}}) ->
+      fun({keydir_call, Pid, {keydir_mutate, _How, K, will_be, ok}}) ->
               {mutation_in_progress, Pid, K}
       end,
-      fun({mutation_in_progress, Pid, _K}, {result, Pid, _R}) ->
+      fun({mutation_in_progress, Pid, _K}, {keydir_result, Pid, ok}) ->
               []
       end, Events),
 
@@ -669,6 +672,21 @@ check_trace(Trace) ->
      (eqc_temporal:is_false(BadFolds)
       orelse
       lists:usort(BadFoldExceptions) == [no_exception_this_time])).
+
+add_keydir_mutate_results_to_trace(
+  [{TS, {keydir_call, Pid, {keydir_mutate, X, Y}}}|Rest]) ->
+    Res = trace_lookahead_pid(Pid, Rest),
+    New = {TS, {call, Pid, {keydir_mutate, X, Y, will_be, Res}}},
+    [New|add_keydir_mutate_results_to_trace(Rest)];
+add_keydir_mutate_results_to_trace([X|Rest]) ->
+    [X|add_keydir_mutate_results_to_trace(Rest)];
+add_keydir_mutate_results_to_trace([]) ->
+    [].
+
+trace_lookahead_pid(Pid, [{_TS, {keydir_result, Pid, Res}}|_]) ->
+    Res;
+trace_lookahead_pid(Pid, [_H|T]) ->
+    trace_lookahead_pid(Pid, T).
 
 clean_events(Events) ->
     lists:map(fun pprint_ref_pid/1, Events).

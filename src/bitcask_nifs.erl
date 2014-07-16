@@ -358,9 +358,9 @@ keydir_wait_ready(N) ->
     end.
 
 pulse_log_call(Tag, Fun) ->
-    event_logger:event({call, self(), Tag}),
+    event_logger:event({keydir_call, self(), Tag}),
     __Result = Fun(),
-    event_logger:event({result, self(), __Result}),
+    event_logger:event({keydir_result, self(), __Result}),
     __Result.
 
 -else.
