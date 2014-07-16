@@ -459,7 +459,10 @@ copy_bitcask_app() ->
 %% or the new value until the operation has finished. Likewise, a get
 %% (or a fold/fold_keys) may see any of the potential values if the
 %% operation overlaps with a put/delete.
-check_trace(Trace) ->
+check_trace(Trace0) ->
+  %% Amend the trace to include future return value for keydir_mutate
+  Trace = add_keydir_mutate_results_to_trace(lists:sort(Trace0)),
+
   %% Turn the trace into a temporal relation
   Events0 = eqc_temporal:from_timed_list(Trace),
   %% convert pids and refs into something the reader won't choke on,
@@ -574,7 +577,7 @@ check_trace(Trace) ->
                           {ok, U}   -> U end,
             case lists:member(V, Vs) of
               true  -> [];                      %% V is a good result
-              false -> [{bad, Pid, {get, K, Vs, V}}] %% V is a bad result!
+              false -> [{bad_get, Pid, {K, Vs, V}}] %% V is a bad result!
             end;
         %% Check a call to fold_keys
          ({fold_keys, Pid, Vals}, {result, Pid, Keys}) ->
@@ -583,7 +586,7 @@ check_trace(Trace) ->
             %%  K not in Keys ==> not_found in Vals[K]
             case check_fold_keys_result(orddict:to_list(Vals), lists:sort(Keys)) of
               true  -> [];
-              false -> [{bad, Pid, {fold_keys, orddict:to_list(Vals), lists:sort(Keys)}}]
+              false -> [{bad_fold_keys, Pid, {orddict:to_list(Vals), lists:sort(Keys)}}]
             end;
         %% Check a call to fold
          ({fold, Pid, Vals}, {result, Pid, KVs}) ->
@@ -592,20 +595,98 @@ check_trace(Trace) ->
             %%  K not in KVs  ==> not_found in Vals[K]
             case check_fold_result(orddict:to_list(Vals), lists:sort(KVs)) of
               true  -> [];
-              false -> [{bad, Pid, {fold, orddict:to_list(Vals), lists:sort(KVs)}}]
+              false -> [{bad_fold, Pid, {orddict:to_list(Vals), lists:sort(KVs)}}]
             end
         end,
       eqc_temporal:union(Events, eqc_temporal:map(fun(D) -> {values, D} end, ValueDict))),
 
   %% Filter out the bad stuff from the Reads relation.
-  Bad = eqc_temporal:map(fun(X={bad, _, _}) -> X end, Reads),
+  BadGets  = eqc_temporal:map(fun(X={bad_get, _, _})       -> X end, Reads),
+  BadFolds = eqc_temporal:map(fun(X={bad_fold_keys, _, _}) -> X;
+                                 (X={bad_fold, _, _})      -> X end, Reads),
+
+  FoldOps = eqc_temporal:stateful(
+      fun({call, Pid, {fold_keys, _H}}) -> {folding, Pid};
+         ({call, Pid, {fold, _H}})      -> {folding, Pid} end,
+      fun({folding, Pid}, {result, Pid, _Keys}) ->
+              []
+      end, Events),
+  %% The keydir *may* be frozen during any unbroken overlapping
+  %% sequence of folds.  Let's figure out when those time periods are.
+  FoldingR = eqc_temporal:map(fun({folding,_}) -> folding_N_in_progress end,
+                              FoldOps),
+  Mutations = eqc_temporal:stateful(
+      fun({keydir_call, Pid, {keydir_mutate, _How, K, will_be, ok}}) ->
+              {mutation_in_progress, Pid, K}
+      end,
+      fun({mutation_in_progress, Pid, _K}, {keydir_result, Pid, ok}) ->
+              []
+      end, Events),
+
+  BadFoldStartTimes = [Start || {Start, _End, Facts} <- BadFolds,
+                                Fact <- Facts,
+                                element(1, Fact) == bad_fold_keys
+                                orelse
+                                element(1, Fact) == bad_fold],
+  BadFoldExceptions =
+      [begin
+           %% Construct a pseudo-relation that contains the known
+           %% at-least-one-folder for each of our bad folds.
+           Foldz = [X || X = {Start,End,_Facts} <- FoldingR,
+                         is_integer(Start) andalso
+                             is_integer(End) andalso
+                             Start =< BadStart andalso
+                             BadStart =< End],
+           %% Fix that pseudo-relation so that eqc_temporal likes it.
+           Foldz2 = temporal_ize(Foldz),
+           %% If there was a mutation that happened during this
+           %% at-least-one-folder time, then we'll discover it with
+           %% this intersection() trick: if the intersection is
+           %% not empty, then there was no mutation that could
+           %% have frozen the keydir, so frozen-ness cannot explain
+           %% this observed fold problem.
+           FoldzMap = eqc_temporal:map(fun(_) -> i_hope end,
+                                       Foldz2),
+           MutationsMap = eqc_temporal:map(fun(_) -> i_hope end,
+                                           Mutations),
+           Intersection = eqc_temporal:intersection(FoldzMap, MutationsMap),
+           case eqc_temporal:is_false(Intersection) of
+               true  -> bummer_the_intersection_was_empty;
+               false -> no_exception_this_time
+           end
+       end || BadStart <- BadFoldStartTimes],
+
   ?WHENFAIL(
      begin
          ?QC_FMT("Time: ~p ~p\n", [date(), time()]),
          ?QC_FMT("Events:\n~p\n", [Events]),
-         ?QC_FMT("Bad:\n~p\n", [Bad])
+         ?QC_FMT("Calls:\n~p\n", [Calls]),
+         ?QC_FMT("FoldingR:\n~p\n", [FoldingR]),
+         FoldMutations = eqc_temporal:unions([FoldingR, Mutations, BadGets, BadFolds]),
+         ?QC_FMT("FoldMutations:\n~p\n", [FoldMutations]),
+         ?QC_FMT("BadGets:\n~p\n", [BadGets]),
+         ?QC_FMT("BadFolds:\n~p\n", [BadFolds]),
+         ?QC_FMT("BadFoldExceptions:\n~p\n", [BadFoldExceptions])
      end,
-     eqc_temporal:is_false(Bad)).
+     eqc_temporal:is_false(BadGets) andalso
+     (eqc_temporal:is_false(BadFolds)
+      orelse
+      lists:usort(BadFoldExceptions) == [no_exception_this_time])).
+
+add_keydir_mutate_results_to_trace(
+  [{TS, {keydir_call, Pid, {keydir_mutate, X, Y}}}|Rest]) ->
+    Res = trace_lookahead_pid(Pid, Rest),
+    New = {TS, {call, Pid, {keydir_mutate, X, Y, will_be, Res}}},
+    [New|add_keydir_mutate_results_to_trace(Rest)];
+add_keydir_mutate_results_to_trace([X|Rest]) ->
+    [X|add_keydir_mutate_results_to_trace(Rest)];
+add_keydir_mutate_results_to_trace([]) ->
+    [].
+
+trace_lookahead_pid(Pid, [{_TS, {keydir_result, Pid, Res}}|_]) ->
+    Res;
+trace_lookahead_pid(Pid, [_H|T]) ->
+    trace_lookahead_pid(Pid, T).
 
 clean_events(Events) ->
     lists:map(fun pprint_ref_pid/1, Events).
@@ -1105,6 +1186,16 @@ mangle_temporal_relation_with_finite_time([{Start, infinity, [_|_]=L}]) ->
     [{Start, Start+1, L}, {Start+1, infinity, []}];
 mangle_temporal_relation_with_finite_time([H|T]) ->
     [H|mangle_temporal_relation_with_finite_time(T)].
+
+temporal_ize(L) ->
+    temporal_ize(L, 0).
+
+temporal_ize([], Start) ->
+    [{Start, infinity, []}];
+temporal_ize([{_, infinity, _}]=Only, _Start) ->
+    Only;
+temporal_ize([{T1, T2, _}=X|Tail], Start) ->
+    [{Start, T1, []}, X|temporal_ize(Tail, T2)].
 
 %% This version of check_no_tombstones() plus the fold_keys
 %% implementation has a flaw that this QuickCheck model isn't smart

@@ -386,7 +386,7 @@ static ErlNifFunc nif_funcs[] =
     {"keydir_put_int", 10, bitcask_nifs_keydir_put_int},
     {"keydir_get_int", 3, bitcask_nifs_keydir_get_int},
     {"keydir_get_epoch", 1, bitcask_nifs_keydir_get_epoch},
-    {"keydir_remove", 3, bitcask_nifs_keydir_remove},
+    {"keydir_remove_int", 3, bitcask_nifs_keydir_remove},
     {"keydir_remove_int", 6, bitcask_nifs_keydir_remove},
     {"keydir_copy", 1, bitcask_nifs_keydir_copy},
     {"keydir_itr_int", 4, bitcask_nifs_keydir_itr},
