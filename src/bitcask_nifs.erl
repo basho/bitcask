@@ -213,11 +213,13 @@ keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NowSec, OldFileId, OldOffs
 
 keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NowSec, NewestPutB,
            OldFileId, OldOffset) ->
+    pulse_log_call({keydir_mutate,put,Key}, fun() ->
     keydir_put_int(Ref, Key, FileId, TotalSz, <<Offset:64/unsigned-native>>,
                    Tstamp, NowSec, if not NewestPutB -> 0;
                                       true           -> 1
                                    end,
-                   OldFileId, <<OldOffset:64/unsigned-native>>).
+                   OldFileId, <<OldOffset:64/unsigned-native>>)
+    end).
 
 keydir_put_int(_Ref, _Key, _FileId, _TotalSz, _Offset, _Tstamp, _NowSec,
                _NewestPutI, _OldFileId, _OldOffset) ->
@@ -244,12 +246,19 @@ keydir_get_epoch(_Ref) ->
 keydir_remove(Ref, Key) ->
     keydir_remove(Ref, Key, bitcask_time:tstamp()).
 
-keydir_remove(_Ref, _Key, _TStamp) ->
+keydir_remove(Ref, Key, TStamp) ->
+    pulse_log_call({keydir_mutate,remove,Key}, fun() ->
+                   keydir_remove_int(Ref, Key, TStamp)
+    end).
+
+keydir_remove_int(_Ref, _Key, _TStamp) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_remove(Ref, Key, Tstamp, FileId, Offset) ->
-    keydir_remove_int(Ref, Key, Tstamp, FileId, <<Offset:64/unsigned-native>>, 
-                      bitcask_time:tstamp()).
+    pulse_log_call({keydir_mutate,remove,Key}, fun() ->
+                   keydir_remove_int(Ref, Key, Tstamp, FileId, <<Offset:64/unsigned-native>>,
+                                     bitcask_time:tstamp())
+    end).
 
 keydir_remove_int(_Ref, _Key, _Tstamp, _FileId, _Offset, _TStamp) ->
     erlang:nif_error({error, not_loaded}).
@@ -347,6 +356,13 @@ keydir_wait_ready(N) ->
             end,
             keydir_wait_ready(N-1)
     end.
+
+pulse_log_call(Tag, Fun) ->
+    event_logger:event({call, self(), Tag}),
+    __Result = Fun(),
+    event_logger:event({result, self(), __Result}),
+    __Result.
+
 -else.
 keydir_wait_ready() ->
     receive
@@ -355,6 +371,10 @@ keydir_wait_ready() ->
         error ->
             {error, shutdown}
     end.
+
+pulse_log_call(_Tag, Fun) ->
+    Fun().
+
 -endif.
 
 keydir_info(_Ref) ->
