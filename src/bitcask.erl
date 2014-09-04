@@ -1908,9 +1908,12 @@ expiry_merge([], _LiveKeyDir, _KT, Acc) ->
     Acc;
 expiry_merge([File | Files], LiveKeyDir, KT, Acc0) ->
     FileId = bitcask_fileops:file_tstamp(File),
-    Fun = fun(K, Tstamp, {Offset, _TotalSz}, Acc) ->
-                bitcask_nifs:keydir_remove(LiveKeyDir, KT(K), Tstamp, FileId, Offset),
-                Acc
+    Fun = fun({tombstone, _}, _, _, Acc) ->
+                  Acc;
+             (K, Tstamp, {Offset, _TotalSz}, Acc) ->
+                  bitcask_nifs:keydir_remove(LiveKeyDir, KT(K), Tstamp, FileId,
+                                             Offset),
+                  Acc
         end,
     case bitcask_fileops:fold_keys(File, Fun, ok, default) of
         {error, Reason} ->
