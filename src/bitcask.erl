@@ -1151,7 +1151,7 @@ get_opt(Key, Opts) ->
 put_state(Ref, State) ->
     erlang:put(Ref, State).
 
-kt_id(Key) ->
+kt_id(Key) when is_binary(Key) ->
     Key.
 
 scan_key_files([], _KeyDir, Acc, _CloseFile, _KT) ->
@@ -1965,11 +1965,13 @@ init_dataset(Dirname, Opts, KVs) ->
     os:cmd(?FMT("rm -rf ~s", [Dirname])),
 
     B = bitcask:open(Dirname, [read_write] ++ Opts),
-    lists:foldl(fun({K, V}, _) ->
-                        ok = bitcask:put(B, K, V)
-                end, undefined, KVs),
+    put_kvs(B, KVs),
     B.
 
+put_kvs(B, KVs) ->
+    lists:foldl(fun({K, V}, _) ->
+                        ok = bitcask:put(B, K, V)
+                end, undefined, KVs).
 
 default_dataset() ->
     [{<<"k">>, <<"v">>},
@@ -3280,6 +3282,31 @@ merge_batch_test2() ->
     after
         bitcask:close(B)
     end.
+
+merge_expired_test_() ->
+    {timeout, 120, fun merge_expired_test2/0}.
+
+merge_expired_test2() ->
+    Dir = "/tmp/bc.merge.expired.files",
+    NKeys = 10,
+    KF = fun(N) -> <<N:8/integer>> end,
+    KVGen = fun(S, E) ->
+                    [{KF(N), <<"v">>} || N <- lists:seq(S, E)]
+            end,
+    DataSet = KVGen(1, 3),
+    B = init_dataset(Dir, [{max_file_size, 1}], DataSet),
+    ok = bitcask:delete(B, KF(1)),
+    put_kvs(B, KVGen(4, NKeys)),
+    % Merge away the first 4 files as if they were completely expired,
+    FirstFiles = [Dir ++ "/" ++ integer_to_list(N) ++ ".bitcask.data" ||
+                  N <- lists:seq(1, 4)],
+    ?assertEqual(ok, bitcask:merge(Dir, [], {FirstFiles, FirstFiles})),
+    ExpectedKeys = [KF(N) || N <- lists:seq(4, NKeys)],
+    ActualKeys1 = lists:sort(bitcask:list_keys(B)),
+    ActualKeys2 = lists:sort(bitcask:fold(B, fun(K,_V,A)->[K|A] end, [])),
+    bitcask:close(B),
+    ?assertEqual(ExpectedKeys, ActualKeys1),
+    ?assertEqual(ExpectedKeys, ActualKeys2).
 
 max_merge_size_test_() ->
     {timeout, 120, fun max_merge_size_test2/0}.
