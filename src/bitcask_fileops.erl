@@ -60,8 +60,8 @@
 -include_lib("eqc/include/eqc_fsm.hrl").
 -endif.
 -compile(export_all).
--endif.
 -include_lib("eunit/include/eunit.hrl").
+-endif.
 
 %% @doc Open a new file for writing.
 %% Called on a Dirname, will open a fresh file in that directory.
