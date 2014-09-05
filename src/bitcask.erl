@@ -1241,6 +1241,7 @@ init_keydir(Dirname, WaitTime, ReadWriteModeP, KT) ->
 
             case ScanResult of
                 {error, _} ->
+                    ok = bitcask_nifs:keydir_release(KeyDir),
                     ScanResult;
                 _ ->
                     %% Now that we loaded all the data, mark the keydir as ready
