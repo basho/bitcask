@@ -1241,6 +1241,7 @@ init_keydir(Dirname, WaitTime, ReadWriteModeP, KT) ->
 
             case ScanResult of
                 {error, _} ->
+                    ok = bitcask_nifs:keydir_release(KeyDir),
                     ScanResult;
                 _ ->
                     %% Now that we loaded all the data, mark the keydir as ready
@@ -3233,6 +3234,26 @@ update_tstamp_stats_test2() ->
     after
         bitcask_time:test__clear_fudge()
     end.
+
+scan_err_test_() ->
+    {setup,
+     fun() ->
+             meck:new(bitcask_fileops, [passthrough]),
+             ok
+     end,
+     fun(_) ->
+             meck:unload()
+     end,
+     [fun() ->
+              Dir = "/tmp/bc.scan.err",
+              meck:expect(bitcask_fileops, data_file_tstamps,
+                          fun(_) -> {error, because} end),
+              ?assertMatch({error, _}, bitcask:open(Dir)),
+              meck:unload(bitcask_fileops),
+              B = bitcask:open(Dir),
+              ?assertMatch({true, B}, {is_reference(B), B}),
+              ok = bitcask:close(B)
+      end]}.
 
 total_byte_stats_test_() ->
     {timeout, 60, fun total_byte_stats_test2/0}.
