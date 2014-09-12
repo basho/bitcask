@@ -60,8 +60,8 @@
 -include_lib("eqc/include/eqc_fsm.hrl").
 -endif.
 -compile(export_all).
--endif.
 -include_lib("eunit/include/eunit.hrl").
+-endif.
 
 %% @doc Open a new file for writing.
 %% Called on a Dirname, will open a fresh file in that directory.
@@ -854,9 +854,20 @@ ensure_dir(F) ->
             end
     end.
 
-list_dir(Directory) ->
+list_dir(Dir) ->
+    list_dir(Dir, 1).
+
+list_dir(_, 0) ->
+    {error, efile_driver_unavailable};
+list_dir(Directory, Retries) when is_integer(Retries), Retries > 0 ->
     Port = get_efile_port(),
-    prim_file:list_dir(Port, Directory).
+    case prim_file:list_dir(Port, Directory) of
+        {error, einval} ->
+            clear_efile_port(),
+            list_dir(Directory, Retries-1);
+        Result ->
+            Result
+    end.
 
 get_efile_port() ->
     Key = bitcask_efile_port,
@@ -874,6 +885,9 @@ get_efile_port() ->
         Port ->
             Port
     end.
+
+clear_efile_port() ->
+    erase(bitcask_efile_port).
 
 prim_file_drv_open(Driver, Portopts) ->
     try erlang:open_port({spawn, Driver}, Portopts) of
