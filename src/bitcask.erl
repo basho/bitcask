@@ -3439,6 +3439,31 @@ legacy_tombstones_test2() ->
     bitcask:close(B),
     ?assertEqual([Last], AllFiles3).
 
+update_tombstones_test() ->
+    Dir = "/tmp/bc.update.tombstones",
+    Key = <<"k">>,
+    Data = [{Key, integer_to_binary(N)} || N <- lists:seq(1, 10)],
+    B = init_dataset(Dir, [read_write, {max_file_size, 50000000}], Data),
+    ok = bitcask:close(B),
+    % Re-open to guarantee opening a second file.
+    % An update on the new file requires a tombstone.
+    B2 = bitcask:open(Dir, [read_write, {max_file_size, 50000000}]),
+    ok = bitcask:put(B2, Key, <<"last_val">>),
+    ok = bitcask:close(B2),
+    Files = bitcask:readable_files(Dir),
+    Fds = [begin
+               {ok, Fd} = bitcask_fileops:open_file(File),
+               Fd
+           end || File <- Files],
+    CountF = fun(_K, V, _Tstamp, _, Acc) ->
+                     case bitcask:is_tombstone(V) of
+                         true -> Acc + 1;
+                         false -> Acc
+                     end
+             end,
+    TombCount = bitcask:subfold(CountF, Fds, 0),
+    ?assertEqual(1, TombCount).
+
 make_merge_file(Dir, Seed, Probability) ->
     random:seed(Seed),
     case filelib:is_dir(Dir) of
