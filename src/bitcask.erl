@@ -1729,15 +1729,21 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State,
                     State3 = wrap_write_file(State2),
                     do_put(Key, Value, State3, Retries - 1, already_exists);
                     
-                #bitcask_entry{file_id=OldFileId,offset=OldOffset}
-                  when OldFileId =< WriteFileId ->
-                    PrevTombstone = <<?TOMBSTONE2_STR, OldFileId:32>>,
-                    {ok, WriteFile1, _, _} =
-                        bitcask_fileops:write(WriteFile0, Key, PrevTombstone,
-                                              Tstamp),
-                    State3 = State2#bc_state{write_file = WriteFile1},
+                #bitcask_entry{file_id=OldFileId,offset=OldOffset} ->
+                    State3 =
+                        case OldFileId < WriteFileId of
+                            true ->
+                                PrevTomb = <<?TOMBSTONE2_STR, OldFileId:32>>,
+                                {ok, WriteFile1, _, _} =
+                                    bitcask_fileops:write(WriteFile0, Key,
+                                                          PrevTomb, Tstamp),
+                                State2#bc_state{write_file = WriteFile1};
+                            false ->
+                                State2
+                        end,
                     write_and_keydir_put(State3, Key, Value, Tstamp, Retries,
                                          bitcask_time:tstamp(), OldFileId, OldOffset);
+
                 _ ->
                     State3 = State2#bc_state{write_file = WriteFile0},
                     write_and_keydir_put(State3, Key, Value, Tstamp, Retries,
