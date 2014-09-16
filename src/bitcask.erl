@@ -1335,19 +1335,9 @@ get_filestate(FileId, Dirname, ReadFiles, Mode) ->
 
 
 list_data_files(Dirname, WritingFile, MergingFile) ->
-    %% Get list of {tstamp, filename} for all files in the directory then
-    %% reverse sort that list and extract the fully-qualified filename.
     Files1 = bitcask_fileops:data_file_tstamps(Dirname),
-    Files2 = bitcask_fileops:data_file_tstamps(Dirname),
-    % TODO: Remove crazy
-    if Files1 == Files2 ->
-            %% No race, Files1 is a stable list.
-            [F || {_Tstamp, F} <- lists:sort(Files1),
-                  F /= WritingFile,
-                  F /= MergingFile];
-       true ->
-            list_data_files(Dirname, WritingFile, MergingFile)
-    end.
+    [F || {_Tstamp, F} <- lists:sort(Files1),
+          F /= WritingFile, F /= MergingFile].
 
 merge_files(#mstate { input_files = [] } = State) ->
     State;
@@ -1668,7 +1658,16 @@ readable_and_setuid_files(Dirname) ->
     %% Filter out files with setuid bit set: they've been marked for
     %% deletion by an earlier *successful* merge.
     Fs = [F || F <- list_data_files(Dirname, WritingFile, MergingFile)],
-    lists:partition(fun(F) -> not has_pending_delete_bit(F) end, Fs).
+
+    WritingFile2 = bitcask_lockops:read_activefile(write, Dirname),
+    MergingFile2 = bitcask_lockops:read_activefile(merge, Dirname),
+    case {WritingFile2, MergingFile2} of
+        {WritingFile, MergingFile} ->
+            lists:partition(fun(F) -> not has_pending_delete_bit(F) end, Fs);
+        _ ->
+            % Changed while fetching file list, retry
+            readable_and_setuid_files(Dirname)
+    end.
 
 %% Internal put - have validated that the file is opened for write
 %% and looked up the state at this point
