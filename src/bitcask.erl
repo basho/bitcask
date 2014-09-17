@@ -1335,19 +1335,9 @@ get_filestate(FileId, Dirname, ReadFiles, Mode) ->
 
 
 list_data_files(Dirname, WritingFile, MergingFile) ->
-    %% Get list of {tstamp, filename} for all files in the directory then
-    %% reverse sort that list and extract the fully-qualified filename.
     Files1 = bitcask_fileops:data_file_tstamps(Dirname),
-    Files2 = bitcask_fileops:data_file_tstamps(Dirname),
-    % TODO: Remove crazy
-    if Files1 == Files2 ->
-            %% No race, Files1 is a stable list.
-            [F || {_Tstamp, F} <- lists:sort(Files1),
-                  F /= WritingFile,
-                  F /= MergingFile];
-       true ->
-            list_data_files(Dirname, WritingFile, MergingFile)
-    end.
+    [F || {_Tstamp, F} <- lists:sort(Files1),
+          F /= WritingFile, F /= MergingFile].
 
 merge_files(#mstate { input_files = [] } = State) ->
     State;
@@ -1668,7 +1658,16 @@ readable_and_setuid_files(Dirname) ->
     %% Filter out files with setuid bit set: they've been marked for
     %% deletion by an earlier *successful* merge.
     Fs = [F || F <- list_data_files(Dirname, WritingFile, MergingFile)],
-    lists:partition(fun(F) -> not has_pending_delete_bit(F) end, Fs).
+
+    WritingFile2 = bitcask_lockops:read_activefile(write, Dirname),
+    MergingFile2 = bitcask_lockops:read_activefile(merge, Dirname),
+    case {WritingFile2, MergingFile2} of
+        {WritingFile, MergingFile} ->
+            lists:partition(fun(F) -> not has_pending_delete_bit(F) end, Fs);
+        _ ->
+            % Changed while fetching file list, retry
+            readable_and_setuid_files(Dirname)
+    end.
 
 %% Internal put - have validated that the file is opened for write
 %% and looked up the state at this point
@@ -2048,6 +2047,44 @@ list_data_files_test2() ->
 
     %% Now use the list_data_files to scan the dir
     ExpFiles = list_data_files("/tmp/bc.test.list", undefined, undefined).
+
+% Test that readable_files will not return the currently active
+% write or merge file by mistake if they change in between fetching them
+% and listing the files in the directory.
+list_data_files_race_test() ->
+    Dir = "/tmp/bc.test.list.race",
+    Fname = fun(N) ->
+                    filename:join(Dir, integer_to_list(N) ++ ".bitcask.data")
+            end,
+    WriteFile = fun(N) ->
+                        ok = file:write_file(Fname(N), <<>>)
+                end,
+    WriteFiles = fun(S,E) ->
+                         [WriteFile(N) || N <- lists:seq(S, E)]
+                 end,
+    os:cmd("rm -rf " ++ Dir ++ "; mkdir -p " ++ Dir),
+    WriteFiles(1,5),
+    % Faking 4 as merge file, 5 as write file,
+    % then switching to 6 as merge, 7 as write
+    KindN = fun(merge) -> 4; (write) -> 5 end,
+    meck:new(bitcask_lockops, [passthrough]),
+    meck:expect(bitcask_lockops, read_activefile,
+                fun(Kind, _) ->
+                        case get({fake_activefile, Kind}) of
+                            undefined ->
+                                N = KindN(Kind),
+                                % Next time return file + 2
+                                WriteFile(N+2),
+                                put({fake_activefile, Kind}, Fname(N+2)),
+                                Fname(N);
+                            File ->
+                                File
+                        end
+                end),
+    ReadFiles = lists:usort(bitcask:readable_files(Dir)),
+    meck:unload(),
+    ?assertEqual([Fname(N)||N<-lists:seq(1,5)],
+                 ReadFiles).
 
 fold_test_() ->
     {timeout, 60, fun fold_test2/0}.
