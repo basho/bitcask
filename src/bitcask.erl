@@ -234,9 +234,17 @@ get(Ref, Key, TryNum) ->
         E when is_record(E, bitcask_entry) ->
             case E#bitcask_entry.tstamp < expiry_time(State#bc_state.opts) of
                 true ->
-                    %% Expired entry; remove from keydir and free up memory
-                    ok = bitcask_nifs:keydir_remove(State#bc_state.keydir, Key),
-                    not_found;
+                    %% Expired entry; remove from keydir
+                    case bitcask_nifs:keydir_remove(State#bc_state.keydir, Key,
+                                                    E#bitcask_entry.tstamp,
+                                                    E#bitcask_entry.file_id,
+                                                    E#bitcask_entry.offset) of
+                        ok ->
+                            not_found;
+                        already_exists ->
+                            % Updated since last read, try again.
+                            get(Ref, Key, TryNum-1)
+                    end;
                 false ->
                     %% HACK: Use a fully-qualified call to get_filestate/2 so that
                     %% we can intercept calls w/ Pulse tests.
@@ -1151,7 +1159,7 @@ get_opt(Key, Opts) ->
 put_state(Ref, State) ->
     erlang:put(Ref, State).
 
-kt_id(Key) ->
+kt_id(Key) when is_binary(Key) ->
     Key.
 
 scan_key_files([], _KeyDir, Acc, _CloseFile, _KT) ->
@@ -1241,6 +1249,7 @@ init_keydir(Dirname, WaitTime, ReadWriteModeP, KT) ->
 
             case ScanResult of
                 {error, _} ->
+                    ok = bitcask_nifs:keydir_release(KeyDir),
                     ScanResult;
                 _ ->
                     %% Now that we loaded all the data, mark the keydir as ready
@@ -1326,19 +1335,9 @@ get_filestate(FileId, Dirname, ReadFiles, Mode) ->
 
 
 list_data_files(Dirname, WritingFile, MergingFile) ->
-    %% Get list of {tstamp, filename} for all files in the directory then
-    %% reverse sort that list and extract the fully-qualified filename.
     Files1 = bitcask_fileops:data_file_tstamps(Dirname),
-    Files2 = bitcask_fileops:data_file_tstamps(Dirname),
-    % TODO: Remove crazy
-    if Files1 == Files2 ->
-            %% No race, Files1 is a stable list.
-            [F || {_Tstamp, F} <- lists:sort(Files1),
-                  F /= WritingFile,
-                  F /= MergingFile];
-       true ->
-            list_data_files(Dirname, WritingFile, MergingFile)
-    end.
+    [F || {_Tstamp, F} <- lists:sort(Files1),
+          F /= WritingFile, F /= MergingFile].
 
 merge_files(#mstate { input_files = [] } = State) ->
     State;
@@ -1659,7 +1658,16 @@ readable_and_setuid_files(Dirname) ->
     %% Filter out files with setuid bit set: they've been marked for
     %% deletion by an earlier *successful* merge.
     Fs = [F || F <- list_data_files(Dirname, WritingFile, MergingFile)],
-    lists:partition(fun(F) -> not has_pending_delete_bit(F) end, Fs).
+
+    WritingFile2 = bitcask_lockops:read_activefile(write, Dirname),
+    MergingFile2 = bitcask_lockops:read_activefile(merge, Dirname),
+    case {WritingFile2, MergingFile2} of
+        {WritingFile, MergingFile} ->
+            lists:partition(fun(F) -> not has_pending_delete_bit(F) end, Fs);
+        _ ->
+            % Changed while fetching file list, retry
+            readable_and_setuid_files(Dirname)
+    end.
 
 %% Internal put - have validated that the file is opened for write
 %% and looked up the state at this point
@@ -1720,15 +1728,21 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State,
                     State3 = wrap_write_file(State2),
                     do_put(Key, Value, State3, Retries - 1, already_exists);
                     
-                #bitcask_entry{file_id=OldFileId,offset=OldOffset}
-                  when OldFileId =< WriteFileId ->
-                    PrevTombstone = <<?TOMBSTONE2_STR, OldFileId:32>>,
-                    {ok, WriteFile1, _, _} =
-                        bitcask_fileops:write(WriteFile0, Key, PrevTombstone,
-                                              Tstamp),
-                    State3 = State2#bc_state{write_file = WriteFile1},
+                #bitcask_entry{file_id=OldFileId,offset=OldOffset} ->
+                    State3 =
+                        case OldFileId < WriteFileId of
+                            true ->
+                                PrevTomb = <<?TOMBSTONE2_STR, OldFileId:32>>,
+                                {ok, WriteFile1, _, _} =
+                                    bitcask_fileops:write(WriteFile0, Key,
+                                                          PrevTomb, Tstamp),
+                                State2#bc_state{write_file = WriteFile1};
+                            false ->
+                                State2
+                        end,
                     write_and_keydir_put(State3, Key, Value, Tstamp, Retries,
                                          bitcask_time:tstamp(), OldFileId, OldOffset);
+
                 _ ->
                     State3 = State2#bc_state{write_file = WriteFile0},
                     write_and_keydir_put(State3, Key, Value, Tstamp, Retries,
@@ -1908,9 +1922,12 @@ expiry_merge([], _LiveKeyDir, _KT, Acc) ->
     Acc;
 expiry_merge([File | Files], LiveKeyDir, KT, Acc0) ->
     FileId = bitcask_fileops:file_tstamp(File),
-    Fun = fun(K, Tstamp, {Offset, _TotalSz}, Acc) ->
-                bitcask_nifs:keydir_remove(LiveKeyDir, KT(K), Tstamp, FileId, Offset),
-                Acc
+    Fun = fun({tombstone, _}, _, _, Acc) ->
+                  Acc;
+             (K, Tstamp, {Offset, _TotalSz}, Acc) ->
+                  bitcask_nifs:keydir_remove(LiveKeyDir, KT(K), Tstamp, FileId,
+                                             Offset),
+                  Acc
         end,
     case bitcask_fileops:fold_keys(File, Fun, ok, default) of
         {error, Reason} ->
@@ -1965,11 +1982,13 @@ init_dataset(Dirname, Opts, KVs) ->
     os:cmd(?FMT("rm -rf ~s", [Dirname])),
 
     B = bitcask:open(Dirname, [read_write] ++ Opts),
-    lists:foldl(fun({K, V}, _) ->
-                        ok = bitcask:put(B, K, V)
-                end, undefined, KVs),
+    put_kvs(B, KVs),
     B.
 
+put_kvs(B, KVs) ->
+    lists:foldl(fun({K, V}, _) ->
+                        ok = bitcask:put(B, K, V)
+                end, undefined, KVs).
 
 default_dataset() ->
     [{<<"k">>, <<"v">>},
@@ -2028,6 +2047,44 @@ list_data_files_test2() ->
 
     %% Now use the list_data_files to scan the dir
     ExpFiles = list_data_files("/tmp/bc.test.list", undefined, undefined).
+
+% Test that readable_files will not return the currently active
+% write or merge file by mistake if they change in between fetching them
+% and listing the files in the directory.
+list_data_files_race_test() ->
+    Dir = "/tmp/bc.test.list.race",
+    Fname = fun(N) ->
+                    filename:join(Dir, integer_to_list(N) ++ ".bitcask.data")
+            end,
+    WriteFile = fun(N) ->
+                        ok = file:write_file(Fname(N), <<>>)
+                end,
+    WriteFiles = fun(S,E) ->
+                         [WriteFile(N) || N <- lists:seq(S, E)]
+                 end,
+    os:cmd("rm -rf " ++ Dir ++ "; mkdir -p " ++ Dir),
+    WriteFiles(1,5),
+    % Faking 4 as merge file, 5 as write file,
+    % then switching to 6 as merge, 7 as write
+    KindN = fun(merge) -> 4; (write) -> 5 end,
+    meck:new(bitcask_lockops, [passthrough]),
+    meck:expect(bitcask_lockops, read_activefile,
+                fun(Kind, _) ->
+                        case get({fake_activefile, Kind}) of
+                            undefined ->
+                                N = KindN(Kind),
+                                % Next time return file + 2
+                                WriteFile(N+2),
+                                put({fake_activefile, Kind}, Fname(N+2)),
+                                Fname(N);
+                            File ->
+                                File
+                        end
+                end),
+    ReadFiles = lists:usort(bitcask:readable_files(Dir)),
+    meck:unload(),
+    ?assertEqual([Fname(N)||N<-lists:seq(1,5)],
+                 ReadFiles).
 
 fold_test_() ->
     {timeout, 60, fun fold_test2/0}.
@@ -2865,6 +2922,25 @@ corrupt_file(Path, Offset, Data) ->
     ok = file:write(FH, Data),
     file:close(FH).
 
+% Verify that if the cached efile port goes away, we can recover
+% and not get stuck opening casks
+efile_error_test() ->
+    Dir = "/tmp/bc.efile.error",
+    B = bitcask:open(Dir, [read_write]),
+    ok = bitcask:put(B, <<"k">>, <<"v">>),
+    ok = bitcask:close(B),
+    Port = get(bitcask_efile_port),
+    % If this fails, we stopped using the efile port trick to list
+    % dir contents, so remove this test
+    ?assert(is_port(Port)),
+    true = erlang:port_close(Port),
+    case bitcask:open(Dir) of
+        {error, _} = Err ->
+            ?assertEqual(ok, Err);
+        B2 when is_reference(B2) ->
+            ok = bitcask:close(B2)
+    end.
+
 %% About leak_t0():
 %%
 %% If bitcask leaks file descriptors for the 'touch'ed files, output is:
@@ -3210,6 +3286,26 @@ update_tstamp_stats_test2() ->
         bitcask_time:test__clear_fudge()
     end.
 
+scan_err_test_() ->
+    {setup,
+     fun() ->
+             meck:new(bitcask_fileops, [passthrough]),
+             ok
+     end,
+     fun(_) ->
+             meck:unload()
+     end,
+     [fun() ->
+              Dir = "/tmp/bc.scan.err",
+              meck:expect(bitcask_fileops, data_file_tstamps,
+                          fun(_) -> {error, because} end),
+              ?assertMatch({error, _}, bitcask:open(Dir)),
+              meck:unload(bitcask_fileops),
+              B = bitcask:open(Dir),
+              ?assertMatch({true, B}, {is_reference(B), B}),
+              ok = bitcask:close(B)
+      end]}.
+
 total_byte_stats_test_() ->
     {timeout, 60, fun total_byte_stats_test2/0}.
 
@@ -3280,6 +3376,31 @@ merge_batch_test2() ->
     after
         bitcask:close(B)
     end.
+
+merge_expired_test_() ->
+    {timeout, 120, fun merge_expired_test2/0}.
+
+merge_expired_test2() ->
+    Dir = "/tmp/bc.merge.expired.files",
+    NKeys = 10,
+    KF = fun(N) -> <<N:8/integer>> end,
+    KVGen = fun(S, E) ->
+                    [{KF(N), <<"v">>} || N <- lists:seq(S, E)]
+            end,
+    DataSet = KVGen(1, 3),
+    B = init_dataset(Dir, [{max_file_size, 1}], DataSet),
+    ok = bitcask:delete(B, KF(1)),
+    put_kvs(B, KVGen(4, NKeys)),
+    % Merge away the first 4 files as if they were completely expired,
+    FirstFiles = [Dir ++ "/" ++ integer_to_list(N) ++ ".bitcask.data" ||
+                  N <- lists:seq(1, 4)],
+    ?assertEqual(ok, bitcask:merge(Dir, [], {FirstFiles, FirstFiles})),
+    ExpectedKeys = [KF(N) || N <- lists:seq(4, NKeys)],
+    ActualKeys1 = lists:sort(bitcask:list_keys(B)),
+    ActualKeys2 = lists:sort(bitcask:fold(B, fun(K,_V,A)->[K|A] end, [])),
+    bitcask:close(B),
+    ?assertEqual(ExpectedKeys, ActualKeys1),
+    ?assertEqual(ExpectedKeys, ActualKeys2).
 
 max_merge_size_test_() ->
     {timeout, 120, fun max_merge_size_test2/0}.
@@ -3360,6 +3481,31 @@ legacy_tombstones_test2() ->
     AllFiles3 = readable_files(Dir),
     bitcask:close(B),
     ?assertEqual([Last], AllFiles3).
+
+update_tombstones_test() ->
+    Dir = "/tmp/bc.update.tombstones",
+    Key = <<"k">>,
+    Data = [{Key, integer_to_binary(N)} || N <- lists:seq(1, 10)],
+    B = init_dataset(Dir, [read_write, {max_file_size, 50000000}], Data),
+    ok = bitcask:close(B),
+    % Re-open to guarantee opening a second file.
+    % An update on the new file requires a tombstone.
+    B2 = bitcask:open(Dir, [read_write, {max_file_size, 50000000}]),
+    ok = bitcask:put(B2, Key, <<"last_val">>),
+    ok = bitcask:close(B2),
+    Files = bitcask:readable_files(Dir),
+    Fds = [begin
+               {ok, Fd} = bitcask_fileops:open_file(File),
+               Fd
+           end || File <- Files],
+    CountF = fun(_K, V, _Tstamp, _, Acc) ->
+                     case bitcask:is_tombstone(V) of
+                         true -> Acc + 1;
+                         false -> Acc
+                     end
+             end,
+    TombCount = bitcask:subfold(CountF, Fds, 0),
+    ?assertEqual(1, TombCount).
 
 make_merge_file(Dir, Seed, Probability) ->
     random:seed(Seed),
