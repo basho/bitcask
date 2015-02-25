@@ -87,11 +87,17 @@
                    tombstone_version = 2 :: 0 | 2
                   }).
 
+-ifdef(namespaced_types).
+-type bitcask_set() :: sets:set().
+-else.
+-type bitcask_set() :: set().
+-endif.
+
 -record(mstate, { dirname :: string(),
                   merge_lock :: reference(),
                   max_file_size :: integer(),
                   input_files :: [#filestate{}],
-                  input_file_ids :: set(),
+                  input_file_ids :: bitcask_set(),
                   min_file_id :: non_neg_integer(),
                   tombstone_write_files :: [#filestate{}],
                   out_file :: 'fresh' | #filestate{},

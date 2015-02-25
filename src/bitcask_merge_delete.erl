@@ -41,10 +41,16 @@
 -compile(export_all).
 -endif.
 
--define(SERVER, ?MODULE). 
+-define(SERVER, ?MODULE).
 -define(TIMEOUT, 1000).
 
--record(state, {q :: queue()}).
+-ifdef(namespaced_types).
+-type merge_queue() :: queue:queue().
+-else.
+-type merge_queue() :: queue().
+-endif.
+
+-record(state, {q :: merge_queue()}).
 
 %%%===================================================================
 %%% API
