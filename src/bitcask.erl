@@ -2122,14 +2122,19 @@ fold_corrupt_file_test_() ->
 
 fold_corrupt_file_test2() ->
     TestDir = "/tmp/bc.test.fold_corrupt_file_test",
-    TestDataFile = TestDir ++ "/1.bitcask.data",
-
-    os:cmd("rm -rf " ++ TestDir),
-    B = bitcask:open(TestDir, [read_write]),
-    ok = bitcask:put(B,<<"k">>,<<"v">>),
-    close(B),
 
     DataList = [{<<"k">>, <<"v">>}],
+    CreateFun = fun(KVList) ->
+                       os:cmd("rm -rf " ++ TestDir),
+                       B = bitcask:open(TestDir, [read_write]),
+                       [ begin
+                             ok = bitcask:put(B, K, V)
+                         end || {K, V} <- KVList],
+                       close(B),
+                       bitcask:readable_files(TestDir)
+               end,
+
+    [File1] = CreateFun(DataList),
     FoldFun = fun (K, V, Acc) -> [{K, V} | Acc] end,
 
     B2 = bitcask:open(TestDir),
@@ -2137,20 +2142,49 @@ fold_corrupt_file_test2() ->
     close(B2),
 
     % Incomplete header
-    {ok, F} = file:open(TestDataFile, [append, raw, binary]),
+    {ok, File1Before} = file:read_file(File1),
+    {ok, F} = file:open(File1, [append, raw, binary]),
     ok = file:write(F, <<100:32, 100:32, 100:16>>),
     file:close(F),
+    {ok, File1After} = file:read_file(File1),
+    ?assert(File1Before /= File1After),
     B3 = bitcask:open(TestDir),
     ?assertEqual(DataList, bitcask:fold(B3, FoldFun,[])),
     close(B3),
 
+    % Re-create before trying next corruption
+    [File2] = CreateFun(DataList),
+    {ok, File2Before} = file:read_file(File2),
     % Header without any data
-    {ok, F2} = file:open(TestDataFile, [append, raw, binary]),
+    {ok, F2} = file:open(File2, [append, raw, binary]),
     ok = file:write(F2, <<100:32>>),
     file:close(F2),
+    {ok, File2After} = file:read_file(File2),
+    ?assert(File2Before /= File2After),
     B4 = bitcask:open(TestDir),
     ?assertEqual(DataList, bitcask:fold(B4, FoldFun,[])),
     close(B4),
+
+    %% If record is corrupted, the key should not be loaded.
+    DataList2 = [{<<"k1">>, <<"v1">>}, {<<"k2">>, <<"v2">>}],
+    [File3] = CreateFun(DataList2),
+    {ok, File3Before} = file:read_file(File3),
+    Hintfile = bitcask_fileops:hintfile_name(File3),
+    ?assertEqual(true, filelib:is_regular(File3)),
+    ?assertEqual(true, filelib:is_regular(Hintfile)),
+    ok = file:delete(Hintfile),
+    ?assertEqual(false, filelib:is_regular(Hintfile)),
+    %% Change last byte of value for k2 to invalidate its CRC.
+    {ok, F3} = file:open(File3, [binary, read, write]),
+    ok = file:pwrite(F3, {eof, -1}, <<"3">>),
+    ok = file:close(F3),
+    {ok, File3After} = file:read_file(File3),
+    ?assert(File3Before /= File3After),
+    B5 = bitcask:open(TestDir),
+    LoadedKeys = bitcask:list_keys(B5),
+    ?assertEqual([<<"k1">>], LoadedKeys),
+    bitcask:close(B5),
+
     ok.
 
 % Issue puts until the entries hash in the keydir can not be updated anymore
