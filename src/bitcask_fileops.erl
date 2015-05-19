@@ -405,8 +405,8 @@ fold_keys(State, Fun, Acc) ->
 
 -spec fold_keys(fresh | #filestate{}, key_fold_fun(), any(), key_fold_mode()) ->
         any() | {error, any()}.
-fold_keys(#filestate { fd = Fd } = _State, Fun, Acc, datafile) ->
-    fold_keys_loop(Fd, 0, Fun, Acc);
+fold_keys(State, Fun, Acc, datafile) ->
+    fold_keys_loop(State, 0, Fun, Acc);
 fold_keys(#filestate { fd = _Fd } = State, Fun, Acc, hintfile) ->
     fold_hintfile(State, Fun, Acc);
 fold_keys(State, Fun, Acc, Mode) ->
@@ -414,14 +414,14 @@ fold_keys(State, Fun, Acc, Mode) ->
 
 fold_keys(State, Fun, Acc, default, true) ->
     fold_hintfile(State, Fun, Acc);
-fold_keys(#filestate{fd = Fd}, Fun, Acc, default, false) ->
-    fold_keys_loop(Fd, 0, Fun, Acc);
+fold_keys(State, Fun, Acc, default, false) ->
+    fold_keys_loop(State, 0, Fun, Acc);
 fold_keys(State, Fun, Acc, recovery, true) ->
     fold_keys(State, Fun, Acc, recovery, true, has_valid_hintfile(State));
-fold_keys(#filestate{fd = Fd}, Fun, Acc, recovery, false) ->
-            fold_keys_loop(Fd, 0, Fun, Acc).
+fold_keys(State, Fun, Acc, recovery, false) ->
+            fold_keys_loop(State, 0, Fun, Acc).
 
-fold_keys(#filestate{fd=Fd}=State, Fun, Acc, recovery, _, true) ->
+fold_keys(State, Fun, Acc, recovery, _, true) ->
     case fold_hintfile(State, Fun, Acc) of
         {error, {trunc_hintfile, Acc0}} ->
             Acc0;
@@ -429,15 +429,15 @@ fold_keys(#filestate{fd=Fd}=State, Fun, Acc, recovery, _, true) ->
             HintFile = hintfile_name(State),
             error_logger:warning_msg("Hintfile '~s' failed fold: ~p\n",
                                      [HintFile, Reason]),
-            fold_keys_loop(Fd, 0, Fun, Acc);
+            fold_keys_loop(State, 0, Fun, Acc);
         Acc1 ->
             Acc1
     end;
-fold_keys(#filestate{fd=Fd}=State, Fun, Acc, recovery, _, false) ->
+fold_keys(State, Fun, Acc, recovery, _, false) ->
     HintFile = hintfile_name(State),
     error_logger:warning_msg("Hintfile '~s' invalid\n",
                              [HintFile]),
-    fold_keys_loop(Fd, 0, Fun, Acc).
+    fold_keys_loop(State, 0, Fun, Acc).
 
 -spec mk_filename(string(), integer()) -> string().
 mk_filename(Dirname, Tstamp) ->
@@ -566,51 +566,50 @@ fold_int_loop(<<Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD,
 fold_int_loop(_Bytes, _Fun, Acc, Consumed, Args) ->
     {more, Acc, Consumed, Args}.
 
-fold_keys_loop(Fd, Offset, Fun, Acc0) ->
+fold_keys_loop(#filestate{fd=Fd, filename=Filename, tstamp=FTStamp}, Offset,
+               Fun, Acc0) ->
     case bitcask_io:file_position(Fd, Offset) of 
         {ok, Offset} -> ok;
         Other -> error(Other)
     end,
     
-    case fold_file_loop(Fd, regular, fun fold_keys_int_loop/5, Fun, Acc0, {Offset, 0}) of
+    case fold_file_loop(Fd, regular, fun fold_keys_int_loop/5, Fun, Acc0,
+                        {Filename, FTStamp, Offset, 0}) of
         {error, Reason} ->
             {error, Reason};
         Acc -> Acc
     end.
 
-fold_keys_int_loop(<<_Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD, 
-                     KeySz:?KEYSIZEFIELD, ValueSz:?VALSIZEFIELD, 
-                     Key:KeySz/bytes, Value:ValueSz/bytes,
-                     Rest/binary>>, 
-                   Fun, Acc0, Consumed0, 
-                   {Offset, AvgValSz0}) ->
-    TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
-    PosInfo = {Offset, TotalSz},
-    Consumed = Consumed0 + TotalSz,
-    AvgValSz = (AvgValSz0 + ValueSz) div 2,
-    KeyPlus = case bitcask:is_tombstone(Value) of
-                  true  -> {tombstone, Key};
-                  false -> Key
-              end,
-    Acc = Fun(KeyPlus, Tstamp, PosInfo, Acc0),
-    fold_keys_int_loop(Rest, Fun, Acc, Consumed, 
-                       {Offset + TotalSz, AvgValSz});
-%% in the case where values are very large, we don't actually want to
-%% get a larger binary if we don't have to, so just issue a skip.
-fold_keys_int_loop(<<_Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD,
+fold_keys_int_loop(_Bytes, _Fun, Acc, _Consumed, {Filename, _, Offset, 20}) ->
+    error_logger:error_msg("fold_loop: CRC error limit at file ~p offset ~p\n",
+                           [Filename, Offset]),
+    {done, Acc};
+fold_keys_int_loop(<<Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD,
                      KeySz:?KEYSIZEFIELD, ValueSz:?VALSIZEFIELD,
-                     Key:KeySz/bytes,
-                     _Rest/binary>>,
-                   Fun, Acc0, _Consumed0,
-                   {Offset, AvgValSz0})
-  when ValueSz > ?MAX_TOMBSTONE_SIZE,
-       AvgValSz0 > ?CHUNK_SIZE ->
+                     Key:KeySz/bytes, Value:ValueSz/bytes, Rest/binary>>,
+                   Fun, Acc0, Consumed0,
+                   {Filename, FTStamp, Offset, CrcSkipCount}) ->
     TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
-    PosInfo = {Offset, TotalSz},
-    Acc = Fun(Key, Tstamp, PosInfo, Acc0),
-    AvgValSz = (AvgValSz0 + ValueSz) div 2,
-    NewPos = Offset + TotalSz,
-    {skip, Acc, NewPos, {NewPos, AvgValSz}};
+    case erlang:crc32([<<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
+                         ValueSz:?VALSIZEFIELD>>, Key, Value]) of
+        Crc32 ->
+            PosInfo = {Offset, TotalSz},
+            KeyPlus = case bitcask:is_tombstone(Value) of
+                          true  -> {tombstone, Key};
+                          false -> Key
+                      end,
+            Acc = Fun(KeyPlus, Tstamp, PosInfo, Acc0),
+            fold_keys_int_loop(Rest, Fun, Acc, Consumed0 + TotalSz,
+                               {Filename, FTStamp, Offset + TotalSz,
+                                CrcSkipCount});
+        _ ->
+            error_logger:error_msg("fold_loop: CRC error at file ~s offset ~p, "
+                                   "skipping ~p bytes\n",
+                                   [Filename, Offset, TotalSz]),
+            fold_keys_int_loop(Rest, Fun, Acc0, Consumed0 + TotalSz,
+                               {Filename, FTStamp, Offset + TotalSz,
+                                CrcSkipCount + 1})
+    end;
 fold_keys_int_loop(_Bytes, _Fun, Acc, Consumed, Args) ->
     {more, Acc, Consumed, Args}.
 
