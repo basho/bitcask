@@ -3312,6 +3312,25 @@ scan_err_test_() ->
               ok = bitcask:close(B)
       end]}.
 
+%% Make sure that an error in the user provided key transformation function
+%% does not bring the whole thing down. It's possible to hit this in Riak
+%% when finding keys from a downgrade and such.
+no_crash_on_key_transform_test() ->
+    Dir = "/tmp/bc.key.tx.crash",
+    CrashTx = fun(_K) ->
+                      throw(naughty_key_transform_failure)
+              end,
+    B = init_dataset(Dir, [read_write, {key_transform, CrashTx}],
+                     default_dataset()),
+    bitcask:list_keys(B),
+    bitcask:fold(B, fun(K, _V, Acc0) -> [K|Acc0] end, [], -1, -1, true),
+    bitcask:merge(Dir, [{key_transform, CrashTx}]),
+    ok = bitcask:close(B),
+    B2 = bitcask:open(Dir, [{key_transform, CrashTx}]),
+    ok = bitcask:close(B2),
+    ok.
+
+
 total_byte_stats_test_() ->
     {timeout, 60, fun total_byte_stats_test2/0}.
 
