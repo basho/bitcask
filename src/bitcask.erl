@@ -2835,6 +2835,73 @@ delete_keydir_test2() ->
     bitcask:close(KDB),
     ok.
 
+retry_until_true(_, _, N) when N =< 0 ->
+   false;
+retry_until_true(F, Delay, Retries) ->
+    case F() of
+        true ->
+            true;
+        _ ->
+            timer:sleep(Delay),
+            retry_until_true(F, Delay, Retries - 1)
+    end.
+
+no_pending_delete_bottleneck_test_() ->
+    {timeout, 30, fun no_pending_delete_bottleneck_test2/0}.
+
+no_pending_delete_bottleneck_test2() ->
+    % Populate B1 and B2. Then put till frozen both after reopening.
+    % Delete all keys in both. Merge in both. Unfreeze B2. With the bug
+    % B2 files will not be deleted.
+
+    Dir1 = "/tmp/bc.test.del.block.1",
+    Dir2 = "/tmp/bc.test.del.block.2",
+
+    Data = default_dataset(),
+    bitcask:close(init_dataset(Dir1, [{max_file_size, 1}], Data)),
+    bitcask:close(init_dataset(Dir2, [{max_file_size, 1}], Data)),
+
+    B1 = bitcask:open(Dir1, [read_write]),
+    B2 = bitcask:open(Dir2, [read_write]),
+
+    Files2 = readable_files(Dir2),
+
+    FileDeleted = fun(Fname) ->
+                          not filelib:is_regular(Fname)
+                  end,
+
+    FilesDeleted = fun() ->
+                           lists:all(FileDeleted, Files2)
+                   end,
+
+    try
+        bitcask:iterator(B1, -1, -1),
+        put_till_frozen(B1),
+        [begin
+             ?assertEqual(ok, bitcask:delete(B1, K))
+         end || {K, _} <- Data],
+        bitcask:merge(Dir1),
+
+        bitcask:iterator(B2, -1, -1),
+        put_till_frozen(B2),
+        [begin
+             ?assertEqual(ok, bitcask:delete(B2, K))
+         end || {K, _} <- Data],
+        bitcask:merge(Dir2),
+        bitcask:iterator_release(B2),
+
+        %% Timing is everything. This test will timeout in 60 seconds.
+        %% The merge delete worker works on a 1 second tick. So it should
+        %% have at least a chance to delete the files in 10 seconds.
+        %% Famous last words.
+        ?assert(retry_until_true(FilesDeleted, 1000, 10))
+    after
+        catch bitcask:close(B1),
+        catch bitcask:close(B2)
+    end.
+
+
+
 frag_status_test_() ->
     {timeout, 60, fun frag_status_test2/0}.
 
