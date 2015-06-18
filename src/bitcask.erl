@@ -404,11 +404,19 @@ fold(State, Fun, Acc0, MaxAge, MaxPut, SeeTombstonesP) ->
                     {ok, Files, FoldEpoch} ->
                         ExpiryTime = expiry_time(State#bc_state.opts),
                         SubFun = fun(K0,V,TStamp,{_FN,FTS,Offset,_Sz},Acc) ->
-                                         K = KT(K0),
-                                         case (TStamp < ExpiryTime) of
-                                             true ->
+                                         K = try
+                                                 KT(K0)
+                                             catch
+                                                 KeyTxErr ->
+                                                     {key_tx_error, {K0, KeyTxErr}}
+                                             end,
+                                         case {K, (TStamp < ExpiryTime)} of
+                                             {{key_tx_error, TxErr}, _} ->
+                                                 error_logger:error_msg("Error converting key ~p: ~p", [K0, TxErr]),
                                                  Acc;
-                                             false ->
+                                             {_, true} ->
+                                                 Acc;
+                                             {_, false} ->
                                                  case bitcask_nifs:keydir_get(
                                                         State#bc_state.keydir, K,
                                                         FoldEpoch) of
@@ -1181,17 +1189,34 @@ scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile, KT) ->
             %% tombstones or data errors.  Otherwise we risk of
             %% reusing the file id for new data.
             _ = bitcask_nifs:increment_file_id(KeyDir, FileTstamp),
-            F = fun({tombstone, K}, _Tstamp, {_Offset, _TotalSz}, _) ->
-                        _ = bitcask_nifs:keydir_remove(KeyDir, KT(K));
-                   (K, Tstamp, {Offset, TotalSz}, _) ->
-                        bitcask_nifs:keydir_put(KeyDir,
-                                                KT(K),
-                                                FileTstamp,
-                                                TotalSz,
-                                                Offset,
-                                                Tstamp,
-                                                bitcask_time:tstamp(),
-                                                false)
+            F = fun({tombstone, K0}, _Tstamp, {_Offset, _TotalSz}, _) ->
+                        K = try KT(K0) catch TxErr -> {key_tx_error, TxErr} end,
+                        case K of
+                            {key_tx_error, KeyTxErr} ->
+                                error_logger:error_msg("Invalid key on load ~p: ~p",
+                                                       [K0, KeyTxErr]),
+                                ok;
+                            _ ->
+                                bitcask_nifs:keydir_remove(KeyDir, KT(K))
+                        end,
+                        ok;
+                   (K0, Tstamp, {Offset, TotalSz}, _) ->
+                        K = try KT(K0) catch TxErr -> {key_tx_error, TxErr} end,
+                        case K of
+                            {key_tx_error, KeyTxErr} ->
+                                error_logger:error_msg("Invalid key on load ~p: ~p",
+                                                       [K0, KeyTxErr]);
+                            _ ->
+                                bitcask_nifs:keydir_put(KeyDir,
+                                                        K,
+                                                        FileTstamp,
+                                                        TotalSz,
+                                                        Offset,
+                                                        Tstamp,
+                                                        bitcask_time:tstamp(),
+                                                        false)
+                        end,
+                        ok
                 end,
             bitcask_fileops:fold_keys(File, F, undefined, recovery),
             if CloseFile == true ->
@@ -1352,8 +1377,21 @@ merge_files(#mstate {  dirname = Dirname,
                        key_transform = KT
                     } = State) ->
     FileId = bitcask_fileops:file_tstamp(File),
-    F = fun(K, V, Tstamp, Pos, State0) ->
-                merge_single_entry(KT(K), V, Tstamp, FileId, Pos, State0)
+    F = fun(K0, V, Tstamp, Pos, State0) ->
+                K = try
+                        KT(K0)
+                    catch
+                        Err ->
+                            {key_tx_error, Err}
+                    end,
+                case K of
+                    {key_tx_error, TxErr} ->
+                        error_logger:error_msg("Invalid key on merge ~p: ~p",
+                                               [K0, TxErr]),
+                        State0;
+                    _ ->
+                        merge_single_entry(K, V, Tstamp, FileId, Pos, State0)
+                end
         end,
     State2 = try bitcask_fileops:fold(File, F, State) of
                  #mstate{delete_files = DelFiles} = State1 ->
@@ -1930,9 +1968,16 @@ expiry_merge([File | Files], LiveKeyDir, KT, Acc0) ->
     FileId = bitcask_fileops:file_tstamp(File),
     Fun = fun({tombstone, _}, _, _, Acc) ->
                   Acc;
-             (K, Tstamp, {Offset, _TotalSz}, Acc) ->
-                  bitcask_nifs:keydir_remove(LiveKeyDir, KT(K), Tstamp, FileId,
-                                             Offset),
+             (K0, Tstamp, {Offset, _TotalSz}, Acc) ->
+                  K = try KT(K0) catch TxErr -> {key_tx_error, TxErr} end,
+                  case K of
+                      {key_tx_error, KeyTxErr} ->
+                          error_logger:error_msg("Invalid key on merge ~p: ~p",
+                                                 [K0, KeyTxErr]);
+                      _ ->
+                          bitcask_nifs:keydir_remove(LiveKeyDir, K, Tstamp,
+                                                     FileId, Offset)
+                  end,
                   Acc
         end,
     case bitcask_fileops:fold_keys(File, Fun, ok, default) of
@@ -3345,6 +3390,25 @@ scan_err_test_() ->
               ?assertMatch({true, B}, {is_reference(B), B}),
               ok = bitcask:close(B)
       end]}.
+
+%% Make sure that an error in the user provided key transformation function
+%% does not bring the whole thing down. It's possible to hit this in Riak
+%% when finding keys from a downgrade and such.
+no_crash_on_key_transform_test() ->
+    Dir = "/tmp/bc.key.tx.crash",
+    CrashTx = fun(_K) ->
+                      throw(naughty_key_transform_failure)
+              end,
+    B = init_dataset(Dir, [read_write, {key_transform, CrashTx}],
+                     default_dataset()),
+    bitcask:list_keys(B),
+    bitcask:fold(B, fun(K, _V, Acc0) -> [K|Acc0] end, [], -1, -1, true),
+    bitcask:merge(Dir, [{key_transform, CrashTx}]),
+    ok = bitcask:close(B),
+    B2 = bitcask:open(Dir, [{key_transform, CrashTx}]),
+    ok = bitcask:close(B2),
+    ok.
+
 
 total_byte_stats_test_() ->
     {timeout, 60, fun total_byte_stats_test2/0}.
