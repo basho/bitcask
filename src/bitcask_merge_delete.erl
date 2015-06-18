@@ -82,7 +82,7 @@ handle_call({defer_delete, Dirname, IterGeneration, Files}, _From, State) ->
 handle_call({queue_length}, _From, State) ->
     {reply, queue:len(State#state.q), State, ?TIMEOUT};
 handle_call({testonly__delete_trigger}, _From, State) ->
-    {reply, ok, check_status(State), ?TIMEOUT};
+    {reply, ok, delete_ready_files(State), ?TIMEOUT};
 handle_call(_Request, _From, State) ->
     Reply = unknown_request,
     {reply, Reply, State, ?TIMEOUT}.
@@ -91,7 +91,7 @@ handle_cast(_Msg, State) ->
     {noreply, State, ?TIMEOUT}.
 
 handle_info(timeout, State) ->
-    {noreply, check_status(State), ?TIMEOUT};
+    {noreply, delete_ready_files(State), ?TIMEOUT};
 handle_info(_Info, State) ->
     {noreply, State, ?TIMEOUT}.
 
@@ -105,29 +105,37 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
-check_status(S) ->
+delete_ready_files(S) ->
+    delete_ready_files(S, queue:new()).
+
+delete_ready_files(S, PendingQ) ->
     case queue:out(S#state.q) of
         {empty, _} ->
-            S;
-        {{value, {Dirname, IterGeneration, Files}}, NewQ} ->
+            S#state{q = PendingQ};
+        {{value, {Dirname, IterGeneration, Files} = Entry}, NewQ} ->
             {_, KeyDir} = bitcask_nifs:keydir_new(Dirname),
             try
 
                 {_,_,_,IterStatus,_} = bitcask_nifs:keydir_info(KeyDir),
-                CleanAndGo = fun() ->
-                                     delete_files(Files),
-                                     bitcask_nifs:keydir_release(KeyDir),
-                                     check_status(S#state{q = NewQ})
-                             end,
-                case IterStatus of
-                    {_, _, false, _} ->
-                        CleanAndGo();
-                    {CurGen, _, true, _} when CurGen > IterGeneration ->
-                        CleanAndGo();
-                    _ ->
-                        %% Do nothing, ignore NewQ
-                        S
+                ReadyToDelete =
+                    case IterStatus of
+                        {_, _, false, _} ->
+                            true;
+                        {CurGen, _, true, _} when CurGen > IterGeneration ->
+                            true;
+                        _ ->
+                            false
+                    end,
+                S2 = S#state{q = NewQ},
+                case ReadyToDelete of
+                    true ->
+                        delete_files(Files),
+                        bitcask_nifs:keydir_release(KeyDir),
+                        delete_ready_files(S2, PendingQ);
+                    false ->
+                        delete_ready_files(S2, queue:in(Entry, PendingQ))
                 end
+
             catch _X:_Y ->
                     %% Not sure what problem was: keydir is no longer
                     %% valid, or a problem deleting files, but in any
