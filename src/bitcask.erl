@@ -412,7 +412,7 @@ fold(State, Fun, Acc0, MaxAge, MaxPut, SeeTombstonesP) ->
                                              end,
                                          case {K, (TStamp < ExpiryTime)} of
                                              {{key_tx_error, TxErr}, _} ->
-                                                 error_logger:error_msg("Error converting key ~p", [TxErr]),
+                                                 error_logger:error_msg("Error converting key ~p: ~p", [K0, TxErr]),
                                                  Acc;
                                              {_, true} ->
                                                  Acc;
@@ -1205,8 +1205,7 @@ scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile, KT) ->
                         case K of
                             {key_tx_error, KeyTxErr} ->
                                 error_logger:error_msg("Invalid key on load ~p: ~p",
-                                                       [K0, KeyTxErr]),
-                                ok;
+                                                       [K0, KeyTxErr]);
                             _ ->
                                 bitcask_nifs:keydir_put(KeyDir,
                                                         K,
@@ -1215,9 +1214,9 @@ scan_key_files([Filename | Rest], KeyDir, Acc, CloseFile, KT) ->
                                                         Offset,
                                                         Tstamp,
                                                         bitcask_time:tstamp(),
-                                                        false),
-                                ok
-                        end
+                                                        false)
+                        end,
+                        ok
                 end,
             bitcask_fileops:fold_keys(File, F, undefined, recovery),
             if CloseFile == true ->
@@ -1974,13 +1973,12 @@ expiry_merge([File | Files], LiveKeyDir, KT, Acc0) ->
                   case K of
                       {key_tx_error, KeyTxErr} ->
                           error_logger:error_msg("Invalid key on merge ~p: ~p",
-                                                 [K0, KeyTxErr]),
-                          Acc;
+                                                 [K0, KeyTxErr]);
                       _ ->
                           bitcask_nifs:keydir_remove(LiveKeyDir, K, Tstamp,
-                                                     FileId, Offset),
-                          Acc
-                  end
+                                                     FileId, Offset)
+                  end,
+                  Acc
         end,
     case bitcask_fileops:fold_keys(File, Fun, ok, default) of
         {error, Reason} ->
