@@ -82,84 +82,9 @@
 
 -type errno_atom() :: atom().                   % POSIX errno as atom
 
+
 -spec init() ->
         ok | {error, any()}.
--spec keydir_new() -> {ok, reference()}.
--spec keydir_new(string()) ->
-        {ok, reference()} |
-        {ready, reference()} | {not_ready, reference()} |
-        {error, not_ready}.
--spec maybe_keydir_new(string()) ->
-        {ready, reference()} |
-        {error, not_ready}.
--spec keydir_mark_ready(reference()) ->
-        ok.
--spec keydir_put(reference(), binary(), integer(), integer(),
-                 integer(), integer(), integer()) ->
-        ok | already_exists.
--spec keydir_put(reference(), binary(), integer(), integer(),
-                 integer(), integer(), integer(), boolean()) ->
-        ok | already_exists.
--spec keydir_put(reference(), binary(), integer(), integer(),
-                 integer(), integer(), integer(), integer(), integer()) ->
-        ok | already_exists.
--spec keydir_put_int(reference(), binary(), integer(), integer(),
-                     binary(), integer(), 0 | 1, integer(), integer(), binary()) ->
-        ok | already_exists.
--spec keydir_get(reference(), binary()) ->
-        not_found | #bitcask_entry{}.
--spec keydir_get(reference(), binary(), integer()) ->
-        not_found | #bitcask_entry{}.
--spec keydir_get_int(reference(), binary(), integer()) ->
-        not_found | #bitcask_entry{}.
--spec keydir_remove(reference(), binary()) ->
-        ok | already_exists.
--spec keydir_remove(reference(), binary(), integer(), integer(), integer()) ->
-        ok | already_exists.
--spec keydir_copy(reference()) ->
-        {ok, reference()}.
--spec keydir_itr(reference(), integer(), integer()) ->
-        ok | out_of_date | {error, iteration_in_process}.
--spec keydir_itr_next(reference()) ->
-        #bitcask_entry{} |
-        {error, iteration_not_started} | allocation_error | not_found.
--spec keydir_itr_release(reference()) ->
-        ok.
--spec increment_file_id(reference()) ->
-        {ok, non_neg_integer()}.
--spec increment_file_id(reference(), non_neg_integer()) ->
-        {ok, non_neg_integer()}.
--spec keydir_fold(reference(), fun((any(), any()) -> any()), any(),
-                  integer(), integer()) ->
-        any() | {error, any()}.
--spec keydir_info(reference()) ->
-        {integer(), integer(),
-         [{integer(), integer(), integer(), integer(), integer(),
-           integer(), integer(), integer()}],
-         {integer(), integer(), boolean(), 'undefined'|integer()},
-        non_neg_integer()}.
--spec keydir_release(reference()) ->
-        ok.
--spec keydir_trim_fstats(reference(), [integer()]) ->
-        {ok, integer()} | {error, atom()}.
--spec update_fstats(reference(), non_neg_integer(), non_neg_integer(),
-                    integer(), integer(), integer(), integer(), integer() ) ->
-    ok.
--spec set_pending_delete(reference(), non_neg_integer()) ->
-    ok.
--spec lock_acquire(string(), integer()) ->
-        {ok, reference()} | {error, atom()}.
--spec lock_release(reference()) ->
-        ok.
--spec lock_readdata(reference()) ->
-        {ok, binary()} |
-        {fstat_error, integer()} | {error, allocation_error} |
-        {pread_error, integer()}.
--spec lock_writedata(reference(), binary()) ->
-        ok |
-        {ftruncate_error, errno_atom()} | {pwrite_error, errno_atom()} |
-        {error, lock_not_writable}.
-
 init() ->
     case code:priv_dir(bitcask) of
         {error, bad_name} ->
@@ -170,7 +95,7 @@ init() ->
                     SoName = filename:join("../priv", "bitcask")
             end;
          Dir ->
-			SoName = filename:join(Dir, "bitcask")
+            SoName = filename:join(Dir, "bitcask")
     end,
     erlang:load_nif(SoName, 0).
 
@@ -182,31 +107,50 @@ set_pulse_pid(_Pid) ->
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
-%% 
+%%
 %% Most of the functions below are actually defined in c_src/bitcask_nifs.c
 %% See that file for the real functionality of the bitcask_nifs module.
 %% The definitions here are only to satisfy trivial static analysis.
-%% 
+%%
 
 
+-spec keydir_new() -> {ok, reference()}.
 keydir_new() ->
     erlang:nif_error({error, not_loaded}).
 
+-spec keydir_new(string()) ->
+        {ok, reference()} |
+        {ready, reference()} | {not_ready, reference()} |
+        {error, not_ready}.
 keydir_new(Name) when is_list(Name) ->
     erlang:nif_error({error, not_loaded}).
 
+-spec maybe_keydir_new(string()) ->
+        {ready, reference()} |
+        {error, not_ready}.
 maybe_keydir_new(Name) when is_list(Name) ->
     erlang:nif_error({error, not_loaded}).
 
+-spec keydir_mark_ready(reference()) ->
+        ok.
 keydir_mark_ready(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
+-spec keydir_put(reference(), binary(), integer(), integer(),
+                 integer(), integer(), integer()) ->
+        ok | already_exists.
 keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NowSec) ->
     keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NowSec, false).
 
+-spec keydir_put(reference(), binary(), integer(), integer(),
+                 integer(), integer(), integer(), boolean()) ->
+        ok | already_exists.
 keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NowSec, NewestPutB) ->
     keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NowSec, NewestPutB, 0, 0).
 
+-spec keydir_put(reference(), binary(), integer(), integer(),
+                 integer(), integer(), integer(), integer(), integer()) ->
+        ok | already_exists.
 keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NowSec, OldFileId, OldOffset) ->
     keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NowSec, false,
                OldFileId, OldOffset).
@@ -219,44 +163,61 @@ keydir_put(Ref, Key, FileId, TotalSz, Offset, Tstamp, NowSec, NewestPutB,
                                    end,
                    OldFileId, <<OldOffset:64/unsigned-native>>).
 
+-spec keydir_put_int(reference(), binary(), integer(), integer(),
+                     binary(), integer(), 0 | 1, integer(), integer(), binary()) ->
+        ok | already_exists.
 keydir_put_int(_Ref, _Key, _FileId, _TotalSz, _Offset, _Tstamp, _NowSec,
                _NewestPutI, _OldFileId, _OldOffset) ->
     erlang:nif_error({error, not_loaded}).
 
+-spec keydir_get(reference(), binary()) ->
+        not_found | #bitcask_entry{}.
 keydir_get(Ref, Key) ->
     keydir_get(Ref, Key, 16#ffffffffffffffff).
 
+-spec keydir_get(reference(), binary(), integer()) ->
+        not_found | #bitcask_entry{}.
 keydir_get(Ref, Key, Epoch) ->
     case keydir_get_int(Ref, Key, Epoch) of
         E when is_record(E, bitcask_entry) ->
             <<Offset:64/unsigned-native>> = E#bitcask_entry.offset,
             E#bitcask_entry{offset = Offset};
-        _ ->            
+        _ ->
             not_found
     end.
 
+-spec keydir_get_int(reference(), binary(), integer()) ->
+        not_found | #bitcask_entry{}.
 keydir_get_int(_Ref, _Key, _Epoch) ->
     erlang:nif_error({error, not_loaded}).
 
 keydir_get_epoch(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
+-spec keydir_remove(reference(), binary()) ->
+        ok | already_exists.
 keydir_remove(Ref, Key) ->
     keydir_remove(Ref, Key, bitcask_time:tstamp()).
 
 keydir_remove(_Ref, _Key, _TStamp) ->
     erlang:nif_error({error, not_loaded}).
 
+-spec keydir_remove(reference(), binary(), integer(), integer(), integer()) ->
+        ok | already_exists.
 keydir_remove(Ref, Key, Tstamp, FileId, Offset) ->
-    keydir_remove_int(Ref, Key, Tstamp, FileId, <<Offset:64/unsigned-native>>, 
+    keydir_remove_int(Ref, Key, Tstamp, FileId, <<Offset:64/unsigned-native>>,
                       bitcask_time:tstamp()).
 
 keydir_remove_int(_Ref, _Key, _Tstamp, _FileId, _Offset, _TStamp) ->
     erlang:nif_error({error, not_loaded}).
 
+-spec keydir_copy(reference()) ->
+        {ok, reference()}.
 keydir_copy(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
+-spec keydir_itr(reference(), integer(), integer()) ->
+        ok | out_of_date | {error, iteration_in_process}.
 keydir_itr(Ref, MaxAge, MaxPuts) ->
     TS = bitcask_time:tstamp(),
     keydir_itr_int(Ref, TS, MaxAge, MaxPuts).
@@ -264,6 +225,9 @@ keydir_itr(Ref, MaxAge, MaxPuts) ->
 keydir_itr_int(_Ref, _Ts, _MaxAge, _MaxPuts) ->
     erlang:nif_error({error, not_loaded}).
 
+-spec keydir_itr_next(reference()) ->
+        #bitcask_entry{} |
+        {error, iteration_not_started} | allocation_error | not_found.
 keydir_itr_next(Ref) ->
     case keydir_itr_next_int(Ref) of
         E when is_record(E, bitcask_entry) ->
@@ -276,15 +240,24 @@ keydir_itr_next(Ref) ->
 keydir_itr_next_int(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
+-spec keydir_itr_release(reference()) ->
+        ok.
 keydir_itr_release(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
+-spec increment_file_id(reference()) ->
+        {ok, non_neg_integer()}.
 increment_file_id(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
+-spec increment_file_id(reference(), non_neg_integer()) ->
+        {ok, non_neg_integer()}.
 increment_file_id(_Ref, _ConditionalFileId) ->
     erlang:nif_error({error, not_loaded}).
 
+-spec keydir_fold(reference(), fun((any(), any()) -> any()), any(),
+                  integer(), integer()) ->
+        any() | {error, any()}.
 keydir_fold(Ref, Fun, Acc0, MaxAge, MaxPuts) ->
     FrozenFun = fun() -> keydir_fold_cont(keydir_itr_next(Ref), Ref, Fun, Acc0) end,
     keydir_frozen(Ref, FrozenFun, MaxAge, MaxPuts).
@@ -308,7 +281,7 @@ keydir_frozen(Ref, FrozenFun, MaxAge, MaxPuts) ->
         {error, Reason} ->
             {error, Reason}
     end.
-    
+
 %% Wait for any pending interation to complete
 keydir_wait_pending(Ref) ->
     %% Create an iterator, passing a zero timestamp to force waiting for
@@ -357,23 +330,40 @@ keydir_wait_ready() ->
     end.
 -endif.
 
+-spec keydir_info(reference()) ->
+        {integer(), integer(),
+         [{integer(), integer(), integer(), integer(), integer(),
+           integer(), integer(), integer()}],
+         {integer(), integer(), boolean(), 'undefined'|integer()},
+        non_neg_integer()}.
 keydir_info(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
+-spec keydir_release(reference()) ->
+        ok.
 keydir_release(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
+-spec keydir_trim_fstats(reference(), [integer()]) ->
+        {ok, integer()} | {error, atom()}.
 keydir_trim_fstats(_Ref, _IDList) ->
     erlang:nif_error({error, not_loaded}).
 
+-spec update_fstats(reference(), non_neg_integer(), non_neg_integer(),
+                    integer(), integer(), integer(), integer(), integer() ) ->
+    ok.
 update_fstats(_Ref, _FileId, _Tstamp,
               _LiveKeyIncr, _TotalKeyIncr,
               _LiveIncr, _TotalIncr, _ShouldCreate) ->
     erlang:nif_error({error, not_loaded}).
 
+-spec set_pending_delete(reference(), non_neg_integer()) ->
+    ok.
 set_pending_delete(_Ref, _FileId) ->
     erlang:nif_error({error, not_loaded}).
 
+-spec lock_acquire(string(), integer()) ->
+        {ok, reference()} | {error, atom()}.
 lock_acquire(Filename, IsWriteLock) ->
     bitcask_bump:big(),
     lock_acquire_int(Filename, IsWriteLock).
@@ -381,6 +371,8 @@ lock_acquire(Filename, IsWriteLock) ->
 lock_acquire_int(_Filename, _IsWriteLock) ->
     erlang:nif_error({error, not_loaded}).
 
+-spec lock_release(reference()) ->
+        ok.
 lock_release(Ref) ->
     bitcask_bump:big(),
     lock_release_int(Ref).
@@ -388,6 +380,10 @@ lock_release(Ref) ->
 lock_release_int(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
+-spec lock_readdata(reference()) ->
+        {ok, binary()} |
+        {fstat_error, integer()} | {error, allocation_error} |
+        {pread_error, integer()}.
 lock_readdata(Ref) ->
     bitcask_bump:big(),
     lock_readdata_int(Ref).
@@ -395,6 +391,10 @@ lock_readdata(Ref) ->
 lock_readdata_int(_Ref) ->
     erlang:nif_error({error, not_loaded}).
 
+-spec lock_writedata(reference(), binary()) ->
+        ok |
+        {ftruncate_error, errno_atom()} | {pwrite_error, errno_atom()} |
+        {error, lock_not_writable}.
 lock_writedata(Ref, Data) ->
     bitcask_bump:big(),
     lock_writedata_int(Ref, Data).
@@ -610,7 +610,7 @@ keydir_del_while_pending_test2() ->
     ok = keydir_put(Ref1, Key, 0, 1234, 0, T, bitcask_time:tstamp()),
     keydir_mark_ready(Ref1),
     ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
-                                offset = <<0:64/unsigned-native>>, tstamp = T}, 
+                                offset = <<0:64/unsigned-native>>, tstamp = T},
                  keydir_get_int(Ref1, Key, 16#ffffffffffffffff)),
     {ready, Ref2} = keydir_new(Name),
     try
@@ -623,7 +623,7 @@ keydir_del_while_pending_test2() ->
         %% Keep iterating on Ref2 and check result is [Key]
         Fun = fun(IterKey, Acc) -> [IterKey | Acc] end,
         ?assertEqual([#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
-                                     offset = 0, tstamp = T}], 
+                                     offset = 0, tstamp = T}],
                      keydir_fold_cont(keydir_itr_next(Ref2), Ref2, Fun, []))
     after
         %% End iteration
@@ -647,7 +647,7 @@ keydir_create_del_while_pending_test2() ->
         %% Delete Key
         ok = keydir_put(Ref1, Key, 0, 1234, 0, 1, bitcask_time:tstamp()),
         ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
-                                     offset = <<0:64/unsigned-native>>, tstamp = 1}, 
+                                     offset = <<0:64/unsigned-native>>, tstamp = 1},
                      keydir_get_int(Ref1, Key, 16#ffffffffffffffff)),
         ?assertEqual(ok, keydir_remove(Ref1, Key)),
         ?assertEqual(not_found, keydir_get(Ref1, Key)),
@@ -682,7 +682,7 @@ keydir_del_put_while_pending_test2() ->
         ?assertEqual(ok, keydir_remove(Ref1, Key)),
         ok = keydir_put(Ref1, Key, 0, 1234, 0, T+2, bitcask_time:tstamp()),
         ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
-                                     offset = <<0:64/unsigned-native>>, tstamp = T+2}, 
+                                     offset = <<0:64/unsigned-native>>, tstamp = T+2},
                      keydir_get_int(Ref1, Key, T+2)),
 
         %% Keep iterating on Ref2 and check result is [] it was started after iter
@@ -694,7 +694,7 @@ keydir_del_put_while_pending_test2() ->
     end,
     %% Check key is still present
     ?assertEqual(#bitcask_entry{key = Key, file_id = 0, total_sz = 1234,
-                                offset = <<0:64/unsigned-native>>, tstamp = T+2}, 
+                                offset = <<0:64/unsigned-native>>, tstamp = T+2},
                  keydir_get_int(Ref1, Key, 16#ffffffffffffffff)).
 
 keydir_multi_put_during_itr_test_() ->
@@ -742,7 +742,7 @@ put_till_frozen(R, Name) ->
             %%?debugFmt("keydir still OK", []),
             bitcask_nifs:keydir_itr_release(Ref2),
             put_till_frozen(R, Name);
-        out_of_date -> 
+        out_of_date ->
             %%?debugFmt("keydir now frozen", []),
             bitcask_nifs:keydir_itr_release(Ref2),
             ok
@@ -782,7 +782,7 @@ keydir_itr_many_pending_test2() ->
 
 clear_recv_buffer(Ct) ->
     receive
-        _ -> 
+        _ ->
             clear_recv_buffer(Ct+1)
     after 0 ->
             ok %%?debugFmt("cleared ~p msgs", [Ct])
