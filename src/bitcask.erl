@@ -1932,7 +1932,7 @@ purge_setuid_files(Dirname) ->
             catch
                 X:Y ->
                     error_msg_perhaps("While deleting stale merge input "
-                                      "files from ~p: ~p ~p @ ~p\n",
+                                      "files from ~p: ~p @ ~p\n",
                                       [X, Y, erlang:get_stacktrace()])
             after
                 bitcask_lockops:release(WriteLock)
