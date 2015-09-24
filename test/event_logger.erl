@@ -128,6 +128,6 @@ add_event(#event{timestamp = Now, data = Data}, State) ->
   State#state{ events = [Event|State#state.events] }.
 
 timestamp() ->
-  {A, B, C} = erlang:now(),
+  {A, B, C} = bitcask_timestamp:timestamp(),
   1000000 * (1000000 * A + B) + C.
 

@@ -34,7 +34,7 @@ pr156_regression2_test_() ->
      end}.
 
 pr156_regression1(X) ->
-    io:format("pr156_regression1 ~p at ~p\n", [X, now()]),
+    io:format("pr156_regression1 ~p at ~p\n", [X, bitcask_timestamp:timestamp()]),
     token:next_name(),
     Dir = ?BITCASK ++ ".1." ++ token:get_name(),
     os:cmd("rm -rf " ++ Dir),
@@ -74,7 +74,7 @@ pr156_regression1(X) ->
 %% r1s11.bos1 executes each of N iterations in about 1500 msec.
 
 pr156_regression2(X) ->
-    io:format("pr156_regression2 ~p at ~p\n", [X, now()]),
+    io:format("pr156_regression2 ~p at ~p\n", [X, bitcask_timestamp:timestamp()]),
     token:next_name(),
     Dir = ?BITCASK ++ ".2." ++ token:get_name(),
     os:cmd("rm -rf " ++ Dir),

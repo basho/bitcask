@@ -158,7 +158,7 @@ prop_merge() ->
          ?FORALL({Ops, M1, M2}, {eqc_gen:non_empty(list(ops(Keys, Values))),
                                  choose(1,128), choose(1,128)},
                  begin
-                     Tm = tuple_to_list(now()),
+                     Tm = tuple_to_list(bitcask_timestamp:timestamp()),
                      Dir = lists:flatten(
                              io_lib:format(
                                "/tmp/bc.prop.merge.~w.~w.~w", Tm)),
