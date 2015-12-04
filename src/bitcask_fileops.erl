@@ -483,9 +483,13 @@ has_valid_hintfile(State) ->
     HintFile = hintfile_name(State),
     case bitcask_io:file_open(HintFile, [readonly, read_ahead]) of
         {ok, HintFd} ->
-            {ok, HintI} = read_file_info(HintFile),
-            HintSize = HintI#file_info.size,
-            hintfile_validate_loop(HintFd, 0, HintSize);
+            try
+                {ok, HintI} = read_file_info(HintFile),
+                HintSize = HintI#file_info.size,
+                hintfile_validate_loop(HintFd, 0, HintSize)
+            after
+                bitcask_io:file_close(HintFd)
+            end;
         _ ->
             false
     end.
