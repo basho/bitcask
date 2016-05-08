@@ -23,8 +23,6 @@
 -compile(export_all).
 -behaviour(gen_server).
 
--include_lib("eunit/include/eunit.hrl").
-
 -ifdef(PULSE).
 -compile({parse_transform, pulse_instrument}).
 -endif.
