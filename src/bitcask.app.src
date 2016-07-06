@@ -1,7 +1,7 @@
 {application, bitcask,
  [
   {description, ""},
-  {vsn, "1.7.4"},
+  {vsn, "2.0.3"},
   {modules, []},
   {registered, []},
   {applications, [
