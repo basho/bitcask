@@ -187,12 +187,12 @@ multiple_merges_during_fold_body() ->
     bitcask:merge(Dir),
     PutSome(),
     merge_until(Dir, Count1, CountSetuids),
-    
+
     SlowPid ! go_ahead,
     timer:sleep(500),
     ok = ?MODULE:testonly__delete_trigger(),
     0 = CountSetuids(),
-    
+
     ok.
 
 merge_until(Dir, MinCount, CountSetuids) ->
@@ -204,7 +204,7 @@ merge_until(Dir, MinCount, CountSetuids) ->
             timer:sleep(100),
             merge_until(Dir, MinCount, CountSetuids)
     end.
-    
+
 regression_gh82_test_() ->
     {timeout, 300, ?_assertEqual(ok, regression_gh82_body())}.
 

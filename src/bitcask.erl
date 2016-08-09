@@ -122,7 +122,7 @@ open(Dirname) ->
     open(Dirname, []).
 
 %% @doc Open a new or existing bitcask datastore with additional options.
--spec open(Dirname::string(), Opts::[_]) -> 
+-spec open(Dirname::string(), Opts::[_]) ->
     reference() | {error, timeout}.
 open(Dirname, Opts) ->
     %% Make sure bitcask app is started so we can pull defaults from env
@@ -172,7 +172,7 @@ open(Dirname, Opts) ->
                                        write_lock = undefined,
                                        max_file_size = MaxFileSize,
                                        opts = ExpOpts,
-                                       keydir = KeyDir, 
+                                       keydir = KeyDir,
                                        key_transform = KeyTransformFun,
                                        tombstone_version = TombstoneVersion,
                                        read_write_p = ReadWriteI}),
@@ -325,7 +325,7 @@ sync(Ref) ->
 
 %% @doc List all keys in a bitcask datastore.
 -spec list_keys(reference()) -> [Key::binary()] | {error, any()}.
-list_keys(Ref) -> 
+list_keys(Ref) ->
     fold_keys(Ref, fun(#bitcask_entry{key=K},Acc) -> [K|Acc] end, []).
 
 %% @doc Fold over all keys in a bitcask datastore.
@@ -374,7 +374,7 @@ fold_keys(Ref, Fun, Acc0, MaxAge, MaxPut, SeeTombstonesP) ->
 %% @doc fold over all K/V pairs in a bitcask datastore.
 %% Fun is expected to take F(K,V,Acc0) -> Acc
 -spec fold(reference() | tuple(),
-           fun((binary(), binary(), any()) -> any()), 
+           fun((binary(), binary(), any()) -> any()),
            any()) -> any() | {error, any()}.
 fold(Ref, Fun, Acc0) when is_reference(Ref)->
     State = get_state(Ref),
@@ -389,14 +389,14 @@ fold(State, Fun, Acc0) ->
 %% the frozen keystore.
 %% Fun is expected to take F(K,V,Acc0) -> Acc
 -spec fold(reference() | tuple(), fun((binary(), binary(), any()) -> any()), any(),
-           non_neg_integer() | undefined, non_neg_integer() | undefined, boolean()) -> 
+           non_neg_integer() | undefined, non_neg_integer() | undefined, boolean()) ->
                   any() | {error, any()}.
 fold(Ref, Fun, Acc0, MaxAge, MaxPut, SeeTombstonesP) when is_reference(Ref)->
     State = get_state(Ref),
     fold(State, Fun, Acc0, MaxAge, MaxPut, SeeTombstonesP);
 fold(State, Fun, Acc0, MaxAge, MaxPut, SeeTombstonesP) ->
     KT = State#bc_state.key_transform,
-    FrozenFun = 
+    FrozenFun =
         fun() ->
                 case open_fold_files(State#bc_state.dirname,
                                      State#bc_state.keydir,
@@ -565,12 +565,12 @@ merge(Dirname, Opts) ->
 
 %% @doc Merge several data files within a bitcask datastore
 %%      into a more compact form.
--spec merge(Dirname::string(), Opts::[_], 
+-spec merge(Dirname::string(), Opts::[_],
             {FilesToMerge::[string()],FilesToDelete::[string()]})
            -> ok | {error, any()}.
 merge(_Dirname, _Opts, []) ->
     ok;
-merge(Dirname,Opts,FilesToMerge) when is_list(FilesToMerge) -> 
+merge(Dirname,Opts,FilesToMerge) when is_list(FilesToMerge) ->
     merge(Dirname,Opts,{FilesToMerge,[]});
 merge(_Dirname, _Opts, {[],_}) ->
     ok;
@@ -614,7 +614,7 @@ merge1(Dirname, Opts, FilesToMerge0, ExpiredFiles) ->
             %% Simplest case; a key dir is already available and
             %% loaded. Go ahead and open just the files we wish to
             %% merge
-            InFiles0 = [begin 
+            InFiles0 = [begin
                             %% Handle open errors gracefully.  QuickCheck
                             %% plus PULSE showed that there are races where
                             %% the open below can fail.
@@ -626,7 +626,7 @@ merge1(Dirname, Opts, FilesToMerge0, ExpiredFiles) ->
                         || F <- FilesToMerge0],
             InFiles1 = [F || F <- InFiles0, F /= skip];
         {error, not_ready} ->
-            %% Someone else is loading the keydir, or this cask isn't open. 
+            %% Someone else is loading the keydir, or this cask isn't open.
             %% We'll bail here and try again later.
 
             ok = bitcask_lockops:release(Lock),
@@ -667,7 +667,7 @@ merge1(Dirname, Opts, FilesToMerge0, ExpiredFiles) ->
                         partial
                 end
         end,
-    
+
     % This sort is very important. The merge expects to visit files in order
     % to properly detect current values, and could resurrect old values if not.
     InFiles = lists:sort(fun(#filestate{tstamp=FTL}, #filestate{tstamp=FTR}) ->
@@ -735,11 +735,11 @@ merge1(Dirname, Opts, FilesToMerge0, ExpiredFiles) ->
 
     %% Explicitly release our keydirs instead of waiting for GC
     bitcask_nifs:keydir_release(LiveKeyDir),
-    bitcask_nifs:keydir_release(DelKeyDir),    
+    bitcask_nifs:keydir_release(DelKeyDir),
 
     ok = bitcask_lockops:release(Lock).
 
-%% @doc Predicate which determines whether or not a file should be considered for a merge. 
+%% @doc Predicate which determines whether or not a file should be considered for a merge.
 consider_for_merge(FragTrigger, DeadBytesTrigger, ExpirationGraceTime) ->
     fun (F) ->
             (F#file_status.fragmented >= FragTrigger)
@@ -767,9 +767,9 @@ needs_merge(Ref, Opts) ->
         end,
     {LiveFiles, DeadFiles} = lists:partition(P, State#bc_state.read_files),
 
-    %% Close the dead files and accumulate a list for trimming their 
+    %% Close the dead files and accumulate a list for trimming their
     %% fstats entries.
-    DeadIds0 = 
+    DeadIds0 =
         [begin
              bitcask_fileops:close(F),
              bitcask_fileops:file_tstamp(F)
@@ -777,7 +777,7 @@ needs_merge(Ref, Opts) ->
          || F <- DeadFiles],
     DeadIds = lists:usort(DeadIds0),
 
-    case bitcask_nifs:keydir_trim_fstats(State#bc_state.keydir, 
+    case bitcask_nifs:keydir_trim_fstats(State#bc_state.keydir,
                                          DeadIds) of
         {ok, 0} ->
             ok;
@@ -911,12 +911,12 @@ run_merge_triggers(State, Summary) ->
     %%
     FragTrigger = get_opt(frag_merge_trigger, State#bc_state.opts),
     DeadBytesTrigger = get_opt(dead_bytes_merge_trigger, State#bc_state.opts),
-    ExpirationTime = 
+    ExpirationTime =
             max(expiry_time(State#bc_state.opts), 0),
-    ExpirationGraceTime = 
+    ExpirationGraceTime =
             max(expiry_time(State#bc_state.opts) - expiry_grace_time(State#bc_state.opts), 0),
 
-    NeedsMerge = lists:any(consider_for_merge(FragTrigger, DeadBytesTrigger, ExpirationGraceTime), 
+    NeedsMerge = lists:any(consider_for_merge(FragTrigger, DeadBytesTrigger, ExpirationGraceTime),
                            Summary),
     case NeedsMerge of
         true ->
@@ -1107,7 +1107,7 @@ expiry_time(Opts) ->
     end.
 
 to_lower_grace_time_bound(undefined) -> 0;
-to_lower_grace_time_bound(X) -> 
+to_lower_grace_time_bound(X) ->
     case X > 0 of
         true -> X;
         false -> 0
@@ -1243,7 +1243,7 @@ init_keydir(Dirname, WaitTime, ReadWriteModeP, KT) ->
         {not_ready, KeyDir} ->
             %% We've just created a new named keydir, so we need to load up all
             %% the data from disk. Build a list of all the bitcask data files
-            %% and sort it in descending order (newest->oldest).
+            %% and sort it in ascending order (oldest->newest).
             %%
             %% We need the SortedFiles list to be stable: we might be
             %% in a situation:
@@ -1539,7 +1539,7 @@ inner_merge_write(K, V, Tstamp, OldFileId, OldOffset, State) ->
                 %% Close the current output file
                 ok = bitcask_fileops:sync(State#mstate.out_file),
                 ok = bitcask_fileops:close(State#mstate.out_file),
-                
+
                 %% Start our next file and update state
                 {ok, NewFile} = bitcask_fileops:create_file(
                                   State#mstate.dirname,
@@ -1562,9 +1562,9 @@ inner_merge_write(K, V, Tstamp, OldFileId, OldOffset, State) ->
                 ok = bitcask_lockops:write_activefile(
                        State#mstate.merge_lock,
                        NewFileName),
-                State#mstate { out_file = NewFile }                
+                State#mstate { out_file = NewFile }
         end,
-    
+
     {ok, Outfile, Offset, Size} =
         bitcask_fileops:write(State1#mstate.out_file, K, V, Tstamp),
 
@@ -1688,7 +1688,7 @@ out_of_date(State, Key, Tstamp, FileId, {_,_,Offset,_} = Pos,
             end
     end.
 
--spec readable_files(string()) -> [string()].  
+-spec readable_files(string()) -> [string()].
 readable_files(Dirname) ->
     {ReadableFiles, _SetuidFiles} = readable_and_setuid_files(Dirname),
     ReadableFiles.
@@ -1717,7 +1717,7 @@ readable_and_setuid_files(Dirname) ->
 %% and looked up the state at this point
 do_put(_Key, _Value, State, 0, LastErr) ->
     {{error, LastErr}, State};
-do_put(Key, Value, #bc_state{write_file = WriteFile} = State, 
+do_put(Key, Value, #bc_state{write_file = WriteFile} = State,
        Retries, _LastErr) ->
     ValSize =
         case Value of
@@ -1771,7 +1771,7 @@ do_put(Key, Value, #bc_state{write_file = WriteFile} = State,
                   when OldFileId > WriteFileId ->
                     State3 = wrap_write_file(State2),
                     do_put(Key, Value, State3, Retries - 1, already_exists);
-                    
+
                 #bitcask_entry{file_id=OldFileId,offset=OldOffset} ->
                     State3 =
                         case OldFileId < WriteFileId of
@@ -1850,7 +1850,7 @@ write_and_keydir_put(State2, Key, Value, Tstamp, Retries, NowTstamp, OldFileId, 
                     %% Assuming the timestamps in the keydir are
                     %% valid, there is an edge case where the merge thread
                     %% could have rewritten this Key to a file with a greater
-                    %% file_id. Rather than synchronize the merge/writer processes, 
+                    %% file_id. Rather than synchronize the merge/writer processes,
                     %% wrap to a new file with a greater file_id and rewrite
                     %% the key there.
                     %% We must undo the write here so a later partial merge
@@ -1877,7 +1877,7 @@ wrap_write_file(#bc_state{write_file = WriteFile} = State) ->
                State#bc_state.write_lock,
                bitcask_fileops:filename(NewWriteFile)),
         State#bc_state{ write_file = NewWriteFile,
-                        read_files = [LastWriteFile | 
+                        read_files = [LastWriteFile |
                                       State#bc_state.read_files]}
     catch
         error:{badmatch,Error} ->
@@ -1982,18 +1982,18 @@ expiry_merge([File | Files], LiveKeyDir, KT, Acc0) ->
         end,
     case bitcask_fileops:fold_keys(File, Fun, ok, default) of
         {error, Reason} ->
-            error_logger:error_msg("Error folding keys for ~p: ~p\n", 
+            error_logger:error_msg("Error folding keys for ~p: ~p\n",
                                    [File#filestate.filename,Reason]),
             Acc = Acc0;
         _ ->
             error_logger:info_msg("All keys expired in: ~p scheduling "
-                                  "file for deletion\n", 
+                                  "file for deletion\n",
                                   [File#filestate.filename]),
             Acc = lists:append(Acc0, [File])
     end,
     expiry_merge(Files, LiveKeyDir, KT, Acc).
 
-get_key_transform(KT) 
+get_key_transform(KT)
   when is_function(KT) ->
     KT;
 get_key_transform(_State) ->
@@ -2156,9 +2156,9 @@ iterator_test_() ->
 iterator_test2() ->
     B = init_dataset("/tmp/bc.iterator.test.fold", default_dataset()),
     ok = iterator(B, 0, 0),
-    Keys = [ begin #bitcask_entry{ key = Key } = iterator_next(B), Key end || 
+    Keys = [ begin #bitcask_entry{ key = Key } = iterator_next(B), Key end ||
              _ <- default_dataset() ],
-    ?assertEqual(lists:sort(Keys), lists:sort([ Key  || {Key, _} <- default_dataset() ])), 
+    ?assertEqual(lists:sort(Keys), lists:sort([ Key  || {Key, _} <- default_dataset() ])),
     iterator_release(B).
 
 
@@ -2262,7 +2262,7 @@ fold_visits_frozen_test2(RollOver) ->
     try
         Ref = (get_state(B))#bc_state.keydir,
         Me = self(),
-        
+
         %% Freeze the keydir with default_dataset written
         FrozenFun = fun() ->
                             Me ! frozen,
@@ -2283,7 +2283,7 @@ fold_visits_frozen_test2(RollOver) ->
         receive
             frozen ->
                 ok
-        after 
+        after
             1000 ->
                 ?assert(keydir_not_frozen)
         end,
@@ -2291,7 +2291,7 @@ fold_visits_frozen_test2(RollOver) ->
         %% make sure that it's actually frozen
         put_till_frozen(B),
 
-        %% If checking file rollover, update the state so the next write will 
+        %% If checking file rollover, update the state so the next write will
         %% trigger a 'wrap' return.
         case RollOver of
             true ->
@@ -2305,7 +2305,7 @@ fold_visits_frozen_test2(RollOver) ->
         ok = delete(B, <<"k">>),
         ok = put(B, <<"k2">>, <<"v2-2">>),
         ok = put(B, <<"k4">>, <<"v4">>),
-        
+
         timer:sleep(900), %% wait for the disk to settle
         CollectAll = fun(K, V, Acc) ->
                              [{K, V} | Acc]
@@ -2356,7 +2356,7 @@ slow_worker() ->
     B = bitcask:open("/tmp/bc.test.unfrozenfold"),
     Owner ! ready,
     L = fold(B, SlowCollect, [], -1, -1, false),
-    case Values =:= lists:sort(L) of 
+    case Values =:= lists:sort(L) of
         true ->
             Owner ! done;
         false ->
@@ -2364,12 +2364,12 @@ slow_worker() ->
     end,
     %%?debugFmt("slow worker finished~n", []),
     bitcask:close(B).
-    
+
 finish_worker_loop(Pid) ->
     receive
         done ->
             done;
-        {sad, L} -> 
+        {sad, L} ->
             {sad, L}
     after 0 ->
             Pid ! go,
@@ -2387,7 +2387,7 @@ fold_visits_unfrozen_test2(RollOver) ->
     try
         Pid = spawn(fun slow_worker/0),
         Pid ! {owner, self(), default_dataset()},
-        %% If checking file rollover, update the state so the next write will 
+        %% If checking file rollover, update the state so the next write will
         %% trigger a 'wrap' return.
         case RollOver of
             true ->
@@ -2407,13 +2407,13 @@ fold_visits_unfrozen_test2(RollOver) ->
         %% is used to determine the snapshot, which has a 1 second resolution.
         %% So make sure updates happen at least 1 sec after folding starts
         bitcask_time:test__incr_fudge(1),
-        
+
         %% A delete, an update and an insert
         ok = delete(B, <<"k">>),
         ok = put(B, <<"k2">>, <<"v2-2">>),
         ok = put(B, <<"k4">>, <<"v4">>),
         Pid ! go_ahead_with_fold,
-     
+
         CollectAll = fun(K, V, Acc) ->
                              [{K, V} | Acc]
                      end,
@@ -2421,7 +2421,7 @@ fold_visits_unfrozen_test2(RollOver) ->
         %% Unfreeze the keydir, waiting until complete
         case finish_worker_loop(Pid) of
             done -> ok;
-            {sad, L} -> 
+            {sad, L} ->
                 ?assertEqual(default_dataset(), lists:sort(L))
         end,
 
@@ -2435,7 +2435,7 @@ fold_visits_unfrozen_test2(RollOver) ->
         bitcask:close(B),
         bitcask_time:test__clear_fudge()
     end.
-    
+
 open_test_() ->
     {timeout, 60, fun open_test2/0}.
 
@@ -2603,7 +2603,7 @@ expire_merge_test2() ->
     close(B),
     ok.
 
-fold_deleted_test_() ->    
+fold_deleted_test_() ->
     {timeout, 60, fun fold_deleted_test2/0}.
 
 fold_deleted_test2() ->
@@ -2730,7 +2730,7 @@ corrupt_file_test2() ->
     HFN = "/tmp/bc.test.corrupt.hint/100.bitcask.hint",
     {ok, HFD} = file:open(HFN, [append, raw, binary]),
     ok = file:write(HFD, <<"1">>),
-    file:close(HFD),    
+    file:close(HFD),
     B2 = bitcask:open("/tmp/bc.test.corrupt.hint"),
     {ok, <<"v">>} = bitcask:get(B2,<<"k">>),
     close(B2),
@@ -2742,7 +2742,7 @@ corrupt_file_test2() ->
     DFN = "/tmp/bc.test.corrupt.data/100.bitcask.data",
     {ok, DFD} = file:open(DFN, [append, raw, binary]),
     ok = file:write(DFD, <<"2">>),
-    file:close(DFD),    
+    file:close(DFD),
     B3 = bitcask:open("/tmp/bc.test.corrupt.data"),
     {ok, <<"v">>} = bitcask:get(B3,<<"k">>),
     close(B3),
@@ -2754,7 +2754,7 @@ corrupt_file_test2() ->
     D2FN = "/tmp/bc.test.corrupt.data2/100.bitcask.data",
     {ok, D2FD} = file:open(D2FN, [append, raw, binary]),
     ok = file:write(D2FD, <<"123456789012345">>),
-    file:close(D2FD),    
+    file:close(D2FD),
     B4 = bitcask:open("/tmp/bc.test.corrupt.data2"),
     {ok, <<"v">>} = bitcask:get(B4,<<"k">>),
     close(B4),
@@ -2787,7 +2787,7 @@ testhelper_keydir_count(B) ->
     KD = (get_state(B))#bc_state.keydir,
     {KeyCount,_,_,_,_} = bitcask_nifs:keydir_info(KD),
     KeyCount.
-    
+
 expire_keydir_test_() ->
     {timeout, 60, fun expire_keydir_test2/0}.
 
@@ -3026,7 +3026,7 @@ truncated_merge_test2() ->
 
     [Data1, Data2, _, _, Data5|_] = filelib:wildcard(Dir ++ "/*.data"),
     [_, _, Hint3, Hint4|_] = filelib:wildcard(Dir ++ "/*.hint"),
-          
+
     %% Truncate 1st after data file's header, read by bitcask_fileops:fold/3).
     %% Truncate 2nd in the middle of header, which provokes another
     %%     variation of bug mentioned by Bugzilla 1097.
@@ -3066,7 +3066,7 @@ truncate_file(Path, Offset) ->
     {ok, FH} = file:open(Path, [read, write]),
     {ok, Offset} = file:position(FH, Offset),
     ok = file:truncate(FH),
-    file:close(FH).    
+    file:close(FH).
 
 corrupt_file(Path, Offset, Data) ->
     {ok, FH} = file:open(Path, [read, write]),
@@ -3645,7 +3645,7 @@ legacy_tombstones_test2() ->
     AllButFirst = tl(AllFiles2),
     ok = merge(Dir, [], AllButFirst),
 
-    % Now we should have the file with the only live object followed by 
+    % Now we should have the file with the only live object followed by
     % files with v1 tombstones. When merging those, since all of the original
     % files containing the values and tombstones are gone, all v1 tombstones
     % should be dropped, leaving only the lonely file with the live object.
