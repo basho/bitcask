@@ -1,4 +1,3 @@
-#
 minimum_reviewers: 1
 build_steps:
  - make clean
