@@ -1,0 +1,9 @@
+minimum_reviewers: 1
+build_steps:
+ - make clean
+ - make test | tr -cd '\11\12\15\40-\176'
+ - make xref
+ - make dialyzer
+merge: true
+org_mode: true
+timeout: 1790
