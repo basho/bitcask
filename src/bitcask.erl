@@ -1993,10 +1993,21 @@ expiry_merge([File | Files], LiveKeyDir, KT, Acc0) ->
     end,
     expiry_merge(Files, LiveKeyDir, KT, Acc).
 
-get_key_transform(KT) 
+get_key_transform(KT) ->
+    TransformFun = key_transform_fun(KT),
+    fun(Key) ->
+        try 
+            TransformFun(Key) 
+        catch
+            Class:Exception ->
+                {key_tx_error, {Key, {Class, Exception}}}
+        end
+    end.
+
+key_transform_fun(KT) 
   when is_function(KT) ->
     KT;
-get_key_transform(_State) ->
+key_transform_fun(_State) ->
     fun kt_id/1.
 
 -ifdef(TEST).
