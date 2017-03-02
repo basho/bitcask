@@ -1,36 +1,32 @@
 REPO		?= bitcask
 BITCASK_TAG	 = $(shell git describe --tags)
-REVISION	?= $(shell echo $(BITCASK_TAG) | sed -e 's/^$(REPO)-//')
-PKG_VERSION	?= $(shell echo $(REVISION) | tr - .)
 BASE_DIR         = $(shell pwd)
-REBAR_BIN := $(shell which rebar)
-ifeq ($(REBAR_BIN),)
-REBAR_BIN = ./rebar
+REBAR := $(shell which rebar)
+ifeq ($(REBAR),)
+REBAR = ./rebar
 endif
 
 PULSE_TESTS = bitcask_pulse
 
 .PHONY: rel deps package pkgclean
 
-include tools.mk
-
 all: deps compile
 
-compile:
-	$(REBAR_BIN) compile
+compile: deps
+	$(REBAR) compile
 
 deps:
-	$(REBAR_BIN) get-deps
+	$(REBAR) get-deps
 
 clean:
-	$(REBAR_BIN) clean
+	$(REBAR) clean
 
 BITCASK_IO_MODE=erlang
 
 test: deps compile eunit_nif
 
 eunit_nif:
-	BITCASK_IO_MODE="nif" $(REBAR_BIN) skip_deps=true eunit
+	BITCASK_IO_MODE="nif" $(REBAR) skip_deps=true eunit
 
 NOW	= $(shell date +%s)
 COUNTER = $(PWD)/$(NOW).current_counterexample.eqc
@@ -38,8 +34,8 @@ EQCINFO = $(PWD)/$(NOW).eqc-info
 
 pulse:
 	@rm -rf $(BASE_DIR)/.eunit
-	BITCASK_PULSE=1 $(REBAR_BIN) clean compile
-	env BITCASK_PULSE=1 $(REBAR_BIN) -D PULSE eunit skip_deps=true suites=$(PULSE_TESTS) ; \
+	BITCASK_PULSE=1 $(REBAR) clean compile
+	env BITCASK_PULSE=1 $(REBAR) -D PULSE eunit skip_deps=true suites=$(PULSE_TESTS) ; \
 	if [ $$? -ne 0 ]; then \
 		echo PULSE test FAILED; \
 		cp ./.eunit/current_counterexample.eqc $(COUNTER); \
@@ -85,9 +81,10 @@ package: dist
 pkgclean:
 	$(MAKE) -C package pkgclean
 
-export BITCASK_TAG PKG_VERSION REPO REVISION
+export BITCASK_TAG REPO
 
 DIALYZER_APPS = kernel stdlib sasl erts ssl tools os_mon runtime_tools \
 				crypto inets xmerl webtool snmp public_key mnesia eunit \
 				syntax_tools compiler
 
+include tools.mk

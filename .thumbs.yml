@@ -1,0 +1,9 @@
+minimum_reviewers: 1
+build_steps:
+ - make clean
+ - make test
+ - make xref
+ - make dialyzer
+merge: true
+org_mode: true
+timeout: 1790

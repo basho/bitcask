@@ -85,7 +85,7 @@ init([]) ->
 
 handle_call({merge, Args0}, _From, #state { queue = Q } = State) ->
     [Dirname|_] = Args0,
-    Args1 = 
+    Args1 =
         case length(Args0) of
             3 ->
                 %% presort opts and files tuples for better matches
@@ -93,7 +93,7 @@ handle_call({merge, Args0}, _From, #state { queue = Q } = State) ->
                 [_, Opts0, Tuple0] = Args0,
                 {Files, Expired} = Tuple0,
                 Opts = lists:usort(Opts0),
-                Tuple = {lists:usort(Files), 
+                Tuple = {lists:usort(Files),
                          lists:usort(Expired)},
                 [Dirname, Opts, Tuple];
             _ ->
@@ -156,7 +156,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 merge_items(New, Old) ->
     %% first element will always match
-    Dirname = element(1, New), 
+    Dirname = element(1, New),
     %% old args are already sorted
     OOpts = element(2, Old),
     NOpts = lists:usort(element(2, New)),

@@ -66,21 +66,21 @@
 %% @doc Open a new file for writing.
 %% Called on a Dirname, will open a fresh file in that directory.
 -spec create_file(Dirname :: string(), Opts :: [any()],
-                  reference()) -> 
+                  reference()) ->
                          {ok, #filestate{}} | {error, term()}.
 
 create_file(DirName, Opts0, Keydir) ->
     Opts = [create|Opts0],
     case get_create_lock(DirName) of
         {ok, Lock} ->
-            try 
+            try
                 {ok, Newest} = bitcask_nifs:increment_file_id(Keydir),
 
                 Filename = mk_filename(DirName, Newest),
                 ok = ensure_dir(Filename),
 
                 %% Check for o_sync strategy and add to opts
-                FinalOpts = 
+                FinalOpts =
                     case bitcask:get_opt(sync_strategy, Opts) of
                         o_sync ->
                             [o_sync | Opts];
@@ -103,14 +103,14 @@ create_file(DirName, Opts0, Keydir) ->
             end;
         Else ->
             Else
-    end.            
+    end.
 
 get_create_lock(DirName) ->
     get_create_lock(DirName, 100).
 
 get_create_lock(_DirName, 0) ->
     error(lock_failure);
-get_create_lock(DirName, N) -> 
+get_create_lock(DirName, N) ->
     timer:sleep(100-N),
     case bitcask_lockops:acquire(create, DirName) of
         {ok, Lock} ->
@@ -120,8 +120,8 @@ get_create_lock(DirName, N) ->
         {error, _} = Else ->
             Else
     end.
-   
-    
+
+
 %% @doc Open an existing file for reading.
 %% Called with fully-qualified filename.
 -spec open_file(Filename :: string()) -> {ok, #filestate{}} | {error, any()}.
@@ -251,7 +251,7 @@ close_hintfile(State = #filestate { hintfd = HintFd, hintcrc = HintCRC }) ->
     State#filestate { hintfd = undefined, hintcrc = 0 }.
 
 %% Build a list of {tstamp, filename} for all files in the directory that
-%% match our regex. 
+%% match our regex.
 -spec data_file_tstamps(Dirname :: string()) -> [{integer(), string()}].
 data_file_tstamps(Dirname) ->
     case list_dir(Dirname) of
@@ -260,7 +260,7 @@ data_file_tstamps(Dirname) ->
               fun(Filename, Acc) ->
                       case string:tokens(Filename, ".") of
                           [TSString, _, "data"] ->
-                              [{list_to_integer(TSString), 
+                              [{list_to_integer(TSString),
                                 filename:join(Dirname, Filename)}
                                 | Acc];
                           _ ->
@@ -282,13 +282,13 @@ delete(#filestate{ filename = FN } = State) ->
     end.
 
 %% @doc Write a Key-named binary data field ("Value") to the Filestate.
--spec write(#filestate{}, 
+-spec write(#filestate{},
             Key :: binary(), Value :: binary(), Tstamp :: integer()) ->
         {ok, #filestate{}, Offset :: integer(), Size :: integer()} |
         {error, read_only}.
 write(#filestate { mode = read_only }, _K, _V, _Tstamp) ->
     {error, read_only};
-write(Filestate=#filestate{fd = FD, hintfd = HintFD, 
+write(Filestate=#filestate{fd = FD, hintfd = HintFD,
                            hintcrc = HintCRC0, ofs = Offset},
       Key, Value, Tstamp) ->
     KeySz = size(Key),
@@ -329,7 +329,7 @@ write(Filestate=#filestate{fd = FD, hintfd = HintFD,
     end.
 
 %% WARNING: We can only undo the last write.
-un_write(Filestate=#filestate{fd = FD, hintfd = HintFD, 
+un_write(Filestate=#filestate{fd = FD, hintfd = HintFD,
                               l_ofs = LastOffset,
                               l_hbytes = LastHintBytes,
                               l_hintcrc = LastHintCRC}) ->
@@ -419,7 +419,7 @@ fold_keys(State, Fun, Acc, default, false) ->
 fold_keys(State, Fun, Acc, recovery, true) ->
     fold_keys(State, Fun, Acc, recovery, true, has_valid_hintfile(State));
 fold_keys(State, Fun, Acc, recovery, false) ->
-            fold_keys_loop(State, 0, Fun, Acc).
+    fold_keys_loop(State, 0, Fun, Acc).
 
 fold_keys(State, Fun, Acc, recovery, _, true) ->
     case fold_hintfile(State, Fun, Acc) of
@@ -495,19 +495,19 @@ has_valid_hintfile(State) ->
     end.
 
 hintfile_validate_loop(Fd, CRC0, Rem) ->
-    {ReadLen, HasCRC} = 
+    {ReadLen, HasCRC} =
         case Rem =< ?CHUNK_SIZE of
             true ->
                 case Rem < ?HINT_RECORD_SZ of
-                    true -> 
+                    true ->
                         {0, error};
-                    false -> 
+                    false ->
                         {Rem - ?HINT_RECORD_SZ, true}
                 end;
             false ->
                 {?CHUNK_SIZE, false}
         end,
-            
+
     case bitcask_io:file_read(Fd, ReadLen) of
         {ok, Bytes} ->
             case HasCRC of
@@ -516,26 +516,26 @@ hintfile_validate_loop(Fd, CRC0, Rem) ->
                     CRC = erlang:crc32(CRC0, Bytes),
                     ExpectCRC =:= CRC;
                 false ->
-                    hintfile_validate_loop(Fd, 
+                    hintfile_validate_loop(Fd,
                                            erlang:crc32(CRC0, Bytes),
                                            Rem - ReadLen);
-                error -> 
-                    false                        
+                error ->
+                    false
             end;
         _ -> false
     end.
-        
+
 read_crc(Fd) ->
     case bitcask_io:file_read(Fd, ?HINT_RECORD_SZ) of
-        {ok, <<0:?TSTAMPFIELD, 
+        {ok, <<0:?TSTAMPFIELD,
                0:?KEYSIZEFIELD,
-               ExpectCRC:?TOTALSIZEFIELD, 
+               ExpectCRC:?TOTALSIZEFIELD,
                _TombInt:?TOMBSTONEFIELD_V2,
                (?MAXOFFSET_V2):?OFFSETFIELD_V2>>} ->
             ExpectCRC;
         _ -> error
     end.
-        
+
 
 %% ===================================================================
 %% Internal functions
@@ -545,23 +545,23 @@ fold_int_loop(_Bytes, _Fun, Acc, _Consumed, {Filename, _, Offset, 20}) ->
     error_logger:error_msg("fold_loop: CRC error limit at file ~p offset ~p\n",
                            [Filename, Offset]),
     {done, Acc};
-fold_int_loop(<<Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD, 
-                KeySz:?KEYSIZEFIELD, ValueSz:?VALSIZEFIELD, 
+fold_int_loop(<<Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD,
+                KeySz:?KEYSIZEFIELD, ValueSz:?VALSIZEFIELD,
                 Key:KeySz/bytes, Value:ValueSz/bytes, Rest/binary>>,
-              Fun, Acc0, Consumed0, 
+              Fun, Acc0, Consumed0,
               {Filename, FTStamp, Offset, CrcSkipCount}) ->
     TotalSz = KeySz + ValueSz + ?HEADER_SIZE,
-    case erlang:crc32([<<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD, 
-                         ValueSz:?VALSIZEFIELD>>, Key, Value]) of 
+    case erlang:crc32([<<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
+                         ValueSz:?VALSIZEFIELD>>, Key, Value]) of
         Crc32 ->
             PosInfo = {Filename, FTStamp, Offset, TotalSz},
             Acc = Fun(Key, Value, Tstamp, PosInfo, Acc0),
             fold_int_loop(Rest, Fun, Acc, Consumed0 + TotalSz,
-                          {Filename, FTStamp, Offset + TotalSz, 
+                          {Filename, FTStamp, Offset + TotalSz,
                            CrcSkipCount});
         _ ->
             error_logger:error_msg("fold_loop: CRC error at file ~s offset ~p, "
-                                   "skipping ~p bytes\n", 
+                                   "skipping ~p bytes\n",
                                    [Filename, Offset, TotalSz]),
             fold_int_loop(Rest, Fun, Acc0, Consumed0 + TotalSz,
                           {Filename, FTStamp, Offset + TotalSz,
@@ -572,11 +572,11 @@ fold_int_loop(_Bytes, _Fun, Acc, Consumed, Args) ->
 
 fold_keys_loop(#filestate{fd=Fd, filename=Filename, tstamp=FTStamp}, Offset,
                Fun, Acc0) ->
-    case bitcask_io:file_position(Fd, Offset) of 
+    case bitcask_io:file_position(Fd, Offset) of
         {ok, Offset} -> ok;
         Other -> error(Other)
     end,
-    
+
     case fold_file_loop(Fd, regular, fun fold_keys_int_loop/5, Fun, Acc0,
                         {Filename, FTStamp, Offset, 0}) of
         {error, Reason} ->
@@ -624,7 +624,7 @@ fold_hintfile(State, Fun, Acc0) ->
             try
                 {ok, DataI} = read_file_info(State#filestate.filename),
                 DataSize = DataI#file_info.size,
-                case fold_file_loop(HintFd, hint, fun fold_hintfile_loop/5, Fun, 
+                case fold_file_loop(HintFd, hint, fun fold_hintfile_loop/5, Fun,
                                     Acc0, {DataSize, HintFile}) of
                     {error, Reason} ->
                         {error, Reason};
@@ -652,9 +652,9 @@ fold_hintfile_loop(<<0:?TSTAMPFIELD, 0:?KEYSIZEFIELD,
 fold_hintfile_loop(<<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
                      TotalSz:?TOTALSIZEFIELD,
                      TombInt:?TOMBSTONEFIELD_V2, Offset:?OFFSETFIELD_V2,
-                     Key:KeySz/bytes, Rest/binary>>, 
+                     Key:KeySz/bytes, Rest/binary>>,
                    Fun, Acc0, Consumed0, {DataSize, HintFile} = Args) ->
-    case Offset + TotalSz =< DataSize + 1 of 
+    case Offset + TotalSz =< DataSize + 1 of
         true ->
             PosInfo = {Offset, TotalSz},
             KeyPlus = if TombInt == 1 -> {tombstone, Key};
@@ -676,31 +676,31 @@ fold_hintfile_loop(_Bytes, _Fun, Acc0, Consumed0, Args) ->
 
 %% @doc scaffolding for faster folds over large files.
 %% The somewhat tricky thing here is the FoldFn, which is a /6
-%% that does all the actual work.  see fold_hintfile_loop as a 
+%% that does all the actual work.  see fold_hintfile_loop as a
 %% commented example
 -spec fold_file_loop(port(), atom(),
                      fun((binary(), fun(), any(), integer(),
-                          any()) -> 
+                          any()) ->
                                 {more, any(), integer(), any()} |
                                 {done, any()} |
                                 {done, any(), integer()} |
                                 {skip, any(), integer(), any()} |
                                 {error, any()}),
-                     fun(), any(), any()) -> 
+                     fun(), any(), any()) ->
                             {error, any()} | any().
 fold_file_loop(Fd, Type, FoldFn, IntFoldFn, Acc, Args) ->
     fold_file_loop(Fd, Type, FoldFn, IntFoldFn, Acc, Args, none, ?CHUNK_SIZE).
 
 fold_file_loop(Fd, Type, FoldFn, IntFoldFn, Acc0, Args0, Prev0, ChunkSz0) ->
-    %% analyze what happened in the last loop to determine whether or 
+    %% analyze what happened in the last loop to determine whether or
     %% not to change the read size. This is an optimization for large values
     %% in datafile folds and key folds
     {Prev, ChunkSz}
-        = case Prev0 of 
+        = case Prev0 of
               none -> {<<>>, ChunkSz0};
-              Other -> 
+              Other ->
                   CS = case byte_size(Other) of
-                           %% to avoid having to rescan the same 
+                           %% to avoid having to rescan the same
                            %% binaries over and over again.
                            N when N >= ?MAX_CHUNK_SIZE ->
                                ?MAX_CHUNK_SIZE;
@@ -717,7 +717,7 @@ fold_file_loop(Fd, Type, FoldFn, IntFoldFn, Acc0, Args0, Prev0, ChunkSz0) ->
                 %% foldfuns should return more when they don't have enough
                 %% bytes to satisfy their main binary match.
                 {more, Acc, Consumed, Args} ->
-                    Rest = 
+                    Rest =
                         case Consumed > byte_size(Bytes) of
                             true -> <<>>;
                             false ->
@@ -736,9 +736,9 @@ fold_file_loop(Fd, Type, FoldFn, IntFoldFn, Acc0, Args0, Prev0, ChunkSz0) ->
                 %% satisfy the pre-existing semantics of hintfile
                 %% folds.
                 {done, Acc, Consumed} ->
-                    case Consumed =:= byte_size(Bytes) of 
+                    case Consumed =:= byte_size(Bytes) of
                         true -> Acc;
-                        false -> 
+                        false ->
                             {error, {partial_fold, Consumed, Bytes, Bytes0}}
                     end;
                 {error, Reason} ->
@@ -765,14 +765,14 @@ fold_file_loop(Fd, Type, FoldFn, IntFoldFn, Acc0, Args0, Prev0, ChunkSz0) ->
 
 open_hint_file(Filename, FinalOpts) ->
     open_hint_file(Filename, FinalOpts, 10).
-    
+
 open_hint_file(_Filename, _FinalOpts, 0) ->
     throw(couldnt_open_hintfile);
 open_hint_file(Filename, FinalOpts, Count) ->
-    case bitcask_io:file_open(hintfile_name(Filename), FinalOpts) of 
+    case bitcask_io:file_open(hintfile_name(Filename), FinalOpts) of
         {ok, FD} ->
             FD;
-        {error, eexist} -> 
+        {error, eexist} ->
             timer:sleep(50),
             open_hint_file(Filename, FinalOpts, Count - 1)
     end.
@@ -822,7 +822,7 @@ ensure_dir(F) ->
             {error,einval};
         false ->
             _ = ensure_dir(Dir),
-            %% this is rare enough that the serialization 
+            %% this is rare enough that the serialization
             %% isn't super important, maybe
             case file:make_dir(Dir) of
                 {error,eexist}=EExist ->
