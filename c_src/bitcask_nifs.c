@@ -2311,7 +2311,7 @@ ERL_NIF_TERM bitcask_nifs_lock_writedata(ErlNifEnv* env, int argc, const ERL_NIF
 
 int get_file_open_flags(ErlNifEnv* env, ERL_NIF_TERM list)
 {
-    int flags = O_RDWR | O_APPEND;
+    int flags = O_RDWR | O_APPEND | O_CREAT;
     ERL_NIF_TERM head, tail;
     while (enif_get_list_cell(env, list, &head, &tail))
     {
