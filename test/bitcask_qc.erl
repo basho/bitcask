@@ -161,7 +161,7 @@ prop_merge() ->
 
                          %% Apply the merge -- note that we keep the
                          %% bitcask open so that a live keydir is
-                         %% available to the merge.  Run in a seperate 
+                         %% available to the merge.  Run in a separate 
                          %% process so it gets cleaned up on crash
                          %% so quickcheck can shrink correctly.
                          Me = self(),
