@@ -3,6 +3,7 @@
 // bitcask: Eric Brewer-inspired key/value store
 //
 // Copyright (c) 2010 Basho Technologies, Inc. All Rights Reserved.
+// Copyright (c) 2018 Workday, Inc.
 //
 // This file is provided to you under the Apache License,
 // Version 2.0 (the "License"); you may not use this file
@@ -22,6 +23,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <stdint.h>
 #include <time.h>
@@ -306,6 +308,7 @@ static ERL_NIF_TERM ATOM_ILT_CREATE_ERROR; /* Iteration lock thread creation err
 static ERL_NIF_TERM ATOM_ITERATION_IN_PROCESS;
 static ERL_NIF_TERM ATOM_ITERATION_NOT_PERMITTED;
 static ERL_NIF_TERM ATOM_ITERATION_NOT_STARTED;
+static ERL_NIF_TERM ATOM_LOCKED;
 static ERL_NIF_TERM ATOM_LOCK_NOT_WRITABLE;
 static ERL_NIF_TERM ATOM_NOT_FOUND;
 static ERL_NIF_TERM ATOM_NOT_READY;
@@ -2191,13 +2194,26 @@ ERL_NIF_TERM bitcask_nifs_lock_acquire(ErlNifEnv* env, int argc, const ERL_NIF_T
             // Use O_SYNC (in addition to other flags) to ensure that when we write
             // data to the lock file it is immediately (or nearly) available to any
             // other reading processes
-            flags = O_CREAT | O_EXCL | O_RDWR | O_SYNC;
+            flags = O_CREAT | O_RDWR | O_SYNC;
         }
 
         // Try to open the lock file -- allocate a resource if all goes well.
         int fd = open(filename, flags, 0600);
         if (fd > -1)
         {
+            if (is_write_lock)
+            {
+                // write locks require that the file is locked not just in the same process
+                // but for all processes on the OS, so require an exclusive write lock.
+                // this lock will be released when the file handle is closed.
+                // LOCK_EX: an exclusive lock, LOCK_NB: non-blocking (don't block a nif!)
+                int flock_result = flock(fd, LOCK_EX | LOCK_NB);
+                if (flock_result != 0)
+                {
+                    close(fd);
+                    return enif_make_tuple2(env, ATOM_ERROR, ATOM_LOCKED);
+                }
+            }
             // Successfully opened the file -- setup a resource to track the FD.
             unsigned int filename_sz = strlen(filename) + 1;
             bitcask_lock_handle* handle = enif_alloc_resource_compat(env, bitcask_lock_RESOURCE,
@@ -3036,6 +3052,7 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
     ATOM_ITERATION_NOT_PERMITTED = enif_make_atom(env, "iteration_not_permitted");
     ATOM_ITERATION_NOT_STARTED = enif_make_atom(env, "iteration_not_started");
     ATOM_LOCK_NOT_WRITABLE = enif_make_atom(env, "lock_not_writable");
+    ATOM_LOCKED = enif_make_atom(env, "locked");
     ATOM_NOT_FOUND = enif_make_atom(env, "not_found");
     ATOM_NOT_READY = enif_make_atom(env, "not_ready");
     ATOM_OK = enif_make_atom(env, "ok");

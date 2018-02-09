@@ -1,5 +1,5 @@
 .eunit/*
-deps/*
+deps
 ebin
 priv/*.so
 *.o
@@ -7,3 +7,4 @@ priv/*.so
 *~
 .local_dialyzer_plt
 log/
+erl_crash.dump

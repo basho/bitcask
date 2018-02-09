@@ -3,6 +3,7 @@
 %% bitcask: Eric Brewer-inspired key/value store
 %%
 %% Copyright (c) 2010 Basho Technologies, Inc. All Rights Reserved.
+%% Copyright (c) 2018 Workday, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -23,9 +24,12 @@
 
 -export([acquire/2,
          release/1,
-         delete_stale_lock/2,
          read_activefile/2,
+         try_write_lock_acquisition/1,
          write_activefile/2]).
+-ifdef(TEST).
+-export([lock_filename/2]).
+-endif.
 
 -ifdef(PULSE).
 -compile({parse_transform, pulse_instrument}).
@@ -38,7 +42,8 @@
 -spec acquire(Type::lock_types(), Dirname::string()) -> {ok, reference()} | {error, any()}.
 acquire(Type, Dirname) ->
     LockFilename = lock_filename(Type, Dirname),
-    case bitcask_nifs:lock_acquire(LockFilename, 1) of
+    IsWriteLock = 1,
+    case bitcask_nifs:lock_acquire(LockFilename, IsWriteLock) of
         {ok, Lock} ->
             %% Successfully acquired our lock. Update the file with our PID.
             case bitcask_nifs:lock_writedata(Lock, iolist_to_binary([os:getpid(), " \n"])) of
@@ -47,16 +52,6 @@ acquire(Type, Dirname) ->
                 {error, _} = Else ->
                     Else
             end;
-        {error, eexist} ->
-            %% Lock file already exists, but may be stale. Delete it if it's stale
-            %% and try to acquire again
-            case delete_stale_lock(LockFilename) of
-                ok ->
-                    acquire(Type, Dirname);
-                not_stale ->
-                    {error, locked}
-            end;
-
         {error, Reason} ->
             {error, Reason}
     end.
@@ -92,9 +87,6 @@ write_activefile(Lock, ActiveFilename) ->
     Contents = iolist_to_binary([os:getpid(), " ", ActiveFilename, "\n"]),
     bitcask_nifs:lock_writedata(Lock, Contents).
 
-delete_stale_lock(Type, Dirname) ->
-    delete_stale_lock(lock_filename(Type,Dirname)).
-
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
@@ -118,47 +110,18 @@ read_lock_data(Lock) ->
             {error, Reason}
     end.
 
-os_pid_exists(Pid) ->
-    %% Use kill -0 trick to determine if a process exists. This _should_ be
-    %% portable across all unix variants we are interested in.
-    [] == os:cmd(io_lib:format("kill -0 ~s", [Pid])).
-
-
-delete_stale_lock(Filename) ->
-    %% Open the lock for read-only access. We do this to avoid race-conditions
-    %% with other O/S processes that are attempting the same task. Opening a
-    %% fd and holding it open until AFTER the unlink ensures that the file we
-    %% initially read is the same one we are deleting.
-    case bitcask_nifs:lock_acquire(Filename, 0) of
+%% Attempt to obtain the file lock across OS processes, within the span of the call
+%% to check if the file is already in use.
+try_write_lock_acquisition(Filename) ->
+    IsWriteLock = 1,
+    case bitcask_nifs:lock_acquire(lock_filename(write, Filename), IsWriteLock) of
         {ok, Lock} ->
-            try
-                case read_lock_data(Lock) of
-                    {ok, OsPid, _LockedFilename} ->
-                        case os_pid_exists(OsPid) of
-                            true ->
-                                %% The lock IS NOT stale, so we can't delete it.
-                                not_stale;
-                            false ->
-                                %% The lock IS stale; delete the file.
-                                _ = file:delete(Filename),
-                                ok
-                        end;
-
-                    {error, Reason} ->
-                        error_logger:error_msg("Failed to read lock data from ~s: ~p\n",
-                                               [Filename, Reason]),
-                        not_stale
-                end
-            after
-                bitcask_nifs:lock_release(Lock)
-            end;
-
+            bitcask_nifs:lock_release(Lock);
         {error, enoent} ->
             %% Failed to open the lock for reading, but only because it doesn't exist
             %% any longer. Treat this as a successful delete; the lock file existed
             %% when we started.
             ok;
-
         {error, Reason} ->
             %% Failed to open the lock for reading due to other errors.
             error_logger:error_msg("Failed to open lock file ~s: ~p\n",
