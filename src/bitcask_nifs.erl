@@ -733,7 +733,7 @@ keydir_itr_out_of_date_test2() ->
                      end).
 
 put_till_frozen(R, Name) ->
-    bitcask_nifs:keydir_put(R, crypto:rand_bytes(32), 0, 1234, 0, 1, bitcask_time:tstamp()),
+    bitcask_nifs:keydir_put(R, crypto:strong_rand_bytes(32), 0, 1234, 0, 1, bitcask_time:tstamp()),
     {ready, Ref2} = bitcask_nifs:keydir_new(Name),
     %%?debugFmt("Putting", []),
     case bitcask_nifs:keydir_itr_int(Ref2, 2000001,

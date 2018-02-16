@@ -40,8 +40,8 @@ make_dir(Dir, KeySz, BinSz) ->
     BinarySize = 14 + KeySz + BinSz + 12,
     %%        1GB
     NumObjs = (1073741824 div BinarySize) + 1,
-    Key = crypto:rand_bytes(KeySz),
-    Bin = crypto:rand_bytes(BinSz),
+    Key = crypto:strong_rand_bytes(KeySz),
+    Bin = crypto:strong_rand_bytes(BinSz),
     [bitcask:put(Ref, <<Key/binary,X:32>>, Bin) ||
         X <- lists:seq(1, NumObjs)],
     bitcask:close(Ref).

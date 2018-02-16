@@ -2236,7 +2236,7 @@ fold_corrupt_file_test2() ->
 % and a pending hash is created. There *has* to be an iterator open when you
 % call this or it will loop for ever and ever. Don't try this at home.
 put_till_frozen(B) ->
-    Key = crypto:rand_bytes(32),
+    Key = crypto:strong_rand_bytes(32),
     bitcask:put(B, Key, <<>>),
     bitcask:delete(B, Key),
 
