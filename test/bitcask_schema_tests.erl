@@ -11,7 +11,7 @@ basic_schema_test_() ->
 basic_schema_test2() ->
     lager:start(),
     %% The defaults are defined in ../priv/bitcask.schema. it is the file under test.
-    Config = cuttlefish_unit:generate_templated_config("../priv/bitcask.schema", [], context(), predefined_schema()),
+    Config = cuttlefish_unit:generate_templated_config("priv/bitcask.schema", [], context(), predefined_schema()),
 
     cuttlefish_unit:assert_config(Config, "bitcask.data_root", "./data/bitcask"),
     cuttlefish_unit:assert_config(Config, "bitcask.open_timeout", 4),
@@ -46,7 +46,7 @@ merge_window_test2() ->
     ],
 
     %% The defaults are defined in ../priv/bitcask.schema. it is the file under test.
-    Config = cuttlefish_unit:generate_templated_config("../priv/bitcask.schema", Conf, context(), predefined_schema()),
+    Config = cuttlefish_unit:generate_templated_config("priv/bitcask.schema", Conf, context(), predefined_schema()),
 
     cuttlefish_unit:assert_config(Config, "bitcask.data_root", "./data/bitcask"),
     cuttlefish_unit:assert_config(Config, "bitcask.open_timeout", 4),
@@ -99,7 +99,7 @@ override_schema_test2() ->
     ],
 
     %% The defaults are defined in ../priv/bitcask.schema. it is the file under test.
-    Config = cuttlefish_unit:generate_templated_config("../priv/bitcask.schema", Conf, context(), predefined_schema()),
+    Config = cuttlefish_unit:generate_templated_config("priv/bitcask.schema", Conf, context(), predefined_schema()),
 
     cuttlefish_unit:assert_config(Config, "bitcask.data_root", "/absolute/data/bitcask"),
     cuttlefish_unit:assert_config(Config, "bitcask.open_timeout", 2),
@@ -132,7 +132,7 @@ multi_backend_test2() ->
            ],
     %% The defaults are defined in ../priv/bitcask.schema. it is the file under test.
     Config = cuttlefish_unit:generate_templated_config(
-               ["../priv/bitcask.schema", "../priv/bitcask_multi.schema", "../test/multi_backend.schema"],
+               ["priv/bitcask.schema", "priv/bitcask_multi.schema", "test/multi_backend.schema"],
                Conf, context(), predefined_schema()),
     %%io:format("Config: ~p~n", []),
 
