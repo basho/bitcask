@@ -22,8 +22,7 @@
 -module(bitcask_qc_fsm).
 
 -export([create_stale_lock/0,
-         corrupt_hint/2,
-         truncate_hint/2]).
+         corrupt_hint/2]).
 
 -define(TEST_DIR, "/tmp/bitcask.qc." ++ os:getpid()).
 -include_lib("kernel/include/file.hrl").
@@ -54,7 +53,7 @@ init(_S) ->
 
 closed(_S) ->
     [{opened, {call, bitcask, open, [?TEST_DIR, [read_write, {open_timeout, 0}, sync_strategy()]]}},
-     {closed, {call, ?MODULE, truncate_hint, [int(), int()]}},
+     {closed, {call, bitcask_merge_delete, testonly__truncate_hint, [int(), int()]}},
      {closed, {call, ?MODULE, corrupt_hint, [int(), int()]}},
      {closed, {call, ?MODULE, create_stale_lock, []}}].
 
@@ -180,21 +179,6 @@ create_stale_lock() ->
     Fname = filename:join(?TEST_DIR, "bitcask.write.lock"),
     filelib:ensure_dir(Fname),
     ok = file:write_file(Fname, "102349430239 abcdef\n").
-
-truncate_hint(Seed, TruncBy0) ->
-    case filelib:wildcard(?TEST_DIR ++ "/*.hint") of
-        [] ->
-            ok;
-        Hints->
-            Hint = lists:nth(1 + (abs(Seed) rem length(Hints)), Hints),
-            {ok, Fi} = file:read_file_info(Hint),
-            {ok, Fh} = file:open(Hint, [read, write]),
-            TruncBy = (1 + abs(TruncBy0)) rem (Fi#file_info.size+1),
-            {ok, _To} = file:position(Fh, {eof, erlang:max(-TruncBy, 0)}),
-            %% io:format(user, "Truncating ~p by ~p to ~p\n", [Hint, TruncBy, _To]),
-            file:truncate(Fh),
-            file:close(Fh)
-    end.
 
 corrupt_hint(Seed, CorruptAt0) ->
     case filelib:wildcard(?TEST_DIR ++ "/*.hint") of

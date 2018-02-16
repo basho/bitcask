@@ -29,13 +29,14 @@
 
 %% API
 -export([start_link/0, defer_delete/3, queue_length/0]).
--export([testonly__delete_trigger/0]).                      % testing only
+-export([testonly__delete_trigger/0, testonly__truncate_hint/2, testonly__create_stale_lock/0]).% testing only
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
 -include("bitcask.hrl").
+-include_lib("kernel/include/file.hrl").
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -compile(export_all).
@@ -43,6 +44,7 @@
 
 -define(SERVER, ?MODULE).
 -define(TIMEOUT, 1000).
+-define(TEST_DIR, "/tmp/bitcask.qc." ++ os:getpid()).
 
 -ifdef(namespaced_types).
 -type merge_queue() :: queue:queue().
@@ -68,6 +70,27 @@ queue_length() ->
 
 testonly__delete_trigger() ->
     gen_server:call(?SERVER, {testonly__delete_trigger}, infinity).
+
+%% this is a common function to both eunit and EQC
+testonly__truncate_hint(Seed, TruncBy0) ->
+    case filelib:wildcard(?TEST_DIR ++ "/*.hint") of
+        [] ->
+            ok;
+        Hints->
+            Hint = lists:nth(1 + (abs(Seed) rem length(Hints)), Hints),
+            {ok, Fi} = file:read_file_info(Hint),
+            {ok, Fh} = file:open(Hint, [read, write]),
+            TruncBy = (1 + abs(TruncBy0)) rem (Fi#file_info.size+1),
+            {ok, _To} = file:position(Fh, {eof, erlang:max(-TruncBy, 0)}),
+            %% io:format(user, "Truncating ~p by ~p to ~p\n", [Hint, TruncBy, _To]),
+            file:truncate(Fh),
+            file:close(Fh)
+    end.
+
+testonly__create_stale_lock() ->
+    Fname = filename:join(?TEST_DIR, "bitcask.write.lock"),
+    filelib:ensure_dir(Fname),
+    ok = file:write_file(Fname, "102349430239 abcdef\n").
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -257,7 +280,7 @@ change_open_regression_body() ->
     K6_val2 = <<"K6b">>,
     K7 = <<"k">>,
     %% _V1 = apply(bitcask_qc_fsm,set_keys,[[K1,K2,K3,K4,K5,K6]]),
-    _V2 = apply(bitcask_qc_fsm,truncate_hint,[10,-14]),
+    _V2 = apply(?MODULE,testonly__truncate_hint,[10,-14]),
     _V3 = apply(bitcask,open,[Dir,[read_write,{open_timeout,0},{sync_strategy,none}]]),
     _V4 = apply(bitcask,delete,[_V3,K3]),
     _V5 = apply(bitcask,merge,[Dir]),
@@ -273,8 +296,8 @@ change_open_regression_body() ->
     _V34 = apply(bitcask,put,[_V3,K3,<<"34">>]),
     _V35 = apply(bitcask,merge,[Dir]),
     _V36 = apply(bitcask,close,[_V3]),
-    _V37 = apply(bitcask_qc_fsm,create_stale_lock,[]),
-    _V38 = apply(bitcask_qc_fsm,create_stale_lock,[]),
+    _V37 = apply(?MODULE,testonly__create_stale_lock,[]),
+    _V38 = apply(?MODULE,testonly__create_stale_lock,[]),
     _V50 = apply(bitcask,open,[Dir,[read_write,{open_timeout,0},{sync_strategy,none}]]),
     _V51 = apply(bitcask,put,[_V50,K7,<<"x51>>><">>]),
     _V52 = apply(bitcask,get,[_V50,K6]),
