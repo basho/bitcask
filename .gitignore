@@ -7,3 +7,4 @@ priv/*.so
 *~
 .local_dialyzer_plt
 log/
+_build/*

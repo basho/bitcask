@@ -20,7 +20,11 @@
 %%
 %% -------------------------------------------------------------------
 -module(bitcask_io).
--compile(export_all).
+
+-export([file_open/2, file_close/1, file_sync/1,
+         file_read/2, file_pread/3,
+         file_write/2, file_pwrite/3,
+         file_seekbof/1, file_position/2, file_truncate/1]).
 
 -ifdef(PULSE).
 -compile({parse_transform, pulse_instrument}).

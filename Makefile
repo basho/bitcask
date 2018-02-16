@@ -3,7 +3,7 @@ BITCASK_TAG	 = $(shell git describe --tags)
 BASE_DIR         = $(shell pwd)
 REBAR := $(shell which rebar)
 ifeq ($(REBAR),)
-REBAR = ./rebar
+REBAR = ./rebar3
 endif
 
 PULSE_TESTS = bitcask_pulse
@@ -26,7 +26,7 @@ BITCASK_IO_MODE=erlang
 test: deps compile eunit_nif
 
 eunit_nif:
-	BITCASK_IO_MODE="nif" $(REBAR) skip_deps=true eunit
+	BITCASK_IO_MODE="nif" $(REBAR) skip_deps=true as test do eunit
 
 NOW	= $(shell date +%s)
 COUNTER = $(PWD)/$(NOW).current_counterexample.eqc

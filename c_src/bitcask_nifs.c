@@ -38,6 +38,8 @@
 
 #include <stdio.h>
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
 //typesystem hack to avoid some incorrect errors.
 typedef ErlNifUInt64 uint64;
 
@@ -52,7 +54,7 @@ void DEBUG(const char *fmt, ...)
     vfprintf(stderr, fmt, ap);
     va_end(ap);
 }
-int erts_snprintf(char *, size_t, const char *, ...); 
+int erts_snprintf(char *, size_t, const char *, ...);
 #define MAX_DEBUG_STR 128
 #define DEBUG_STR(N, V) \
     char N[MAX_DEBUG_STR];\
@@ -447,7 +449,7 @@ ERL_NIF_TERM bitcask_nifs_maybe_keydir_new1(ErlNifEnv* env, int argc, const ERL_
     {
         // Get our private stash and check the global hash table for this entry
         bitcask_priv_data* priv = (bitcask_priv_data*)enif_priv_data(env);
-        
+
         enif_mutex_lock(priv->global_keydirs_lock);
         khiter_t itr = kh_get(global_keydirs, priv->global_keydirs, name);
         khiter_t table_end = kh_end(priv->global_keydirs); /* get end while lock is held! */
@@ -455,13 +457,13 @@ ERL_NIF_TERM bitcask_nifs_maybe_keydir_new1(ErlNifEnv* env, int argc, const ERL_
         if (itr != table_end)
         {
             return bitcask_nifs_keydir_new1(env, argc, argv);
-        } 
+        }
         else
         {
             return enif_make_tuple2(env, ATOM_ERROR, ATOM_NOT_READY);
         }
-    } 
-    else 
+    }
+    else
     {
         return enif_make_badarg(env);
     }
@@ -803,7 +805,7 @@ static inline int is_sib_tombstone(bitcask_keydir_entry_sib *s)
     return 0;
 }
 
-// Extracts the entry values from a regular entry or from the 
+// Extracts the entry values from a regular entry or from the
 // closest snapshot in time in an entry list.
 static int proxy_kd_entry_at_epoch(bitcask_keydir_entry* old,
                                    uint64_t epoch, bitcask_keydir_entry_proxy * ret)
@@ -1667,7 +1669,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_remove(ErlNifEnv* env, int argc, const ERL_NIF_
             }
             // If not iterating, just remove.
             else if(keydir->keyfolders == 0)
-            { 
+            {
                 remove_entry(keydir, fr.itr);
             }
             // else found in entries while iterating
@@ -1712,7 +1714,7 @@ bitcask_keydir_entry * clone_entry(bitcask_keydir_entry * curr)
             next_sib = next_sib->next;
         }
         *sib_ptr = NULL;
-        return MAKE_ENTRY_LIST_POINTER(new_head); 
+        return MAKE_ENTRY_LIST_POINTER(new_head);
     }
     else
     {
@@ -2141,7 +2143,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_trim_fstats(ErlNifEnv* env, int argc, const ERL
         enif_is_list(env, argv[1]))
     {
         bitcask_keydir* keydir = handle->keydir;
-        
+
         LOCK(keydir);
         uint32_t file_id;
 
@@ -2168,7 +2170,7 @@ ERL_NIF_TERM bitcask_nifs_keydir_trim_fstats(ErlNifEnv* env, int argc, const ERL
             list = tail;
         }
         UNLOCK(keydir);
-        return enif_make_tuple2(env, ATOM_OK, 
+        return enif_make_tuple2(env, ATOM_OK,
                                 enif_make_uint(env, non_existent_entries));
     }
     else
@@ -3061,3 +3063,5 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
 }
 
 ERL_NIF_INIT(bitcask_nifs, nif_funcs, &on_load, NULL, NULL, NULL);
+
+#pragma GCC diagnostic pop
