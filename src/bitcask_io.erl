@@ -31,6 +31,7 @@
 -endif.
 
 -ifdef(TEST).
+-export([determine_file_module/0]).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 

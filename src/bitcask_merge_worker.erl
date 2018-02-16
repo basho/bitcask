@@ -252,10 +252,4 @@ prop_in_window() ->
                 ?assertEqual(ExpInWindow, in_merge_window(NowHour, {StartTime, EndTime})),
                 true
             end).
-
-prop_in_window_test_() ->
-    {timeout, 30,
-     [fun() -> ?assert(eqc:quickcheck(prop_in_window())) end]}.
-
-
 -endif.

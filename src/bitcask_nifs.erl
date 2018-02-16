@@ -847,7 +847,7 @@ g_entry() ->
                     offset = g_uint64(),
                     tstamp = g_uint32() }.
 
-keydir_get_put_prop() ->
+prop_keydir_get_put() ->
     ?FORALL(E, g_entry(),
             begin
                 {ok, Ref} = keydir_new(),
@@ -861,9 +861,6 @@ keydir_get_put_prop() ->
                 ?assertEqual(E, E2),
                 true
             end).
-
-keydir_get_put_test_() ->
-    {timeout, 60, fun() -> eqc:quickcheck(?QC_OUT(keydir_get_put_prop())) end}.
 
 -endif.
 

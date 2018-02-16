@@ -25,7 +25,7 @@
 
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eunit/include/eunit.hrl").
--include("bitcask.hrl").
+-include("include/bitcask.hrl").
 
 -compile(export_all).
 
@@ -325,10 +325,6 @@ merge6_test2() ->
                          {delete,<<"test">>,<<>>},{delete,<<"test">>,<<>>}],
                         1,1}])).
 
-prop_merge_test_() ->
-    {timeout, ?TEST_TIME*2, fun() -> qc(prop_merge()) end}.
-
-
 fold1_test_() ->
     {timeout, 60, fun fold1_test2/0}.
 
@@ -350,10 +346,6 @@ fold2_test2() ->
                          {put,<<1>>,<<0>>},
                          {itr_release,<<1>>,<<0>>},
                          {put,<<1>>,<<>>}],1}])).
-
-prop_fold_test_() ->
-    {timeout, ?TEST_TIME*2, fun() -> qc(prop_fold()) end}.
-
 
 get_keydir(Ref) ->
     element(9, erlang:get(Ref)).    

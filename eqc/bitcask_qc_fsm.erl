@@ -117,44 +117,36 @@ postcondition(opened, opened, _S, {call, _, merge, [_TestDir]}, Res) ->
 postcondition(_From,_To,_S,{call,_,_,_},_Res) ->
     true.
 
-qc_test_() ->
-    TestTime = 45,
-    ShrinkTime = 600,
-    qc_test_(TestTime, ShrinkTime).
-
-qc_test_(TestTime, ShrinkTime) ->
-    Timeout = TestTime + ShrinkTime,
-    {timeout, Timeout,
-     {setup, fun prepare/0, fun cleanup/1,
-      [{timeout, Timeout, ?_assertEqual(true,
-                eqc:quickcheck(eqc:testing_time(TestTime, ?QC_OUT(prop_bitcask()))))}]}}.
-
 prepare() ->
     error_logger:tty(false),
     application:load(bitcask),
     application:start(bitcask),
     application:set_env(bitcask, require_hint_crc, true).
 
-cleanup(_) ->
+cleanup() ->
     application:stop(bitcask),
     application:unload(bitcask).
 
 prop_bitcask() ->
-    ?FORALL(Cmds, commands(?MODULE),
-            begin
-		bitcask_merge_delete:testonly__delete_trigger(),
-                [] = os:cmd("rm -rf " ++ ?TEST_DIR),
-                {H,{_State, StateData}, Res} = run_commands(?MODULE,Cmds),
-                case (StateData#state.bitcask) of
-                    undefined ->
-                        ok;
-                    Ref ->
-                        bitcask:close(Ref)
-                end,
-                application:unload(bitcask),
-                aggregate(zip(state_names(H),command_names(Cmds)), 
-                          equals(Res, ok))
-            end).
+    ?SETUP(fun() ->
+                   prepare(),
+                   fun() -> cleanup() end
+           end,
+           ?FORALL(Cmds, commands(?MODULE),
+                   begin
+                       bitcask_merge_delete:testonly__delete_trigger(),
+                       [] = os:cmd("rm -rf " ++ ?TEST_DIR),
+                       {H,{_State, StateData}, Res} = run_commands(?MODULE,Cmds),
+                       case (StateData#state.bitcask) of
+                           undefined ->
+                               ok;
+                           Ref ->
+                               bitcask:close(Ref)
+                       end,
+                       application:unload(bitcask),
+                       aggregate(zip(state_names(H),command_names(Cmds)), 
+                                 equals(Res, ok))
+                   end)).
 
 %% Weight for transition (this callback is optional).
 %% Specify how often each transition should be chosen
