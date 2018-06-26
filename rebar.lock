@@ -1,1 +1,6 @@
-[].
+{"1.1.0",
+[{<<"stacktrace_compat">>,{pkg,<<"stacktrace_compat">>,<<"1.0.0">>},0}]}.
+[
+{pkg_hash,[
+ {<<"stacktrace_compat">>, <<"78E13E0747FABC71DC725A49A4CBDDE54CEC1E9ED13BD80C1D35AC37182E1FA0">>}]}
+].
