@@ -783,14 +783,24 @@ hintfile_entry(Key, Tstamp, TombInt, Offset, TotalSz) ->
        TombInt:?TOMBSTONEFIELD_V2, Offset:?OFFSETFIELD_V2>>, Key].
 
 %% ===================================================================
-%% file/filelib avoidance code.
+%% file/filelib avoidance code. Only needed for pre OTP-21 releases.
 %% ===================================================================
 
+-ifdef(OTP_RELEASE).
+read_file_info(Filename) ->
+    file:read_file_info(Filename).
+
+write_file_info(FileName, Info) ->
+    file:write_file_info(FileName, Info).
+-else.
 read_file_info(FileName) ->
     prim_file:read_file_info(FileName).
 
 write_file_info(FileName, Info) ->
     prim_file:write_file_info(FileName, Info).
+
+-endif.
+
 
 is_file(File) ->
     case read_file_info(File) of
@@ -840,6 +850,11 @@ ensure_dir(F) ->
 list_dir(Dir) ->
     list_dir(Dir, 1).
 
+
+-ifdef(OTP_RELEASE).
+list_dir(Directory, Retries) when is_integer(Retries), Retries > 0 ->
+    file:list_dir(Directory).
+-else.
 list_dir(_, 0) ->
     {error, efile_driver_unavailable};
 list_dir(Directory, Retries) when is_integer(Retries), Retries > 0 ->
@@ -880,4 +895,4 @@ prim_file_drv_open(Driver, Portopts) ->
         error:Reason ->
             {error, Reason}
     end.
-
+-endif.

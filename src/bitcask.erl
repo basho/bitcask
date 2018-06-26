@@ -3074,6 +3074,7 @@ corrupt_file(Path, Offset, Data) ->
     ok = file:write(FH, Data),
     file:close(FH).
 
+-ifndef(OTP_RELEASE). %% only applies to OTP20 and earlier
 % Verify that if the cached efile port goes away, we can recover
 % and not get stuck opening casks
 efile_error_test() ->
@@ -3092,6 +3093,7 @@ efile_error_test() ->
         B2 when is_reference(B2) ->
             ok = bitcask:close(B2)
     end.
+-endif.
 
 %% About leak_t0():
 %%
