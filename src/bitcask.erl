@@ -75,11 +75,11 @@
 %% @type bc_state().
 -record(bc_state, {dirname :: string(),
                    write_file :: 'fresh' | 'undefined' | #filestate{},     % File for writing
-                   write_lock :: reference(),     % Reference to write lock
-                   read_files :: [#filestate{}],     % Files opened for reading
+                   write_lock :: reference() | undefined,     % Reference to write lock
+                   read_files=[] :: [#filestate{}],     % Files opened for reading
                    max_file_size :: integer(),  % Max. size of a written file
                    opts :: list(),           % Original options used to open the bitcask
-                   key_transform :: function(),
+                   key_transform=fun kt_id/1 :: fun((binary()) -> binary()),
                    keydir :: reference(),       % Key directory
                    read_write_p :: integer(),    % integer() avoids atom -> NIF
                    % What tombstone style to write, for testing purposes only.
@@ -106,7 +106,7 @@
                   del_keydir :: reference(),
                   expiry_time :: integer(),
                   expiry_grace_time :: integer(),
-                  key_transform :: function(),
+                  key_transform=fun kt_id/1 :: fun((binary()) -> binary()),
                   read_write_p :: integer(),    % integer() avoids atom -> NIF
                   opts :: list(),
                   delete_files :: [#filestate{}]}).
@@ -635,9 +635,6 @@ merge1(Dirname, Opts, FilesToMerge0, ExpiredFiles) ->
             throw({error, not_ready})
     end,
 
-    LiveRef = make_ref(),
-    put_state(LiveRef, #bc_state{dirname = Dirname, keydir = LiveKeyDir}),
-    erlang:erase(LiveRef),
     {InFiles2,InExpiredFiles} = lists:foldl(fun(F, {InFilesAcc,InExpiredAcc}) ->
                                             case lists:member(F#filestate.filename,
                                                     ExpiredFiles) of
@@ -1378,19 +1375,13 @@ merge_files(#mstate {  dirname = Dirname,
                     } = State) ->
     FileId = bitcask_fileops:file_tstamp(File),
     F = fun(K0, V, Tstamp, Pos, State0) ->
-                K = try
-                        KT(K0)
-                    catch
-                        Err ->
-                            {key_tx_error, Err}
-                    end,
-                case K of
-                    {key_tx_error, TxErr} ->
+                try KT(K0) of
+                    K -> merge_single_entry(K, V, Tstamp, FileId, Pos, State0)
+                catch
+                    What:Why ->
                         error_logger:error_msg("Invalid key on merge ~p: ~p",
-                                               [K0, TxErr]),
-                        State0;
-                    _ ->
-                        merge_single_entry(K, V, Tstamp, FileId, Pos, State0)
+                                               [K0, {What, Why}]),
+                        State0
                 end
         end,
     State2 = try bitcask_fileops:fold(File, F, State) of
@@ -1969,14 +1960,14 @@ expiry_merge([File | Files], LiveKeyDir, KT, Acc0) ->
     Fun = fun({tombstone, _}, _, _, Acc) ->
                   Acc;
              (K0, Tstamp, {Offset, _TotalSz}, Acc) ->
-                  K = try KT(K0) catch TxErr -> {key_tx_error, TxErr} end,
-                  case K of
-                      {key_tx_error, KeyTxErr} ->
-                          error_logger:error_msg("Invalid key on merge ~p: ~p",
-                                                 [K0, KeyTxErr]);
-                      _ ->
+                  try KT(K0) of
+                      K ->
                           bitcask_nifs:keydir_remove(LiveKeyDir, K, Tstamp,
                                                      FileId, Offset)
+                  catch
+                      What:Why ->
+                          error_logger:error_msg("Invalid key on merge ~p: ~p",
+                                                 [K0, {What, Why}])
                   end,
                   Acc
         end,
@@ -1995,7 +1986,10 @@ expiry_merge([File | Files], LiveKeyDir, KT, Acc0) ->
 
 get_key_transform(KT)
   when is_function(KT) ->
-    KT;
+    case erlang:fun_info(KT, arity) of
+        {arity, 1} -> KT;
+        _ -> error(invalid_fun)
+    end;
 get_key_transform(_State) ->
     fun kt_id/1.
 

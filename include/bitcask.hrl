@@ -7,13 +7,13 @@
 
 
 %% @type filestate().
--record(filestate, {mode :: 'read_only' | 'read_write',     % File mode: read_only, read_write
+-record(filestate, {mode='read_only' :: 'read_only' | 'read_write',     % File mode: read_only, read_write
                     filename :: string(), % Filename
-                    tstamp :: integer(),   % Tstamp portion of filename
-                    fd :: port(),       % File handle
-                    hintfd :: port(),   % File handle for hints
+                    tstamp=0 :: integer(),   % Tstamp portion of filename
+                    fd :: port() | undefined,       % File handle
+                    hintfd :: port() | undefined,   % File handle for hints
                     hintcrc=0 :: integer(),  % CRC-32 of current hint
-                    ofs :: non_neg_integer(), % Current offset for writing
+                    ofs=0 :: non_neg_integer(), % Current offset for writing
                     l_ofs=0 :: non_neg_integer(),  % Last offset written to data file
                     l_hbytes=0 :: non_neg_integer(),% Last # bytes written to hint file
                     l_hintcrc=0 :: non_neg_integer()}). % CRC-32 of current hint prior to last write
