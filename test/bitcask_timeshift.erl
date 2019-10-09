@@ -55,7 +55,7 @@ timeshift_test_() ->
 
 timeshift_test2() ->
     try
-        Dirname = "/tmp/bc.timeshift",
+        Dirname = filename:join(?TEST_FILEPATH, "bc.timeshift"),
         meck:new(bitcask_time, [passthrough]),
         meck:expect(bitcask_time, tstamp, fun next_tstamp/0),
         set_tstamp(100),
