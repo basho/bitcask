@@ -4,7 +4,7 @@
 %%% Created     : 26 Mar 2012 by Ulf Norell
 -module(mute).
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 % Call Fun with output suppressed.
 run(Fun) ->

@@ -128,6 +128,5 @@ add_event(#event{timestamp = Now, data = Data}, State) ->
   State#state{ events = [Event|State#state.events] }.
 
 timestamp() ->
-  {A, B, C} = os:timestamp(),
-  1000000 * (1000000 * A + B) + C.
+  erlang:system_time(microsecond).
 
