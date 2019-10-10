@@ -27,7 +27,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("include/bitcask.hrl").
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).

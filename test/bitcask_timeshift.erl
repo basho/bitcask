@@ -24,7 +24,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("bitcask.hrl").
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 current_tstamp() ->
     case erlang:get(meck_tstamp) of

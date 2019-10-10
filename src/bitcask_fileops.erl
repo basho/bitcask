@@ -55,11 +55,7 @@
 -endif.
 
 -ifdef(TEST).
--ifdef(EQC).
--include_lib("eqc/include/eqc.hrl").
--include_lib("eqc/include/eqc_fsm.hrl").
--endif.
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
@@ -880,4 +876,3 @@ prim_file_drv_open(Driver, Portopts) ->
         error:Reason ->
             {error, Reason}
     end.
-

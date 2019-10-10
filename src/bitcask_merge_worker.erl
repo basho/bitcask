@@ -30,6 +30,7 @@
 -ifdef(TEST).
 -ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
+-export([prop_in_window/0]).
 -endif.
 -include_lib("eunit/include/eunit.hrl").
 -endif.

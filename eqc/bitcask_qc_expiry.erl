@@ -27,7 +27,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("include/bitcask.hrl").
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 keys() ->
     eqc_gen:non_empty(list(eqc_gen:non_empty(binary()))).
@@ -176,4 +176,3 @@ validate_live([{K, {Value, _}} | Rest], Actual) ->
 
 
 -endif.
-
