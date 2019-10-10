@@ -5,7 +5,7 @@
 %%% Created     : 21 Mar 2012 by Ulf Norell
 -module(utils).
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 whereis(Name) ->
   erlang:whereis(Name).

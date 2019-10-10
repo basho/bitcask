@@ -3,11 +3,10 @@
 -include("bitcask.hrl").
 
 -ifdef(TEST).
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--define(BITCASK, "/tmp/bc.pr156_regression").
 %% Number of keys used in the tests
 -define(NUM_KEYS, 50).
 %% max_file_size given to bitcask.
@@ -34,9 +33,9 @@ pr156_regression2_test_() ->
      end}.
 
 pr156_regression1(X) ->
-    io:format("pr156_regression1 ~p at ~p\n", [X, now()]),
+    io:format("pr156_regression1 ~p at ~p\n", [X, os:timestamp()]),
     token:next_name(),
-    Dir = ?BITCASK ++ ".1." ++ token:get_name(),
+    Dir = ?TEST_FILEPATH ++ ".1." ++ token:get_name(),
     os:cmd("rm -rf " ++ Dir),
     bitcask_time:test__set_fudge(10),
     V3 = goo({call,bitcask_pulse,bc_open,[Dir]}),
@@ -74,9 +73,9 @@ pr156_regression1(X) ->
 %% r1s11.bos1 executes each of N iterations in about 1500 msec.
 
 pr156_regression2(X) ->
-    io:format("pr156_regression2 ~p at ~p\n", [X, now()]),
+    io:format("pr156_regression2 ~p at ~p\n", [X, os:timestamp()]),
     token:next_name(),
-    Dir = ?BITCASK ++ ".2." ++ token:get_name(),
+    Dir = ?TEST_FILEPATH ++ ".2." ++ token:get_name(),
     os:cmd("rm -rf " ++ Dir),
     bitcask_time:test__set_fudge(10),
     try
@@ -135,13 +134,13 @@ check_no_tombstones(Ref, Good) ->
             {check_no_tombstones, Else}
     end.
 
-make_merge_txt(Dir, Seed, Probability) ->
-    random:seed(Seed),
+make_merge_txt(Dir, _Seed, Probability) ->
+    % random:seed(Seed),
     case filelib:is_dir(Dir) of
         true ->
             DataFiles = filelib:wildcard("*.data", Dir),
             {ok, FH} = file:open(Dir ++ "/merge.txt", [write]),
-            [case random:uniform(100) < Probability of
+            [case rand:uniform(100) < Probability of
                  true ->
                      io:format(FH, "~s\n", [DF]);
                  false ->

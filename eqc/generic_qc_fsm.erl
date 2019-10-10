@@ -60,8 +60,9 @@
 -include_lib("eqc/include/eqc_fsm.hrl").
 -include_lib("kernel/include/file.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-include("include/bitcask.hrl").
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -record(state,{ handle :: term(),
                 dir :: term(),
@@ -75,7 +76,7 @@
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
--define(TEST_DIR, "/tmp/generic.qc").
+-define(TEST_DIR, filename:join(?TEST_FILEPATH, "generic.qc")).
 
 initial_state() ->
     init.
@@ -149,7 +150,7 @@ prop(FI_enabledP, VerboseP) ->
                 faulterl_nif:poke("bc_fi_enabled", 0, <<0:8/native>>, false),
                 [catch erlang:garbage_collect(Pid) || Pid <- erlang:processes()],
 
-                {Ta, Tb, Tc} = now(),
+                {Ta, Tb, Tc} = os:timestamp(),
                 TestDir = ?TEST_DIR ++ lists:flatten(io_lib:format(".~w.~w.~w", [Ta, Tb, Tc])),
                 ok = file:make_dir(TestDir),
                 Env = [{parameter_test_dir, TestDir}],
@@ -429,7 +430,7 @@ fold_all(H) ->
                 [{K,V}|Acc]
         end,
     io:format(user, "<f", []),
-    ID = now(),
+    ID = os:timestamp(),
     event_logger:event({fold, start, ID}),
     case bitcask:fold(H, F, []) of
         {error, _} ->

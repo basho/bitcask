@@ -27,7 +27,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("include/bitcask.hrl").
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
@@ -158,10 +158,11 @@ prop_merge() ->
          ?FORALL({Ops, M1, M2}, {eqc_gen:non_empty(list(ops(Keys, Values))),
                                  choose(1,128), choose(1,128)},
                  begin
-                     Tm = tuple_to_list(now()),
+                     Tm = tuple_to_list(os:timestamp()),
                      Dir = lists:flatten(
                              io_lib:format(
-                               "/tmp/bc.prop.merge.~w.~w.~w", Tm)),
+                               filename:join(?TEST_FILEPATH, 
+                                                "bc.prop.merge.~w.~w.~w"), Tm)),
                      ?cmd("rm -rf " ++ Dir),
 
                      %% Open a bitcask, dump the ops into it and build
@@ -232,11 +233,11 @@ prop_fold() ->
          ?FORALL({Ops, M1}, {eqc_gen:non_empty(list(ops(Keys, Values))),
                              choose(1,128)},
                  begin
-                     ?cmd("rm -rf /tmp/bc.prop.fold"),
+                     ?cmd("rm -rf " ++ filename:join(?TEST_FILEPATH, "bc.prop.fold")),
 
                      %% Open a bitcask, dump the ops into it and build
                      %% a model of what SHOULD be in the data.
-                     Ref = bitcask:open("/tmp/bc.prop.fold",
+                     Ref = bitcask:open(filename:join(?TEST_FILEPATH, "bc.prop.fold"),
                                         [read_write, {max_file_size, M1}]),
                      try
                          {Model, Fstats} = apply_kv_ops(Ops, Ref, [], #m_fstats{}),

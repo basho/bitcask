@@ -11,7 +11,7 @@
                     filename :: string(), % Filename
                     tstamp :: integer(),   % Tstamp portion of filename
                     fd :: port(),       % File handle
-                    hintfd :: port(),   % File handle for hints
+                    hintfd :: port() | undefined,   % File handle for hints
                     hintcrc=0 :: integer(),  % CRC-32 of current hint
                     ofs :: non_neg_integer(), % Current offset for writing
                     l_ofs=0 :: non_neg_integer(),  % Last offset written to data file
@@ -62,3 +62,5 @@
 -define(CHUNK_SIZE, 65535).
 -define(MIN_CHUNK_SIZE, 1024).
 -define(MAX_CHUNK_SIZE, 134217728).
+
+-define(TEST_FILEPATH, "_build/test/log").

@@ -39,12 +39,12 @@
 -include_lib("kernel/include/file.hrl").
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 -endif.
 
 -define(SERVER, ?MODULE).
 -define(TIMEOUT, 1000).
--define(TEST_DIR, "/tmp/bitcask.qc." ++ os:getpid()).
+-define(TEST_DIR, filename:join(?TEST_FILEPATH, os:getpid())).
 
 -ifdef(namespaced_types).
 -type merge_queue() :: queue:queue().
@@ -171,8 +171,7 @@ delete_ready_files(S, PendingQ) ->
     end.
 
 delete_files(Files) ->
-    _ = [bitcask_fileops:delete(#filestate{filename = F}) || F <- Files],
-    ok.
+    lists:foreach(fun bitcask_fileops:delete/1, Files).
 
 -ifdef(TEST).
 
@@ -180,7 +179,7 @@ multiple_merges_during_fold_test_() ->
     {timeout, 60, fun multiple_merges_during_fold_body/0}.
 
 multiple_merges_during_fold_body() ->
-    Dir = "/tmp/bc.multiple-merges-fold",
+    Dir = filename:join(?TEST_FILEPATH, "bc.multiple-merges-fold"),
     B = bitcask:open(Dir, [read_write, {max_file_size, 50}]),
     PutSome = fun() ->
                       [bitcask:put(B, <<X:32>>, <<"yo this is a value">>) ||
@@ -232,7 +231,7 @@ regression_gh82_test_() ->
     {timeout, 300, ?_assertEqual(ok, regression_gh82_body())}.
 
 regression_gh82_body() ->
-    Dir = "/tmp/bc.regression_gh82",
+    Dir = filename:join(?TEST_FILEPATH, "bc.regression_gh82"),
 
     os:cmd("rm -rf " ++ Dir),
     Reference = bitcask:open(Dir, [read_write | regression_gh82_opts()]),
@@ -268,7 +267,7 @@ change_open_regression_test_() ->
     {timeout, 300, ?_assertMatch({ok, _}, change_open_regression_body())}.
 
 change_open_regression_body() ->
-    Dir = "/tmp/bitcask.qc",
+    Dir = filename:join(?TEST_FILEPATH, "bitcask.qc"),
     os:cmd("rm -rf " ++ Dir),
     K1 = <<"K111">>,
     K2 = <<"K22222">>,
@@ -337,7 +336,7 @@ new_20131217_a_test_() ->
 
 new_20131217_a_body() ->
     catch token:stop(),
-    TestDir = token:get_name(),
+    TestDir = filename:join(?TEST_FILEPATH, token:get_name()),
     bitcask_time:test__set_fudge(10),
     MOD = ?MODULE,
     MFS = 1000,
@@ -382,7 +381,7 @@ new_20131217_c_test_() ->
 
 new_20131217_c_body() ->
     catch token:stop(),
-    TestDir = token:get_name(),
+    TestDir = filename:join(?TEST_FILEPATH, token:get_name()),
     bitcask_time:test__set_fudge(10),
     MOD = ?MODULE,
     MFS = 1000,
@@ -417,7 +416,7 @@ new_20131217_c_body() ->
 
 %% new_20131217_d_body() ->
 %%     catch token:stop(),
-%%     TestDir = token:get_name(),
+%%     TestDir = filename:join(?TEST_FILEPATH, token:get_name()),
 %%     MOD = ?MODULE,
 %%     Val1 = <<0,0,0,0,0,0,0,0,0,0>>,%<<"v111111111">>,
 %%     Val2 = <<0,0,0,0,0,0,0,0,0,0,0,0,0>>,%<<"v222222222222">>,
@@ -463,7 +462,7 @@ new_20131217_e_test_() ->
 
 new_20131217_e_body() ->
     catch token:stop(),
-    TestDir = token:get_name(),
+    TestDir = filename:join(?TEST_FILEPATH, token:get_name()),
     bitcask_time:test__set_fudge(10),
     MOD = ?MODULE,
     MFS = 400,
@@ -598,7 +597,7 @@ merge_delete_race_pr156_regression_test2() ->
     %%    it's far too late and deletes a new incarnation of
     %%    file_id 1.
 
-    Dir = "/tmp/bc.merge_delete_race_pr156_regression",
+    Dir = filename:join(?TEST_FILEPATH, "bc.mrg_delete_race_pr156_regression"),
 
     os:cmd("rm -rf " ++ Dir),
     _ = application:start(bitcask),

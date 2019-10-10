@@ -8,3 +8,6 @@ priv/*.so
 .local_dialyzer_plt
 log/
 _build/*
+.DS_Store
+/.eqc-info
+/current_counterexample.eqc

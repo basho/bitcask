@@ -59,15 +59,17 @@
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_fsm.hrl").
 -endif.
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
+
+-type filestate() :: #filestate{}.
 
 %% @doc Open a new file for writing.
 %% Called on a Dirname, will open a fresh file in that directory.
 -spec create_file(Dirname :: string(), Opts :: [any()],
                   reference()) ->
-                         {ok, #filestate{}} | {error, term()}.
+                         {ok, filestate()} | {error, term()}.
 
 create_file(DirName, Opts0, Keydir) ->
     Opts = [create|Opts0],
@@ -124,7 +126,8 @@ get_create_lock(DirName, N) ->
 
 %% @doc Open an existing file for reading.
 %% Called with fully-qualified filename.
--spec open_file(Filename :: string()) -> {ok, #filestate{}} | {error, any()}.
+-spec open_file(Filename :: string())
+                -> {ok, filestate()} | {error, any()}.
 open_file(Filename) ->
     open_file(Filename, readonly).
 
@@ -171,7 +174,7 @@ open_file(Filename, readonly) ->
     end.
 
 % Re-open hintfile for appending.
--spec reopen_hintfile(string() | #filestate{}) ->
+-spec reopen_hintfile(string() | filestate()) ->
     {error, enoent} | {HintFD::port() | undefined, CRC :: non_neg_integer()}.
 reopen_hintfile(Filename) ->
     case  (catch open_hint_file(Filename, [])) of
@@ -214,7 +217,7 @@ prepare_hintfile_for_append(HintFD) ->
     end.
 
 %% @doc Use when done writing a file.  (never open for writing again)
--spec close(#filestate{} | fresh | undefined) -> ok.
+-spec close(filestate()) -> ok.
 close(fresh) -> ok;
 close(undefined) -> ok;
 close(State = #filestate{ fd = FD }) ->
@@ -223,15 +226,13 @@ close(State = #filestate{ fd = FD }) ->
     ok.
 
 %% @doc Use when closing multiple files.  (never open for writing again)
--spec close_all([#filestate{} | fresh | undefined]) -> ok.
+-spec close_all([filestate()]) -> ok.
 close_all(FileStates) ->
     lists:foreach(fun ?MODULE:close/1, FileStates),
     ok.
 
 %% @doc Close a file for writing, but leave it open for reads.
--spec close_for_writing(#filestate{} | fresh | undefined) -> #filestate{} | ok.
-close_for_writing(fresh) -> ok;
-close_for_writing(undefined) -> ok;
+-spec close_for_writing(filestate()) -> filestate().
 close_for_writing(State = #filestate{ mode = read_write, fd = Fd }) ->
     S2 = close_hintfile(State),
     bitcask_io:file_sync(Fd),
@@ -271,20 +272,20 @@ data_file_tstamps(Dirname) ->
     end.
 
 %% @doc Use only after merging, to permanently delete a data file.
--spec delete(#filestate{}) -> ok | {error, atom()}.
-delete(#filestate{ filename = FN } = State) ->
+-spec delete(string()) -> ok | {error, atom()}.
+delete(FN) ->
     _ = file:delete(FN),
-    case has_hintfile(State) of
+    case has_hintfile(FN) of
         true ->
-            file:delete(hintfile_name(State));
+            file:delete(hintfile_name(FN));
         false ->
             ok
     end.
 
 %% @doc Write a Key-named binary data field ("Value") to the Filestate.
--spec write(#filestate{},
+-spec write(filestate(),
             Key :: binary(), Value :: binary(), Tstamp :: integer()) ->
-        {ok, #filestate{}, Offset :: integer(), Size :: integer()} |
+        {ok,filestate(), Offset :: integer(), Size :: integer()} |
         {error, read_only}.
 write(#filestate { mode = read_only }, _K, _V, _Tstamp) ->
     {error, read_only};
@@ -342,7 +343,7 @@ un_write(Filestate=#filestate{fd = FD, hintfd = HintFD,
                              hintcrc = LastHintCRC}}.
 
 %% @doc Given an Offset and Size, get the corresponding k/v from Filename.
--spec read(Filename :: string() | #filestate{}, Offset :: integer(),
+-spec read(Filename :: string() | filestate(), Offset :: integer(),
            Size :: integer()) ->
         {ok, Key :: binary(), Value :: binary()} |
         {error, bad_crc} | {error, atom()}.
@@ -397,13 +398,13 @@ fold(#filestate { fd=Fd, filename=Filename, tstamp=FTStamp }, Fun, Acc0) ->
 
 -type key_fold_fun() :: fun((binary(), integer(), {integer(), integer()}, any()) -> any()).
 -type key_fold_mode() :: datafile | hintfile | default | recovery.
--spec fold_keys(fresh | #filestate{}, key_fold_fun(), any()) ->
+-spec fold_keys(filestate(), key_fold_fun(), any()) ->
         any() | {error, any()}.
 fold_keys(fresh, _Fun, Acc) -> Acc;
 fold_keys(State, Fun, Acc) ->
     fold_keys(State, Fun, Acc, default).
 
--spec fold_keys(fresh | #filestate{}, key_fold_fun(), any(), key_fold_mode()) ->
+-spec fold_keys(filestate(), key_fold_fun(), any(), key_fold_mode()) ->
         any() | {error, any()}.
 fold_keys(State, Fun, Acc, datafile) ->
     fold_keys_loop(State, 0, Fun, Acc);
@@ -444,23 +445,23 @@ mk_filename(Dirname, Tstamp) ->
     filename:join(Dirname,
                   lists:concat([integer_to_list(Tstamp),".bitcask.data"])).
 
--spec filename(#filestate{}) -> string().
+-spec filename(filestate()) -> string().
 filename(#filestate { filename = Fname }) ->
     Fname.
 
--spec hintfile_name(string() | #filestate{}) -> string().
+-spec hintfile_name(string() | filestate()) -> string().
 hintfile_name(Filename) when is_list(Filename) ->
     filename:rootname(Filename, ".data") ++ ".hint";
 hintfile_name(#filestate { filename = Fname }) ->
     hintfile_name(Fname).
 
--spec file_tstamp(#filestate{} | string()) -> integer().
+-spec file_tstamp(filestate() | string()) -> integer().
 file_tstamp(#filestate{tstamp=Tstamp}) ->
     Tstamp;
 file_tstamp(Filename) when is_list(Filename) ->
     list_to_integer(filename:basename(Filename, ".bitcask.data")).
 
--spec check_write(fresh | #filestate{}, binary(), non_neg_integer(), integer()) ->
+-spec check_write(filestate(), binary(), non_neg_integer(), integer()) ->
       fresh | wrap | ok.
 check_write(fresh, _Key, _ValSize, _MaxSize) ->
     %% for the very first write, special-case
@@ -474,8 +475,9 @@ check_write(#filestate { ofs = Offset }, Key, ValSize, MaxSize) ->
             ok
     end.
 
-has_hintfile(#filestate { filename = Fname }) ->
-    is_file(hintfile_name(Fname)).
+-spec has_hintfile(string() | filestate()) -> boolean().
+has_hintfile(Filename) ->
+    is_file(hintfile_name(Filename)).
 
 %% Return true if there is a hintfile and it has
 %% a valid CRC check
