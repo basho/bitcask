@@ -1,4 +1,4 @@
-.PHONY: compile rel cover test dialyzer
+.PHONY: compile rel cover test dialyzer eqc
 REBAR=./rebar3
 
 compile:
@@ -15,6 +15,9 @@ test: compile
 
 dialyzer:
 	$(REBAR) dialyzer
+
+eqc:
+	$(REBAR) eqc
 
 xref:
 	$(REBAR) xref
