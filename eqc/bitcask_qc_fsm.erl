@@ -24,7 +24,7 @@
 -export([create_stale_lock/0,
          corrupt_hint/2]).
 
--define(TEST_DIR, "/tmp/bitcask.qc." ++ os:getpid()).
+
 -include_lib("kernel/include/file.hrl").
 
 -ifdef(EQC).
@@ -32,8 +32,10 @@
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_fsm.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-include("include/bitcask.hrl").
+-define(TEST_DIR, filename:join(?TEST_FILEPATH, "bitcask.qc." ++ os:getpid())).
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -record(state,{ bitcask :: reference(),
                 data = [] :: list(),

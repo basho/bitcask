@@ -27,7 +27,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("include/bitcask.hrl").
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 keys() ->
     eqc_gen:non_empty(list(eqc_gen:non_empty(binary()))).
@@ -88,7 +88,7 @@ prop_expiry() ->
                          choose(1,10), choose(1, 10), choose(5, 50), choose(5,128)},
                         ?IMPLIES(true,
                                  begin
-                                     Dirname = "/tmp/bc.prop.expiry",
+                                     Dirname = filename:join(?TEST_FILEPATH, "bc.prop.expiry"),
                                      ?cmd("rm -rf " ++ Dirname),
 
                                      %% Initialize how many ticks each operation will
