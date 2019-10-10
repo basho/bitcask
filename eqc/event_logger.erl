@@ -4,7 +4,7 @@
 %%% Created     : 26 Mar 2012 by Ulf Norell
 -module(event_logger).
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -behaviour(gen_server).
 
@@ -128,6 +128,6 @@ add_event(#event{timestamp = Now, data = Data}, State) ->
   State#state{ events = [Event|State#state.events] }.
 
 timestamp() ->
-  {A, B, C} = erlang:now(),
+  {A, B, C} = os:timestamp(),
   1000000 * (1000000 * A + B) + C.
 
