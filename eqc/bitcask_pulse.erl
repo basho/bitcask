@@ -17,11 +17,13 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -compile({parse_transform, pulse_instrument}).
--compile({pulse_replace_module,
-  [{application, pulse_application}]}).
+-include_lib("pulse_otp/include/pulse_otp.hrl").
 %% The following functions contains side_effects but are run outside
 %% PULSE, i.e. PULSE needs to leave them alone
--compile({pulse_skip,[{prop_pulse_test_,0},{really_delete_bitcask,0},{copy_bitcask_app,0}]}).
+-compile({pulse_skip,[{prop_pulse_test_, 0},
+                      {really_delete_bitcask, 0},
+                      {copy_bitcask_app, 0},
+                      {get_errors, 0}]}).
 -compile({pulse_no_side_effect,[{file,'_','_'}, {erlang, now, 0}]}).
 
 %% The token module keeps track of the currently used directory for
@@ -297,7 +299,7 @@ stop_node() ->
   slave:stop(node_name()).
 
 run_on_node(local, _Verbose, M, F, A) ->
-  rpc:call(node(), M, F, A, 45*60*1000);
+  apply(M, F, A);
 run_on_node(slave, Verbose, M, F, A) ->
   start_node(Verbose),
   rpc:call(node_name(), M, F, A, 45*60*1000).
@@ -321,12 +323,12 @@ run_commands_on_node(LocalOrSlave, Cmds, Seed, Verbose, KeepFiles) ->
     error_logger:add_report_handler(handle_errors),
     token:next_name(),
     event_logger:start_logging(),
-    bitcask_time:test__set_fudge(10),
     X =
     try
       {H, S, Res, PidRs, Trace} = pulse:run(fun() ->
-          %% pulse_application_controller:start({application, kernel, []}),
+          application_controller:start({application, kernel, []}),
           application:start(bitcask),
+          bitcask_time:test__set_fudge(10),
           receive after AfterTime -> ok end,
           OldVerbose = pulse:verbose([ all || Verbose ]),
           {H, S, R} = run_commands(?MODULE, Cmds),
@@ -336,12 +338,14 @@ run_commands_on_node(LocalOrSlave, Cmds, Seed, Verbose, KeepFiles) ->
           pulse:verbose(OldVerbose),
           Trace = event_logger:get_events(),
           receive after AfterTime -> ok end,
+          unlink(whereis(pulse_application_controller)),
           exit(pulse_application_controller, shutdown),
+          receive after AfterTime -> ok end,
           {H, S, R, PidRs, Trace}
         end, [{seed, Seed},
               {strategy, unfair}]),
       Schedule = pulse:get_schedule(),
-      Errors = gen_event:call(error_logger, handle_errors, get_errors, 60*1000),
+      Errors = get_errors(),
       {H, S, Res, PidRs, Trace, Schedule, Errors}
     catch
       _:Err ->
@@ -353,14 +357,18 @@ run_commands_on_node(LocalOrSlave, Cmds, Seed, Verbose, KeepFiles) ->
     end,
     X end).
 
+get_errors() ->
+  gen_event:call(error_logger, handle_errors, get_errors, 60*1000).
+
 prop_pulse() ->
   prop_pulse(local, false, false).
 
 prop_pulse(Boolean) ->
     prop_pulse(local, Boolean, false).
 
-prop_pulse(LocalOrSlave, Verbose, KeepFiles) ->
-  P = ?FORALL(Cmds, commands(?MODULE),
+prop_pulse(LocalOrSlave, Verbose0, KeepFiles) ->
+  ?LET(Verbose, parameter(verbose, Verbose0),
+  ?FORALL(Cmds, commands(?MODULE),
   ?IMPLIES(length(Cmds) > 0,
   ?LET(Shrinking, parameter(shrinking, false),
   ?ALWAYS(if Shrinking -> 10; % re-do this many times in shrinking runs
@@ -369,8 +377,10 @@ prop_pulse(LocalOrSlave, Verbose, KeepFiles) ->
   ?FORALL(Seed, pulse:seed(),
   begin
     case run_on_node(LocalOrSlave, Verbose, ?MODULE, run_commands_on_node, [LocalOrSlave, Cmds, Seed, Verbose, KeepFiles]) of
-      {'EXIT', Err} ->
-        equals({'EXIT', Err}, ok);
+      {'EXIT', _} = Err ->
+        equals(Err, ok);
+      {badrpc, {'EXIT', _}} = Err ->
+        equals(Err, ok);
       {badrpc, timeout} = Bad ->
         io:format(user, "GOT ~p, aborting.  Stop PULSE and restart!\n", [Bad]),
         exit({stopping, Bad});
@@ -399,8 +409,7 @@ prop_pulse(LocalOrSlave, Verbose, KeepFiles) ->
             [ {errors, equals(Errors, [])}
             , {events, check_trace(Trace)} ]))))))
     end
-  end))))),
-  P.
+  end)))))).
 
 %% A EUnit wrapper for the QuickCheck property
 prop_pulse_test_() ->
