@@ -371,8 +371,8 @@ prop_pulse(LocalOrSlave, Verbose0, KeepFiles) ->
   ?FORALL(Cmds, commands(?MODULE),
   ?IMPLIES(length(Cmds) > 0,
   ?LET(Shrinking, parameter(shrinking, false),
-  ?ALWAYS(if Shrinking -> 10; % re-do this many times in shrinking runs
-             true      -> 2   % re-do this many times in normal runs
+  ?ALWAYS(if Shrinking -> 5; % re-do this many times in shrinking runs
+             true      -> 1  % re-do this many times in normal runs
           end,
   ?FORALL(Seed, pulse:seed(),
   begin
@@ -716,8 +716,10 @@ fork_results(Pids) ->
   end).
 
 -define(LOG(Tag, MkCall),
+  pulse:event(Tag),
   event_logger:event({call, self(), Tag}),
   __Result = MkCall,
+  pulse:event({Tag, __Result}),
   event_logger:event({result, self(), __Result}),
   __Result).
 
@@ -817,7 +819,7 @@ fold_keys(H) ->
 bc_open(Writer, {MakeMergeFileP, Seed, Probability}) ->
   erlang:put(?BITCASK_TESTING_KEY, ?MODULE),
     if MakeMergeFileP ->
-            bitcask:make_merge_file(?BITCASK, Seed, Probability);
+            make_merge_file(?BITCASK, Seed, Probability);
        true ->
             ok
     end,
@@ -826,6 +828,23 @@ bc_open(Writer, {MakeMergeFileP, Seed, Probability}) ->
     true  -> catch bitcask:open(?BITCASK, [read_write, {max_file_size, ?FILE_SIZE}, {open_timeout, 1234}]);
     false -> catch bitcask:open(?BITCASK, [{open_timeout, 1234}])
   end).
+
+make_merge_file(Dir, Seed, Probability) ->
+    rand:seed(exrop, Seed),
+    case filelib:is_dir(Dir) of
+        true ->
+            DataFiles = filelib:wildcard("*.data", Dir),
+            {ok, FH} = file:open(Dir ++ "/merge.txt", [write]),
+            [case rand:uniform(100) < Probability of
+                 true ->
+                     io:format(FH, "~s\n", [DF]);
+                 false ->
+                     ok
+             end || DF <- DataFiles],
+            ok = file:close(FH);
+        false ->
+            ok
+    end.
 
 bc_close(H)    ->
   ?LOG({close, H},
