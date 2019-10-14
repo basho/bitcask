@@ -68,6 +68,7 @@
 
 -ifdef(PULSE).
 -compile({parse_transform, pulse_instrument}).
+-include_lib("pulse_otp/include/pulse_otp.hrl").
 -export([set_pulse_pid/1]).
 -compile({pulse_skip, [{init,0}]}).
 -endif.
