@@ -389,7 +389,7 @@ prop_pulse(LocalOrSlave, Verbose0, KeepFiles) ->
                        re:run(element(2, E), "Invalid merge input") == nomatch],
         ?WHENFAIL(
           ?QC_FMT("\nState: ~p\n", [S]),
-          aggregate(zipwith(fun command_data/2, Cmds, H),
+          aggregate(zipwith(fun command_data/2, tl(Cmds), H),
           measure(len_cmds, length(Cmds),
           measure(deep_len_cmds, lists:foldl(
                               fun({set,_,{call, _, fork, [L]}}, Acc) ->
@@ -671,34 +671,34 @@ check_fold_keys_result([], []) ->
   true.
 
 %% Presenting command data statistics in a nicer way
-command_data({set, _, {call, _, merge, _}}, {_S, V}) ->
-  case V of
+command_data({set, _, {call, _, merge, _}}, H) ->
+  case eqc_statem:history_result(H) of
     {error, {merge_locked, _, _}} -> {merge, locked};
-    _                             -> {merge, V}
+    {normal, V}                   -> {merge, V}
   end;
-command_data({set, _, {call, _, fork_merge, _}}, {_S, V}) ->
-  case V of
+command_data({set, _, {call, _, fork_merge, _}}, H) ->
+  case eqc_statem:history_result(H) of
     {'EXIT', _} -> {fork_merge, 'EXIT'};
-    _           -> {fork_merge, V}
+    {normal, V} -> {fork_merge, V}
   end;
-command_data({set, _, {call, _, bc_open, _}}, {_S, V}) ->
-  case V of
-    {'EXIT', _} -> {bc_open, 'EXIT'};
-    {error, Err} -> {bc_open, Err};
-    _  when is_reference(V) -> bc_open
+command_data({set, _, {call, _, bc_open, _}}, H) ->
+  case eqc_statem:history_result(H) of
+    {'EXIT', _}                          -> {bc_open, 'EXIT'};
+    {error, Err}                         -> {bc_open, Err};
+    {normal, Ref} when is_reference(Ref) -> bc_open
   end;
-command_data({set, _, {call, _, needs_merge, _}}, {_S, V}) ->
-  case V of
-    {true, _} -> {needs_merge, true};
-    false     -> {needs_merge, false};
-    Else      -> {needs_merge, Else}
+command_data({set, _, {call, _, needs_merge, _}}, H) ->
+  case eqc_statem:history_result(H) of
+    {normal, {true, _}} -> {needs_merge, true};
+    {normal, false}     -> {needs_merge, false};
+    {normal, Other}     -> {needs_merge, Other}
   end;
-command_data({set, _, {call, _, kill, [Pid]}}, {_S, _V}) ->
+command_data({set, _, {call, _, kill, [Pid]}}, _H) ->
   case Pid of
     bitcask_merge_worker -> {kill, merger};
     _                    -> {kill, reader}
   end;
-command_data({set, _, {call, _, Fun, _}}, {_S, _V}) ->
+command_data({set, _, {call, _, Fun, _}}, _H) ->
   Fun.
 
 %% Wait for all forks to return their results
