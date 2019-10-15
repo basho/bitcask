@@ -322,7 +322,6 @@ run_commands_on_node(LocalOrSlave, Cmds, Seed, Verbose, KeepFiles) ->
                 end,
     event_logger:start_link(),
     pulse:start(),
-    bitcask_nifs:set_pulse_pid(utils:whereis(pulse)),
     error_logger:tty(false),
     error_logger:add_report_handler(handle_errors),
     token:next_name(),

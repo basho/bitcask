@@ -80,10 +80,6 @@ void DEBUG2(const char *fmt, ...) { }
 #  define DEBUG_ENTRY(E) {}
 #endif
 
-#ifdef PULSE
-#include "pulse_c_send.h"
-#endif
-
 #ifdef BITCASK_DEBUG
 void format_bin(char * buf, size_t buf_size, const unsigned char * bin, size_t bin_size)
 {
@@ -378,9 +374,6 @@ static void bitcask_nifs_file_resource_cleanup(ErlNifEnv* env, void* arg);
 
 static ErlNifFunc nif_funcs[] =
 {
-#ifdef PULSE
-    {"set_pulse_pid", 1, set_pulse_pid},
-#endif
     {"keydir_new", 0, bitcask_nifs_keydir_new0},
     {"keydir_new", 1, bitcask_nifs_keydir_new1},
     {"maybe_keydir_new", 1, bitcask_nifs_maybe_keydir_new1},
@@ -1212,12 +1205,6 @@ static void perhaps_sweep_siblings(bitcask_keydir* keydir)
     {
         return;
     }
-
-#ifdef  PULSE
-    i = 10;
-#else   /* PULSE */
-    i = 100*1000;
-#endif
 
     gettimeofday(&target, NULL);
     target.tv_usec += max_usec;
@@ -2728,17 +2715,7 @@ static void msg_pending_awaken(ErlNifEnv* env, bitcask_keydir* keydir,
     for (idx = 0; idx < keydir->pending_awaken_count; idx++)
     {
         enif_clear_env(msg_env);
-#ifdef PULSE
-        /* Using PULSE_SEND here sometimes deadlocks the Bitcask PULSE test.
-           Reverting to using enif_send for now.
-           TODO: Check if PULSE_SEND is really necessary and investigate/fix
-                 deadlock in the future
-        */
-        /* PULSE_SEND(env, &keydir->pending_awaken[idx], msg_env, msg); */
         enif_send(env, &keydir->pending_awaken[idx], msg_env, msg);
-#else
-        enif_send(env, &keydir->pending_awaken[idx], msg_env, msg);
-#endif
     }
     enif_free_env(msg_env);
 }
@@ -3054,10 +3031,6 @@ static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)
     ATOM_O_SYNC = enif_make_atom(env, "o_sync");
     ATOM_CUR = enif_make_atom(env, "cur");
     ATOM_BOF = enif_make_atom(env, "bof");
-
-#ifdef PULSE
-    pulse_c_send_on_load(env);
-#endif
 
     return 0;
 }
