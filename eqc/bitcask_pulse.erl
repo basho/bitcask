@@ -65,6 +65,8 @@ initial_state() ->
 key()   -> choose(1, ?NUM_KEYS).
 value() -> ?LET(Bin, noshrink(binary()), ?SHRINK(Bin, [<< <<0>> || <<_>> <= Bin >>])).
 
+sleep_time() -> elements([200, 500, 1000]).
+
 key_pair() ->
   ?LET({A, B}, {key(), key()},
     list_to_tuple(lists:sort([A, B]))).
@@ -105,7 +107,7 @@ command(S) ->
     %% deleting something that was in a prior 'puts' range of keys.
     %% And we know that delete+merge has been a good source of
     %% race bugs, so keep doing it.
-    [ {50, {call, ?MODULE, delete, [S#state.handle, key()]}}
+    [ {20, {call, ?MODULE, delete, [S#state.handle, key()]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
     [ {2, {call, ?MODULE, bc_open, [S#state.is_writer, gen_make_merge_file()]}}
       || S#state.handle == undefined ] ++
@@ -134,6 +136,7 @@ command(S) ->
       || S#state.is_writer, S#state.handle /= undefined ] ++
     [ {2, {call, ?MODULE, needs_merge, [S#state.handle]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
+    [ {1, {call, ?MODULE, sleep, [sleep_time()]}} ] ++
     []).
 
 %% Precondition, checked before a command is added to the command sequence.
@@ -173,7 +176,8 @@ precondition(S, {call, _, bc_close, [H]}) ->
   S#state.handle == H;
 precondition(S, {call, _, bc_open, [Writer, _MakeMergeFile]}) ->
   %% The writer can open for reading but not the other way around.
-  S#state.is_writer >= Writer andalso S#state.handle == undefined.
+  S#state.is_writer >= Writer andalso S#state.handle == undefined;
+precondition(_, {call, _, sleep, _}) -> true.
 
 %% Next state transformation, S is the current state and V is the result of the
 %% command.
@@ -719,7 +723,7 @@ fork_results(Pids) ->
   pulse:event(Tag),
   event_logger:event({call, self(), Tag}),
   __Result = MkCall,
-  pulse:event({Tag, __Result}),
+  pulse:event({Tag, '->', __Result}),
   event_logger:event({result, self(), __Result}),
   __Result).
 
@@ -849,6 +853,9 @@ make_merge_file(Dir, Seed, Probability) ->
 bc_close(H)    ->
   ?LOG({close, H},
   ?CHECK_HANDLE(H, ok, bitcask:close(H))).
+
+sleep(N) ->
+  timer:sleep(N).
 
 %% Convenience functions for running tests
 
