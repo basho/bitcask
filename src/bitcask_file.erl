@@ -149,7 +149,7 @@ handle_call({file_open, Owner, Filename, Opts}, _From, State) ->
             State2 = State#state{fd=Fd, owner=Owner},
             {reply, ok, State2};
         Error = {error, Reason} ->
-            error_logger:error_msg("Failed to open file ~p: ~p~n",
+            error_logger:warning_msg("Failed to open file ~p: ~p~n",
                                    [Filename, Reason]),
             {stop, {file_open_failed, Reason}, Error, State}
     end;
