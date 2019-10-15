@@ -7,28 +7,27 @@
 %% The while module is ifdef:ed, rebar should set PULSE
 -ifdef(PULSE).
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
 
 -include("../include/bitcask.hrl").
 
--include_lib("eunit/include/eunit.hrl").
-
 -compile({parse_transform, pulse_instrument}).
 -include_lib("pulse_otp/include/pulse_otp.hrl").
 %% The following functions contains side_effects but are run outside
 %% PULSE, i.e. PULSE needs to leave them alone
--compile({pulse_skip,[{prop_pulse_test_, 0},
-                      {really_delete_bitcask, 0},
+-compile({pulse_skip,[{really_delete_bitcask, 0},
                       {copy_bitcask_app, 0},
                       {get_errors, 0}]}).
 -compile({pulse_no_side_effect,[{file,'_','_'}, {erlang, now, 0}]}).
 
-%% The token module keeps track of the currently used directory for
-%% bitcask. Each test uses a fresh directory!
+%% Each test uses a fresh directory!
 -define(BITCASK, token:get_name()).
+%% -define(BITCASK, filename:join(?TEST_FILEPATH, "bitcask.qc." ++ os:getpid())).
+%% -define(BITCASK, "bitcask.qc." ++ os:getpid()).
+
 %% Number of keys used in the tests
 -define(NUM_KEYS, 50).
 %% max_file_size given to bitcask.
@@ -310,7 +309,7 @@ run_on_node(slave, Verbose, M, F, A) ->
 
 %% Muting the QuickCheck license printout from the slave node
 mute(true,  Fun) -> Fun();
-mute(false, Fun) -> mute:run(Fun).
+mute(false, Fun) -> Fun(). % mute:run(Fun).
 
 %%
 %% The actual code of the property, run on remote node via rpc:call above
@@ -320,15 +319,15 @@ run_commands_on_node(LocalOrSlave, Cmds, Seed, Verbose, KeepFiles) ->
     AfterTime = if LocalOrSlave == local -> 50000;
                    LocalOrSlave == slave -> 1000000
                 end,
-    event_logger:start_link(),
     pulse:start(),
     error_logger:tty(false),
     error_logger:add_report_handler(handle_errors),
     token:next_name(),
-    event_logger:start_logging(),
     X =
     try
       {H, S, Res, PidRs, Trace} = pulse:run(fun() ->
+          event_logger:start_link(),
+          event_logger:start_logging(),
           application_controller:start({application, kernel, []}),
           application:start(bitcask),
           bitcask_time:test__set_fudge(10),
@@ -341,6 +340,7 @@ run_commands_on_node(LocalOrSlave, Cmds, Seed, Verbose, KeepFiles) ->
           pulse:verbose(OldVerbose),
           Trace = event_logger:get_events(),
           receive after AfterTime -> ok end,
+          application:stop(bitcask),
           unlink(whereis(pulse_application_controller)),
           exit(pulse_application_controller, shutdown),
           receive after AfterTime -> ok end,
@@ -362,6 +362,19 @@ run_commands_on_node(LocalOrSlave, Cmds, Seed, Verbose, KeepFiles) ->
 
 get_errors() ->
   gen_event:call(error_logger, handle_errors, get_errors, 60*1000).
+
+run_tests(Args) ->
+  try list_to_integer(atom_to_list(hd(Args))) of
+    N ->
+      case quickcheck(eqc:testing_time(N, prop_pulse())) of
+        true  -> erlang:halt();
+        false -> erlang:halt(1)
+      end
+  catch _:_ ->
+    io:format("Bad arguments: ~p\n", [Args]),
+    timer:sleep(10),
+    erlang:halt(2)
+  end.
 
 prop_pulse() ->
   prop_pulse(local, false, false).
@@ -388,8 +401,10 @@ prop_pulse(LocalOrSlave, Verbose0, KeepFiles) ->
         io:format(user, "GOT ~p, aborting.  Stop PULSE and restart!\n", [Bad]),
         exit({stopping, Bad});
       {H, S, Res, PidRs, Trace, Schedule, Errors0} ->
-        Errors = [E || E <- Errors0,
-                       re:run(element(2, E), "Invalid merge input") == nomatch],
+        Errors = [E || is_list(Errors0),
+                       E <- Errors0,
+                       re:run(element(2, E), "Invalid merge input") == nomatch] ++
+                 [Errors0 || not is_list(Errors0)],
         ?WHENFAIL(
           ?QC_FMT("\nState: ~p\n", [S]),
           aggregate(zipwith(fun command_data/2, tl(Cmds), H),
@@ -413,56 +428,6 @@ prop_pulse(LocalOrSlave, Verbose0, KeepFiles) ->
             , {events, check_trace(Trace)} ]))))))
     end
   end)))))).
-
-%% A EUnit wrapper for the QuickCheck property
-prop_pulse_test_() ->
-    Timeout = case os:getenv("PULSE_TIME") of
-                  false -> 60;
-                  Val   -> list_to_integer(Val)
-              end,
-    ExtraTO = case os:getenv("PULSE_SHRINK_TIME") of
-                  false -> 0;
-                  Val2  -> list_to_integer(Val2)
-              end,
-    %% eqc has the irritating behavior of not asking for a license for
-    %% its entire test time at the start of the test. the following
-    %% code calulates the amount of time remaining and then reserves
-    %% the license until then, so long running tests won't fail
-    %% because the license server becomes unreachable sometime in the
-    %% middle of the test.
-    {D, {H, M0, S}} = calendar:time_difference(calendar:local_time(),
-                                                eqc:reserved_until()),
-    %% any minutes or seconds at all and we should just bump up to the
-    %% next hour
-    M =
-        case (M0 + S) of
-            0 ->
-                0;
-            _N ->
-                1
-        end,
-    HoursLeft = (D * 24) + H + M,
-    HoursAsked = trunc((Timeout + ExtraTO)/60/60),
-    case HoursLeft < HoursAsked of
-        true -> eqc:reserve({HoursAsked, hours});
-        false -> ok
-    end,
-    io:format(user, "prop_pulse_test time: ~p + ~p seconds\n",
-              [Timeout, ExtraTO]),
-    {timeout, (Timeout+ExtraTO+120),     % 120 = a bit more fudge time
-     fun() ->
-             copy_bitcask_app(),
-             ?assert(eqc:quickcheck(eqc:testing_time(Timeout,
-                                                     ?QC_OUT(prop_pulse()))))
-     end}.
-
-%% Needed since rebar fails miserably in setting up the .eunit test directory
-copy_bitcask_app() ->
-  try
-      {ok, B} = file:read_file("../ebin/bitcask.app"),
-      ok = file:write_file("./bitcask.app", B)
-  catch _:_ -> ok end,
-  ok.
 
 %% Using eqc_temporal to keep track of possible values for keys.
 %%
@@ -1127,7 +1092,9 @@ really_delete_bitcask() ->
   [file:delete(X) || X <- filelib:wildcard(?BITCASK ++ "/*")],
   file:del_dir(?BITCASK),
   case file:read_file_info(?BITCASK) of
-    {error, enoent} -> ok;
+    {error, enoent} ->
+      timer:sleep(10),
+      ok;
     {ok, _} ->
       timer:sleep(10),
       really_delete_bitcask()

@@ -1,0 +1,6 @@
+{"../test/token", [{parse_transform, eqc_cover}]}.
+{"../test/handle_errors", [{d, 'PULSE'}, {parse_transform, eqc_cover}]}.
+{"../src/*", [{d, 'PULSE'}, {parse_transform, eqc_cover}, {i, ".."}, {i, "../include"}, {d, namespaced_types}]}.
+{"../eqc/pulse/*", [{d, 'PULSE'}, {parse_transform, eqc_cover}, {i, ".."}, {i, "../include"}]}.
+{"../eqc/event_logger", [{d, 'PULSE'}, {i, ".."}, {i, "../include"}]}.
+
