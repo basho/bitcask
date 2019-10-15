@@ -502,7 +502,6 @@ is_current_file(Dirname, Keydir, Filename) ->
 open_files([], Acc) ->
     {ok, lists:reverse(Acc)};
 open_files([Filename | Rest], Acc) ->
-    interfere_with_pulse_test_only(),
     case bitcask_fileops:open_file(Filename) of
         {ok, Fd} ->
             open_files(Rest, [Fd | Acc]);
@@ -2006,20 +2005,6 @@ error_msg_perhaps(_Fmt, _Args) ->
 error_msg_perhaps(Fmt, Args) ->
     error_logger:error_msg(Fmt, Args).
 -endif. %TEST
-
--ifdef(PULSE).
-interfere_with_pulse_test_only() ->
-    %% This will make it much easier for PULSE to invent cases
-    %% where we'd like it to make a crazy scheduling decision.
-    %% PULSE has control over "time", so this really doesn't
-    %% add wall-clock latency to a test case.
-    %io:format(user, "a", []),
-    timer:sleep(500),
-    ok.
--else. % PULSE
-interfere_with_pulse_test_only() ->
-    ok.
--endif. % PULSE
 
 %% ===================================================================
 %% EUnit tests
