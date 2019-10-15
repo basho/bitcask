@@ -52,6 +52,7 @@
 -compile({parse_transform, pulse_instrument}).
 -compile([export_all, nowarn_export_all]).
 -include_lib("pulse_otp/include/pulse_otp.hrl").
+-compile({pulse_side_effect, [{bitcask_nifs, '_', '_'}]}).
 -define(OPEN_FOLD_RETRIES, 100).
 -else.
 -define(OPEN_FOLD_RETRIES, 3).
