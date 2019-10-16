@@ -26,12 +26,16 @@
          test__clear_fudge/0, test__time_travel_loop_sleep/0]).
 -define(KEY, bitcask_time_fudge).
 
+-ifdef(PULSE).
+-compile({parse_transform, pulse_instrument}).
+-include_lib("pulse_otp/include/pulse_otp.hrl").
+-endif.
+
 %% Return number of seconds since 1970
 tstamp() ->
     test__get(?KEY).
 
 test__set_fudge(Amount) ->
-    test__clear_fudge(),
     application:set_env(bitcask, ?KEY, Amount).
 
 test__get_fudge() ->

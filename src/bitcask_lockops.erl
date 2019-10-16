@@ -29,6 +29,8 @@
 
 -ifdef(PULSE).
 -compile({parse_transform, pulse_instrument}).
+-include_lib("pulse_otp/include/pulse_otp.hrl").
+-compile({pulse_side_effect, [{file, '_', '_'}, {bitcask_nifs, '_', '_'}]}).
 -endif.
 
 -type lock_types() :: merge | write | create.

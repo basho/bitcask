@@ -25,6 +25,8 @@
 
 -ifdef(PULSE).
 -compile({parse_transform, pulse_instrument}).
+-include_lib("pulse_otp/include/pulse_otp.hrl").
+-compile({pulse_side_effect, [{file, '_', '_'}]}).
 -endif.
 
 %% API
@@ -147,7 +149,7 @@ handle_call({file_open, Owner, Filename, Opts}, _From, State) ->
             State2 = State#state{fd=Fd, owner=Owner},
             {reply, ok, State2};
         Error = {error, Reason} ->
-            error_logger:error_msg("Failed to open file ~p: ~p~n",
+            error_logger:warning_msg("Failed to open file ~p: ~p~n",
                                    [Filename, Reason]),
             {stop, {file_open_failed, Reason}, Error, State}
     end;

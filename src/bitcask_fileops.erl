@@ -52,13 +52,11 @@
 
 -ifdef(PULSE).
 -compile({parse_transform, pulse_instrument}).
+-include_lib("pulse_otp/include/pulse_otp.hrl").
+-compile({pulse_side_effect, [{file, '_', '_'}, {prim_file, '_', '_'}, {bitcask_nifs, '_', '_'}]}).
 -endif.
 
 -ifdef(TEST).
--ifdef(EQC).
--include_lib("eqc/include/eqc.hrl").
--include_lib("eqc/include/eqc_fsm.hrl").
--endif.
 -compile([export_all, nowarn_export_all]).
 -include_lib("eunit/include/eunit.hrl").
 -endif.

@@ -7,26 +7,27 @@
 %% The while module is ifdef:ed, rebar should set PULSE
 -ifdef(PULSE).
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
 
 -include("../include/bitcask.hrl").
 
--include_lib("eunit/include/eunit.hrl").
-
 -compile({parse_transform, pulse_instrument}).
--compile({pulse_replace_module,
-  [{application, pulse_application}]}).
+-include_lib("pulse_otp/include/pulse_otp.hrl").
 %% The following functions contains side_effects but are run outside
 %% PULSE, i.e. PULSE needs to leave them alone
--compile({pulse_skip,[{prop_pulse_test_,0},{really_delete_bitcask,0},{copy_bitcask_app,0}]}).
+-compile({pulse_skip,[{really_delete_bitcask, 0},
+                      {copy_bitcask_app, 0},
+                      {get_errors, 0}]}).
 -compile({pulse_no_side_effect,[{file,'_','_'}, {erlang, now, 0}]}).
 
-%% The token module keeps track of the currently used directory for
-%% bitcask. Each test uses a fresh directory!
+%% Each test uses a fresh directory!
 -define(BITCASK, token:get_name()).
+%% -define(BITCASK, filename:join(?TEST_FILEPATH, "bitcask.qc." ++ os:getpid())).
+%% -define(BITCASK, "bitcask.qc." ++ os:getpid()).
+
 %% Number of keys used in the tests
 -define(NUM_KEYS, 50).
 %% max_file_size given to bitcask.
@@ -62,6 +63,8 @@ initial_state() ->
 %% Generators
 key()   -> choose(1, ?NUM_KEYS).
 value() -> ?LET(Bin, noshrink(binary()), ?SHRINK(Bin, [<< <<0>> || <<_>> <= Bin >>])).
+
+sleep_time() -> elements([200, 500, 1000]).
 
 key_pair() ->
   ?LET({A, B}, {key(), key()},
@@ -103,7 +106,7 @@ command(S) ->
     %% deleting something that was in a prior 'puts' range of keys.
     %% And we know that delete+merge has been a good source of
     %% race bugs, so keep doing it.
-    [ {50, {call, ?MODULE, delete, [S#state.handle, key()]}}
+    [ {20, {call, ?MODULE, delete, [S#state.handle, key()]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
     [ {2, {call, ?MODULE, bc_open, [S#state.is_writer, gen_make_merge_file()]}}
       || S#state.handle == undefined ] ++
@@ -132,6 +135,7 @@ command(S) ->
       || S#state.is_writer, S#state.handle /= undefined ] ++
     [ {2, {call, ?MODULE, needs_merge, [S#state.handle]}}
       || S#state.is_writer, S#state.handle /= undefined ] ++
+    [ {1, {call, ?MODULE, sleep, [sleep_time()]}} ] ++
     []).
 
 %% Precondition, checked before a command is added to the command sequence.
@@ -171,7 +175,8 @@ precondition(S, {call, _, bc_close, [H]}) ->
   S#state.handle == H;
 precondition(S, {call, _, bc_open, [Writer, _MakeMergeFile]}) ->
   %% The writer can open for reading but not the other way around.
-  S#state.is_writer >= Writer andalso S#state.handle == undefined.
+  S#state.is_writer >= Writer andalso S#state.handle == undefined;
+precondition(_, {call, _, sleep, _}) -> true.
 
 %% Next state transformation, S is the current state and V is the result of the
 %% command.
@@ -297,14 +302,14 @@ stop_node() ->
   slave:stop(node_name()).
 
 run_on_node(local, _Verbose, M, F, A) ->
-  rpc:call(node(), M, F, A, 45*60*1000);
+  apply(M, F, A);
 run_on_node(slave, Verbose, M, F, A) ->
   start_node(Verbose),
   rpc:call(node_name(), M, F, A, 45*60*1000).
 
 %% Muting the QuickCheck license printout from the slave node
 mute(true,  Fun) -> Fun();
-mute(false, Fun) -> mute:run(Fun).
+mute(false, Fun) -> Fun(). % mute:run(Fun).
 
 %%
 %% The actual code of the property, run on remote node via rpc:call above
@@ -314,19 +319,18 @@ run_commands_on_node(LocalOrSlave, Cmds, Seed, Verbose, KeepFiles) ->
     AfterTime = if LocalOrSlave == local -> 50000;
                    LocalOrSlave == slave -> 1000000
                 end,
-    event_logger:start_link(),
     pulse:start(),
-    bitcask_nifs:set_pulse_pid(utils:whereis(pulse)),
     error_logger:tty(false),
     error_logger:add_report_handler(handle_errors),
     token:next_name(),
-    event_logger:start_logging(),
-    bitcask_time:test__set_fudge(10),
     X =
     try
       {H, S, Res, PidRs, Trace} = pulse:run(fun() ->
-          %% pulse_application_controller:start({application, kernel, []}),
+          event_logger:start_link(),
+          event_logger:start_logging(),
+          application_controller:start({application, kernel, []}),
           application:start(bitcask),
+          bitcask_time:test__set_fudge(10),
           receive after AfterTime -> ok end,
           OldVerbose = pulse:verbose([ all || Verbose ]),
           {H, S, R} = run_commands(?MODULE, Cmds),
@@ -336,12 +340,15 @@ run_commands_on_node(LocalOrSlave, Cmds, Seed, Verbose, KeepFiles) ->
           pulse:verbose(OldVerbose),
           Trace = event_logger:get_events(),
           receive after AfterTime -> ok end,
+          application:stop(bitcask),
+          unlink(whereis(pulse_application_controller)),
           exit(pulse_application_controller, shutdown),
+          receive after AfterTime -> ok end,
           {H, S, R, PidRs, Trace}
         end, [{seed, Seed},
               {strategy, unfair}]),
       Schedule = pulse:get_schedule(),
-      Errors = gen_event:call(error_logger, handle_errors, get_errors, 60*1000),
+      Errors = get_errors(),
       {H, S, Res, PidRs, Trace, Schedule, Errors}
     catch
       _:Err ->
@@ -353,33 +360,54 @@ run_commands_on_node(LocalOrSlave, Cmds, Seed, Verbose, KeepFiles) ->
     end,
     X end).
 
+get_errors() ->
+  gen_event:call(error_logger, handle_errors, get_errors, 60*1000).
+
+run_tests(Args) ->
+  try list_to_integer(atom_to_list(hd(Args))) of
+    N ->
+      case quickcheck(eqc:testing_time(N, prop_pulse())) of
+        true  -> erlang:halt();
+        false -> erlang:halt(1)
+      end
+  catch _:_ ->
+    io:format("Bad arguments: ~p\n", [Args]),
+    timer:sleep(10),
+    erlang:halt(2)
+  end.
+
 prop_pulse() ->
   prop_pulse(local, false, false).
 
 prop_pulse(Boolean) ->
     prop_pulse(local, Boolean, false).
 
-prop_pulse(LocalOrSlave, Verbose, KeepFiles) ->
-  P = ?FORALL(Cmds, commands(?MODULE),
+prop_pulse(LocalOrSlave, Verbose0, KeepFiles) ->
+  ?LET(Verbose, parameter(verbose, Verbose0),
+  ?FORALL(Cmds, commands(?MODULE),
   ?IMPLIES(length(Cmds) > 0,
   ?LET(Shrinking, parameter(shrinking, false),
-  ?ALWAYS(if Shrinking -> 10; % re-do this many times in shrinking runs
-             true      -> 2   % re-do this many times in normal runs
+  ?ALWAYS(if Shrinking -> 5; % re-do this many times in shrinking runs
+             true      -> 1  % re-do this many times in normal runs
           end,
   ?FORALL(Seed, pulse:seed(),
   begin
     case run_on_node(LocalOrSlave, Verbose, ?MODULE, run_commands_on_node, [LocalOrSlave, Cmds, Seed, Verbose, KeepFiles]) of
-      {'EXIT', Err} ->
-        equals({'EXIT', Err}, ok);
+      {'EXIT', _} = Err ->
+        equals(Err, ok);
+      {badrpc, {'EXIT', _}} = Err ->
+        equals(Err, ok);
       {badrpc, timeout} = Bad ->
         io:format(user, "GOT ~p, aborting.  Stop PULSE and restart!\n", [Bad]),
         exit({stopping, Bad});
       {H, S, Res, PidRs, Trace, Schedule, Errors0} ->
-        Errors = [E || E <- Errors0,
-                       re:run(element(2, E), "Invalid merge input") == nomatch],
+        Errors = [E || is_list(Errors0),
+                       E <- Errors0,
+                       re:run(element(2, E), "Invalid merge input") == nomatch] ++
+                 [Errors0 || not is_list(Errors0)],
         ?WHENFAIL(
           ?QC_FMT("\nState: ~p\n", [S]),
-          aggregate(zipwith(fun command_data/2, Cmds, H),
+          aggregate(zipwith(fun command_data/2, tl(Cmds), H),
           measure(len_cmds, length(Cmds),
           measure(deep_len_cmds, lists:foldl(
                               fun({set,_,{call, _, fork, [L]}}, Acc) ->
@@ -399,58 +427,7 @@ prop_pulse(LocalOrSlave, Verbose, KeepFiles) ->
             [ {errors, equals(Errors, [])}
             , {events, check_trace(Trace)} ]))))))
     end
-  end))))),
-  P.
-
-%% A EUnit wrapper for the QuickCheck property
-prop_pulse_test_() ->
-    Timeout = case os:getenv("PULSE_TIME") of
-                  false -> 60;
-                  Val   -> list_to_integer(Val)
-              end,
-    ExtraTO = case os:getenv("PULSE_SHRINK_TIME") of
-                  false -> 0;
-                  Val2  -> list_to_integer(Val2)
-              end,
-    %% eqc has the irritating behavior of not asking for a license for
-    %% its entire test time at the start of the test. the following
-    %% code calulates the amount of time remaining and then reserves
-    %% the license until then, so long running tests won't fail
-    %% because the license server becomes unreachable sometime in the
-    %% middle of the test.
-    {D, {H, M0, S}} = calendar:time_difference(calendar:local_time(),
-                                                eqc:reserved_until()),
-    %% any minutes or seconds at all and we should just bump up to the
-    %% next hour
-    M =
-        case (M0 + S) of
-            0 ->
-                0;
-            _N ->
-                1
-        end,
-    HoursLeft = (D * 24) + H + M,
-    HoursAsked = trunc((Timeout + ExtraTO)/60/60),
-    case HoursLeft < HoursAsked of
-        true -> eqc:reserve({HoursAsked, hours});
-        false -> ok
-    end,
-    io:format(user, "prop_pulse_test time: ~p + ~p seconds\n",
-              [Timeout, ExtraTO]),
-    {timeout, (Timeout+ExtraTO+120),     % 120 = a bit more fudge time
-     fun() ->
-             copy_bitcask_app(),
-             ?assert(eqc:quickcheck(eqc:testing_time(Timeout,
-                                                     ?QC_OUT(prop_pulse()))))
-     end}.
-
-%% Needed since rebar fails miserably in setting up the .eunit test directory
-copy_bitcask_app() ->
-  try
-      {ok, B} = file:read_file("../ebin/bitcask.app"),
-      ok = file:write_file("./bitcask.app", B)
-  catch _:_ -> ok end,
-  ok.
+  end)))))).
 
 %% Using eqc_temporal to keep track of possible values for keys.
 %%
@@ -662,34 +639,34 @@ check_fold_keys_result([], []) ->
   true.
 
 %% Presenting command data statistics in a nicer way
-command_data({set, _, {call, _, merge, _}}, {_S, V}) ->
-  case V of
+command_data({set, _, {call, _, merge, _}}, H) ->
+  case eqc_statem:history_result(H) of
     {error, {merge_locked, _, _}} -> {merge, locked};
-    _                             -> {merge, V}
+    {normal, V}                   -> {merge, V}
   end;
-command_data({set, _, {call, _, fork_merge, _}}, {_S, V}) ->
-  case V of
+command_data({set, _, {call, _, fork_merge, _}}, H) ->
+  case eqc_statem:history_result(H) of
     {'EXIT', _} -> {fork_merge, 'EXIT'};
-    _           -> {fork_merge, V}
+    {normal, V} -> {fork_merge, V}
   end;
-command_data({set, _, {call, _, bc_open, _}}, {_S, V}) ->
-  case V of
-    {'EXIT', _} -> {bc_open, 'EXIT'};
-    {error, Err} -> {bc_open, Err};
-    _  when is_reference(V) -> bc_open
+command_data({set, _, {call, _, bc_open, _}}, H) ->
+  case eqc_statem:history_result(H) of
+    {'EXIT', _}                          -> {bc_open, 'EXIT'};
+    {error, Err}                         -> {bc_open, Err};
+    {normal, Ref} when is_reference(Ref) -> bc_open
   end;
-command_data({set, _, {call, _, needs_merge, _}}, {_S, V}) ->
-  case V of
-    {true, _} -> {needs_merge, true};
-    false     -> {needs_merge, false};
-    Else      -> {needs_merge, Else}
+command_data({set, _, {call, _, needs_merge, _}}, H) ->
+  case eqc_statem:history_result(H) of
+    {normal, {true, _}} -> {needs_merge, true};
+    {normal, false}     -> {needs_merge, false};
+    {normal, Other}     -> {needs_merge, Other}
   end;
-command_data({set, _, {call, _, kill, [Pid]}}, {_S, _V}) ->
+command_data({set, _, {call, _, kill, [Pid]}}, _H) ->
   case Pid of
     bitcask_merge_worker -> {kill, merger};
     _                    -> {kill, reader}
   end;
-command_data({set, _, {call, _, Fun, _}}, {_S, _V}) ->
+command_data({set, _, {call, _, Fun, _}}, _H) ->
   Fun.
 
 %% Wait for all forks to return their results
@@ -707,8 +684,10 @@ fork_results(Pids) ->
   end).
 
 -define(LOG(Tag, MkCall),
+  pulse:event(Tag),
   event_logger:event({call, self(), Tag}),
   __Result = MkCall,
+  pulse:event({Tag, '->', __Result}),
   event_logger:event({result, self(), __Result}),
   __Result).
 
@@ -808,7 +787,7 @@ fold_keys(H) ->
 bc_open(Writer, {MakeMergeFileP, Seed, Probability}) ->
   erlang:put(?BITCASK_TESTING_KEY, ?MODULE),
     if MakeMergeFileP ->
-            bitcask:make_merge_file(?BITCASK, Seed, Probability);
+            make_merge_file(?BITCASK, Seed, Probability);
        true ->
             ok
     end,
@@ -818,9 +797,29 @@ bc_open(Writer, {MakeMergeFileP, Seed, Probability}) ->
     false -> catch bitcask:open(?BITCASK, [{open_timeout, 1234}])
   end).
 
+make_merge_file(Dir, Seed, Probability) ->
+    rand:seed(exrop, Seed),
+    case filelib:is_dir(Dir) of
+        true ->
+            DataFiles = filelib:wildcard("*.data", Dir),
+            {ok, FH} = file:open(Dir ++ "/merge.txt", [write]),
+            [case rand:uniform(100) < Probability of
+                 true ->
+                     io:format(FH, "~s\n", [DF]);
+                 false ->
+                     ok
+             end || DF <- DataFiles],
+            ok = file:close(FH);
+        false ->
+            ok
+    end.
+
 bc_close(H)    ->
   ?LOG({close, H},
   ?CHECK_HANDLE(H, ok, bitcask:close(H))).
+
+sleep(N) ->
+  timer:sleep(N).
 
 %% Convenience functions for running tests
 
@@ -1093,7 +1092,9 @@ really_delete_bitcask() ->
   [file:delete(X) || X <- filelib:wildcard(?BITCASK ++ "/*")],
   file:del_dir(?BITCASK),
   case file:read_file_info(?BITCASK) of
-    {error, enoent} -> ok;
+    {error, enoent} ->
+      timer:sleep(10),
+      ok;
     {ok, _} ->
       timer:sleep(10),
       really_delete_bitcask()

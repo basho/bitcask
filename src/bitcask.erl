@@ -51,6 +51,8 @@
 -ifdef(PULSE).
 -compile({parse_transform, pulse_instrument}).
 -compile([export_all, nowarn_export_all]).
+-include_lib("pulse_otp/include/pulse_otp.hrl").
+-compile({pulse_side_effect, [{bitcask_nifs, '_', '_'}]}).
 -define(OPEN_FOLD_RETRIES, 100).
 -else.
 -define(OPEN_FOLD_RETRIES, 3).
@@ -501,7 +503,6 @@ is_current_file(Dirname, Keydir, Filename) ->
 open_files([], Acc) ->
     {ok, lists:reverse(Acc)};
 open_files([Filename | Rest], Acc) ->
-    interfere_with_pulse_test_only(),
     case bitcask_fileops:open_file(Filename) of
         {ok, Fd} ->
             open_files(Rest, [Fd | Acc]);
@@ -2006,20 +2007,6 @@ error_msg_perhaps(Fmt, Args) ->
     error_logger:error_msg(Fmt, Args).
 -endif. %TEST
 
--ifdef(PULSE).
-interfere_with_pulse_test_only() ->
-    %% This will make it much easier for PULSE to invent cases
-    %% where we'd like it to make a crazy scheduling decision.
-    %% PULSE has control over "time", so this really doesn't
-    %% add wall-clock latency to a test case.
-    %io:format(user, "a", []),
-    timer:sleep(500),
-    ok.
--else. % PULSE
-interfere_with_pulse_test_only() ->
-    ok.
--endif. % PULSE
-
 %% ===================================================================
 %% EUnit tests
 %% ===================================================================
@@ -3421,6 +3408,7 @@ update_tstamp_stats_test_() ->
 
 update_tstamp_stats_test2() ->
     Dir = setup_testfolder("bc.tstamp.stats"),
+    bitcask_time:test__clear_fudge(),  %% cleanup after previous test
     bitcask_time:test__set_fudge(1),
     try
         B = init_dataset(Dir, [read_write, {max_file_size, 1000000}], []),

@@ -11,3 +11,4 @@ _build/*
 .DS_Store
 /.eqc-info
 /current_counterexample.eqc
+.pulse
