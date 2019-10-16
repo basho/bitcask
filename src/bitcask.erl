@@ -3408,6 +3408,7 @@ update_tstamp_stats_test_() ->
 
 update_tstamp_stats_test2() ->
     Dir = setup_testfolder("bc.tstamp.stats"),
+    bitcask_time:test__clear_fudge(),  %% cleanup after previous test
     bitcask_time:test__set_fudge(1),
     try
         B = init_dataset(Dir, [read_write, {max_file_size, 1000000}], []),
