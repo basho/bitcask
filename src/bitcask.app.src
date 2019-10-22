@@ -1,6 +1,6 @@
 {application, bitcask,
  [
-  {description, ""},
+  {description, "Yet another key/value storage engine"},
   {vsn, "2.0.3"},
   {modules, []},
   {registered, []},
