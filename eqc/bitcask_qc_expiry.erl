@@ -26,6 +26,7 @@
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include("include/bitcask.hrl").
+-include("stacktrace.hrl").
 
 -compile([export_all, nowarn_export_all]).
 
@@ -144,9 +145,9 @@ prop_expiry() ->
                                                  true
                                          end
                                      catch
-                                         X:Y ->
+                                         ?_exception_(X, Y, StackToken) ->
                                              io:format(user, "exception: ~p ~p @ ~p\n",
-                                                       [X,Y, erlang:get_stacktrace()]),
+                                                       [X,Y, ?_get_stacktrace_(StackToken)]),
                                              test_exception
                                      after
                                          bitcask:close(Bref)
