@@ -3,14 +3,10 @@ name: Erlang CI
 on: [push]
 
 jobs:
-
   build:
-
     runs-on: ubuntu-latest
-
     container:
       image: erlang:20.3.8
-
     steps:
     - uses: actions/checkout@v1
     - name: Compile
