@@ -3073,6 +3073,11 @@ corrupt_file(Path, Offset, Data) ->
 
 % Verify that if the cached efile port goes away, we can recover
 % and not get stuck opening casks
+
+-ifdef(dirty_file_nif).
+efile_error_test() ->
+    ok.
+-else.
 efile_error_test() ->
     Dir = setup_testfolder("bc.efile.error"),
     B = bitcask:open(Dir, [read_write]),
@@ -3089,6 +3094,8 @@ efile_error_test() ->
         B2 when is_reference(B2) ->
             ok = bitcask:close(B2)
     end.
+-endif.
+
 
 %% About leak_t0():
 %%

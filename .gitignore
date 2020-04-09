@@ -12,3 +12,4 @@ _build/*
 /.eqc-info
 /current_counterexample.eqc
 .pulse
+rebar.lock

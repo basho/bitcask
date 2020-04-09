@@ -837,6 +837,10 @@ ensure_dir(F) ->
             end
     end.
 
+-ifdef(dirty_file_nif).
+list_dir(Dir) ->
+    file:list_dir(Dir).
+-else.
 list_dir(Dir) ->
     list_dir(Dir, 1).
 
@@ -881,3 +885,4 @@ prim_file_drv_open(Driver, Portopts) ->
             {error, Reason}
     end.
 
+-endif.
