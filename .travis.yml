@@ -2,7 +2,7 @@ language: erlang
 otp_release:
   - 20.3.8
   - 21.3
-  - 22.1
+  - 22.3
 script:
   - chmod u+x rebar3
   - ./rebar3 do upgrade, compile, xref, dialyzer, eunit
