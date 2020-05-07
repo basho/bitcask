@@ -1,9 +1,8 @@
 language: erlang
 otp_release:
   - 20.3.8
+  - 21.3
+  - 22.3
 script:
   - chmod u+x rebar3
-  - ./rebar3 do upgrade, compile, dialyzer, xref, eunit
-notifications:
-  slack:
-    secure: SE0EMU9HenZlLBuNg7l6WLMxJPkfyAEGgodvAqMEuQmICtrh1nV019D/A8ykejYYPPsJafWVOfypOSDrSHCndzXvEZvU8l45nJ6XLdUdrDYEmvcSqN3EqmVSsuf9H3g99bvKygXaY27MkTS5ixLil7PzybG+YpwMnQGcQxYo5Eg=
+  - ./rebar3 do upgrade, compile, xref, dialyzer, eunit
