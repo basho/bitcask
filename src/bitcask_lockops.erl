@@ -27,6 +27,8 @@
          read_activefile/2,
          write_activefile/2]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(PULSE).
 -compile({parse_transform, pulse_instrument}).
 -include_lib("pulse_otp/include/pulse_otp.hrl").
@@ -147,7 +149,7 @@ delete_stale_lock(Filename) ->
                         end;
 
                     {error, Reason} ->
-                        error_logger:error_msg("Failed to read lock data from ~s: ~p\n",
+                        ?LOG_ERROR("Failed to read lock data from ~s: ~p\n",
                                                [Filename, Reason]),
                         not_stale
                 end
@@ -163,7 +165,7 @@ delete_stale_lock(Filename) ->
 
         {error, Reason} ->
             %% Failed to open the lock for reading due to other errors.
-            error_logger:error_msg("Failed to open lock file ~s: ~p\n",
+            ?LOG_ERROR("Failed to open lock file ~s: ~p\n",
                                    [Filename, Reason]),
             not_stale
     end.

@@ -48,6 +48,8 @@
 -record(state, { queue :: list(),
                 worker :: undefined | pid()}).
 
+-include_lib("kernel/include/logger.hrl").
+
 %% ====================================================================
 %% API
 %% ====================================================================
@@ -142,7 +144,7 @@ handle_info({'EXIT', _Pid, normal}, #state { queue = Q } = State) ->
     end;
 
 handle_info({'EXIT', Pid, Reason}, #state { worker = Pid } = State) ->
-    error_logger:error_msg("Merge worker PID exited: ~p\n", [Reason]),
+    ?LOG_ERROR("Merge worker PID exited: ~p\n", [Reason]),
     {stop, State}.
 
 terminate(_Reason, State) ->
@@ -199,10 +201,10 @@ do_merge(Args) ->
             [_,_,Args3] = Args,
             case Result of
                 ok ->
-                    error_logger:info_msg("Merged ~p in ~p seconds.\n",
+                    ?LOG_INFO("Merged ~p in ~p seconds.\n",
                                           [Args3, ElapsedSecs]);
                 {Error, Reason} when Error == error; Error == 'EXIT' ->
-                    error_logger:error_msg("Failed to merge ~p: ~p\n",
+                    ?LOG_ERROR("Failed to merge ~p: ~p\n",
                                            [Args3, Reason])
             end;
         false ->
@@ -219,7 +221,7 @@ merge_window() ->
                                         EndHour >= 0, EndHour =< 23 ->
             {StartHour, EndHour};
         Other ->
-            error_logger:error_msg("Invalid bitcask_merge window specified: ~p. "
+            ?LOG_ERROR("Invalid bitcask_merge window specified: ~p. "
                                    "Defaulting to 'always'.\n", [Other]),
             always
     end.

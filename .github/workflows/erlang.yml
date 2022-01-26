@@ -1,15 +1,26 @@
 name: Erlang CI
 
-on: [push]
+on:
+  push:
+    branches: [ develop ]
+  pull_request:
+    branches: [ develop ]
+
 
 jobs:
+
   build:
+
     runs-on: ubuntu-latest
+
     container:
-      image: erlang:20.3.8
+      image: erlang:24.2.0.0
+
     steps:
-    - uses: actions/checkout@v1
-    - name: Compile
-      run: rebar3 compile
-    - name: Run tests
-      run: rebar3 do eunit, ct
+      - uses: actions/checkout@v2
+      - name: Compile
+        run: ./rebar3 compile
+      - name: Run xref and dialyzer
+        run: ./rebar3 do xref, dialyzer
+      - name: Run eunit
+        run: ./rebar3 eunit

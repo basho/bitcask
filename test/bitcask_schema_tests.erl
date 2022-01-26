@@ -9,7 +9,6 @@ basic_schema_test_() ->
     {timeout, 60, fun basic_schema_test2/0}.
 
 basic_schema_test2() ->
-    lager:start(),
     %% The defaults are defined in ../priv/bitcask.schema. it is the file under test.
     Config = cuttlefish_unit:generate_templated_config("priv/bitcask.schema", [], context(), predefined_schema()),
 
@@ -38,7 +37,6 @@ merge_window_test_() ->
     {timeout, 60, fun merge_window_test2/0}.
 
 merge_window_test2() ->
-    lager:start(),
     Conf = [
         {["bitcask", "merge", "policy"], window},
         {["bitcask", "merge", "window", "start"], 0},
@@ -73,7 +71,6 @@ override_schema_test_() ->
     {timeout, 60, fun override_schema_test2/0}.
 
 override_schema_test2() ->
-    lager:start(),
     %% Conf represents the riak.conf file that would be read in by cuttlefish.
     %% this proplists is what would be output by the conf_parse module
     Conf = [

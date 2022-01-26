@@ -44,6 +44,8 @@
 -record(state, {fd    :: file:fd() | undefined,
                 owner :: pid() | undefined}).
 
+-include_lib("kernel/include/logger.hrl").
+
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -141,7 +143,7 @@ handle_call({file_open, Owner, Filename, Opts}, _From, State) ->
                {_, true} ->
                    [read, write, exclusive, raw, binary]
            end,
-    _ = [error_logger:warning_msg("Bitcask file option '~p' not supported~n", [Opt])
+    _ = [?LOG_WARNING("Bitcask file option '~p' not supported~n", [Opt])
      || Opt <- [o_sync],
         proplists:get_bool(Opt, Opts)],
     case file:open(Filename, Mode) of
@@ -149,7 +151,7 @@ handle_call({file_open, Owner, Filename, Opts}, _From, State) ->
             State2 = State#state{fd=Fd, owner=Owner},
             {reply, ok, State2};
         Error = {error, Reason} ->
-            error_logger:warning_msg("Failed to open file ~p: ~p~n",
+            ?LOG_WARNING("Failed to open file ~p: ~p~n",
                                    [Filename, Reason]),
             {stop, {file_open_failed, Reason}, Error, State}
     end;

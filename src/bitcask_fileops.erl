@@ -45,6 +45,7 @@
 -export([read_file_info/1, write_file_info/2, is_file/1]).
 
 -include_lib("kernel/include/file.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -include("bitcask.hrl").
 
@@ -426,7 +427,7 @@ fold_keys(State, Fun, Acc, recovery, _, true) ->
             Acc0;
         {error, Reason} ->
             HintFile = hintfile_name(State),
-            error_logger:warning_msg("Hintfile '~s' failed fold: ~p\n",
+            ?LOG_WARNING("Hintfile '~s' failed fold: ~p\n",
                                      [HintFile, Reason]),
             fold_keys_loop(State, 0, Fun, Acc);
         Acc1 ->
@@ -434,7 +435,7 @@ fold_keys(State, Fun, Acc, recovery, _, true) ->
     end;
 fold_keys(State, Fun, Acc, recovery, _, false) ->
     HintFile = hintfile_name(State),
-    error_logger:warning_msg("Hintfile '~s' invalid\n",
+    ?LOG_WARNING("Hintfile '~s' invalid\n",
                              [HintFile]),
     fold_keys_loop(State, 0, Fun, Acc).
 
@@ -542,7 +543,7 @@ read_crc(Fd) ->
 %% ===================================================================
 
 fold_int_loop(_Bytes, _Fun, Acc, _Consumed, {Filename, _, Offset, 20}) ->
-    error_logger:error_msg("fold_loop: CRC error limit at file ~p offset ~p\n",
+    ?LOG_ERROR("fold_loop: CRC error limit at file ~p offset ~p\n",
                            [Filename, Offset]),
     {done, Acc};
 fold_int_loop(<<Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD,
@@ -560,7 +561,7 @@ fold_int_loop(<<Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD,
                           {Filename, FTStamp, Offset + TotalSz,
                            CrcSkipCount});
         _ ->
-            error_logger:error_msg("fold_loop: CRC error at file ~s offset ~p, "
+            ?LOG_ERROR("fold_loop: CRC error at file ~s offset ~p, "
                                    "skipping ~p bytes\n",
                                    [Filename, Offset, TotalSz]),
             fold_int_loop(Rest, Fun, Acc0, Consumed0 + TotalSz,
@@ -585,7 +586,7 @@ fold_keys_loop(#filestate{fd=Fd, filename=Filename, tstamp=FTStamp}, Offset,
     end.
 
 fold_keys_int_loop(_Bytes, _Fun, Acc, _Consumed, {Filename, _, Offset, 20}) ->
-    error_logger:error_msg("fold_loop: CRC error limit at file ~p offset ~p\n",
+    ?LOG_ERROR("fold_loop: CRC error limit at file ~p offset ~p\n",
                            [Filename, Offset]),
     {done, Acc};
 fold_keys_int_loop(<<Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD,
@@ -607,7 +608,7 @@ fold_keys_int_loop(<<Crc32:?CRCSIZEFIELD, Tstamp:?TSTAMPFIELD,
                                {Filename, FTStamp, Offset + TotalSz,
                                 CrcSkipCount});
         _ ->
-            error_logger:error_msg("fold_loop: CRC error at file ~s offset ~p, "
+            ?LOG_ERROR("fold_loop: CRC error at file ~s offset ~p, "
                                    "skipping ~p bytes\n",
                                    [Filename, Offset, TotalSz]),
             fold_keys_int_loop(Rest, Fun, Acc0, Consumed0 + TotalSz,
@@ -664,7 +665,7 @@ fold_hintfile_loop(<<Tstamp:?TSTAMPFIELD, KeySz:?KEYSIZEFIELD,
             Consumed = KeySz + ?HINT_RECORD_SZ + Consumed0,
             fold_hintfile_loop(Rest, Fun, Acc, Consumed, Args);
         false ->
-            error_logger:warning_msg("Hintfile '~s' contains pointer ~p ~p "
+            ?LOG_WARNING("Hintfile '~s' contains pointer ~p ~p "
                                      "that is greater than total data size ~p\n",
                                      [HintFile, Offset, TotalSz, DataSize]),
             {error, {trunc_hintfile, Acc0}}
@@ -865,7 +866,7 @@ get_efile_port() ->
                     put(Key, Port),
                     get_efile_port();
                 Err ->
-                    error_logger:error_msg("get_efile_port: ~p\n", [Err]),
+                    ?LOG_ERROR("get_efile_port: ~p\n", [Err]),
                     timer:sleep(1000),
                     get_efile_port()
             end;
