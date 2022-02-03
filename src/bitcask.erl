@@ -47,8 +47,6 @@
 -include_lib("kernel/include/file.hrl").
 -include_lib("kernel/include/logger.hrl").
 -include("bitcask.hrl").
--include("stacktrace.hrl").
-
 
 -ifdef(PULSE).
 -compile({parse_transform, pulse_instrument}).
@@ -473,8 +471,8 @@ open_fold_files(Dirname, Keydir, Count) ->
                 maybe_log_missing_file(Dirname, Keydir, ErrFile, Err),
                 open_fold_files(Dirname, Keydir, Count-1)
         end
-    catch ?_exception_(X, Y, StackToken) ->
-            {error, {X,Y, ?_get_stacktrace_(StackToken)}}
+    catch Class:Reason:Stacktrace ->
+            {error, {Class, Reason, Stacktrace}}
     end.
 
 maybe_log_missing_file(Dirname, Keydir, ErrFile, enoent) ->
@@ -592,8 +590,8 @@ merge(Dirname, Opts, {FilesToMerge0, ExpiredFiles0}) ->
     catch
         throw:Reason ->
             Reason;
-        ?_exception_(X, Y, StackToken) ->
-            {error, {generic_failure, X, Y, ?_get_stacktrace_(StackToken)}}
+        Class:Reason:Stacktrace ->
+            {error, {generic_failure, Class, Reason, Stacktrace}}
     end.
 
 %% Inner merge function, assumes that bitcask is running and all files exist.
@@ -1326,9 +1324,9 @@ init_keydir_scan_key_files(Dirname, KeyDir, KT, Count) ->
                                           F <- SetuidFiles]),
                 bitcask_nifs:increment_file_id(KeyDir, MaxSetuid)
         end
-    catch ?_exception_(_X, _Y, StackToken) ->
+    catch Class:Reason:Stacktrace ->
             error_msg_perhaps("scan_key_files: ~p ~p @ ~p\n",
-                              [_X, _Y, ?_get_stacktrace_(StackToken)]),
+                              [Class, Reason, Stacktrace]),
             init_keydir_scan_key_files(Dirname, KeyDir, KT, Count - 1)
     end.
 
@@ -1932,10 +1930,10 @@ purge_setuid_files(Dirname) ->
                                               [length(StaleFs), Dirname])
                 end
             catch
-                ?_exception_(X, Y, StackToken) ->
+                Class:Reason:Stacktrace ->
                     error_msg_perhaps("While deleting stale merge input "
                                       "files from ~p: ~p @ ~p\n",
-                                      [X, Y, ?_get_stacktrace_(StackToken)])
+                                      [Class, Reason, Stacktrace])
             after
                 bitcask_lockops:release(WriteLock)
             end;
