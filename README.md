@@ -1,6 +1,6 @@
 # Bitcask - A Log-Structured Hash Table for Fast Key/Value Data
 
-[![Build Status](https://secure.travis-ci.org/basho/bitcask.png?branch=master)](http://travis-ci.org/basho/bitcask)
+[![Erlang CI Actions Status](https://github.com/basho/bitcask/workflows/Erlang%20CI/badge.svg)](https://github.com/basho/bitcask/actions)
 
 Bitcask uses the "rebar" build system, but we have provided a wrapper
 Makefile so that simply running "make" at the top level should work.
