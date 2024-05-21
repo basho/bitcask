@@ -84,7 +84,7 @@ create_file(DirName, Opts0, Keydir) ->
                 FinalOpts =
                     case bitcask:get_opt(sync_strategy, Opts) of
                         o_sync ->
-                            [o_sync | Opts];
+                            Opts ++ [o_sync];
                         _ ->
                             Opts
                     end,
